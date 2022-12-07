@@ -17,8 +17,10 @@ limitations under the License.
 package planbuilder
 
 import (
-	"fmt"
+	"errors"
 	"sort"
+
+	"vitess.io/vitess/go/vt/log"
 
 	"vitess.io/vitess/go/vt/vtgate/planbuilder/plancontext"
 
@@ -30,7 +32,6 @@ import (
 	"vitess.io/vitess/go/vt/key"
 	"vitess.io/vitess/go/vt/sqlparser"
 	"vitess.io/vitess/go/vt/vtgate/engine"
-	"vitess.io/vitess/go/vt/vtgate/semantics"
 	"vitess.io/vitess/go/vt/vtgate/vindexes"
 
 	vtrpcpb "vitess.io/vitess/go/vt/proto/vtrpc"
@@ -55,43 +56,8 @@ var (
 	plannerVersions = []plancontext.PlannerVersion{V3, Gen4, Gen4GreedyOnly, Gen4Left2Right, Gen4WithFallback, Gen4CompareV3}
 )
 
-type (
-	truncater interface {
-		SetTruncateColumnCount(int)
-	}
-
-	planResult struct {
-		primitive engine.Primitive
-		tables    []string
-	}
-
-	stmtPlanner func(sqlparser.Statement, *sqlparser.ReservedVars, plancontext.VSchema) (*planResult, error)
-)
-
-func newPlanResult(prim engine.Primitive, tablesUsed ...string) *planResult {
-	return &planResult{primitive: prim, tables: tablesUsed}
-}
-
-func singleTable(ks, tbl string) string {
-	return fmt.Sprintf("%s.%s", ks, tbl)
-}
-
-func tablesFromSemantics(semTable *semantics.SemTable) []string {
-	tables := make(map[string]any, len(semTable.Tables))
-	for _, info := range semTable.Tables {
-		vindexTable := info.GetVindexTable()
-		if vindexTable == nil {
-			continue
-		}
-		tables[vindexTable.ToString()] = nil
-	}
-
-	names := make([]string, 0, len(tables))
-	for tbl := range tables {
-		names = append(names, tbl)
-	}
-	sort.Strings(names)
-	return names
+type truncater interface {
+	SetTruncateColumnCount(int)
 }
 
 // TestBuilder builds a plan for a query based on the specified vschema.
@@ -101,7 +67,7 @@ func TestBuilder(query string, vschema plancontext.VSchema, keyspace string) (*e
 	if err != nil {
 		return nil, err
 	}
-	result, err := sqlparser.RewriteAST(stmt, keyspace, sqlparser.SQLSelectLimitUnset, "", nil)
+	result, err := sqlparser.RewriteAST(stmt, keyspace, sqlparser.SQLSelectLimitUnset)
 	if err != nil {
 		return nil, err
 	}
@@ -110,30 +76,25 @@ func TestBuilder(query string, vschema plancontext.VSchema, keyspace string) (*e
 	return BuildFromStmt(query, result.AST, reservedVars, vschema, result.BindVarNeeds, true, true)
 }
 
+// ErrPlanNotSupported is an error for plan building not supported
+var ErrPlanNotSupported = errors.New("plan building not supported")
+
 // BuildFromStmt builds a plan based on the AST provided.
 func BuildFromStmt(query string, stmt sqlparser.Statement, reservedVars *sqlparser.ReservedVars, vschema plancontext.VSchema, bindVarNeeds *sqlparser.BindVarNeeds, enableOnlineDDL, enableDirectDDL bool) (*engine.Plan, error) {
-	planResult, err := createInstructionFor(query, stmt, reservedVars, vschema, enableOnlineDDL, enableDirectDDL)
+	instruction, err := createInstructionFor(query, stmt, reservedVars, vschema, enableOnlineDDL, enableDirectDDL)
 	if err != nil {
 		return nil, err
-	}
-
-	var primitive engine.Primitive
-	var tablesUsed []string
-	if planResult != nil {
-		primitive = planResult.primitive
-		tablesUsed = planResult.tables
 	}
 	plan := &engine.Plan{
 		Type:         sqlparser.ASTToStatementType(stmt),
 		Original:     query,
-		Instructions: primitive,
+		Instructions: instruction,
 		BindVarNeeds: bindVarNeeds,
-		TablesUsed:   tablesUsed,
 	}
 	return plan, nil
 }
 
-func getConfiguredPlanner(vschema plancontext.VSchema, v3planner func(string) stmtPlanner, stmt sqlparser.Statement, query string) (stmtPlanner, error) {
+func getConfiguredPlanner(vschema plancontext.VSchema, v3planner func(string) selectPlanner, stmt sqlparser.SelectStatement, query string) (selectPlanner, error) {
 	planner, ok := getPlannerFromQuery(stmt)
 	if !ok {
 		// if the query doesn't specify the planner, we check what the configuration is
@@ -142,7 +103,7 @@ func getConfiguredPlanner(vschema plancontext.VSchema, v3planner func(string) st
 	switch planner {
 	case Gen4CompareV3:
 		return gen4CompareV3Planner(query), nil
-	case Gen4Left2Right, Gen4GreedyOnly:
+	case Gen4, Gen4Left2Right, Gen4GreedyOnly:
 		return gen4Planner(query, planner), nil
 	case Gen4WithFallback:
 		fp := &fallbackPlanner{
@@ -150,11 +111,9 @@ func getConfiguredPlanner(vschema plancontext.VSchema, v3planner func(string) st
 			fallback: v3planner(query),
 		}
 		return fp.plan, nil
-	case V3:
-		return v3planner(query), nil
 	default:
-		// default is gen4 plan
-		return gen4Planner(query, Gen4), nil
+		// default is v3 plan
+		return v3planner(query), nil
 	}
 }
 
@@ -162,7 +121,7 @@ func getConfiguredPlanner(vschema plancontext.VSchema, v3planner func(string) st
 // The default planner can be overridden using /*vt+ PLANNER=gen4 */
 // We will also fall back on the gen4 planner if we encounter outer join,
 // since there are known problems with the v3 planner and outer joins
-func getPlannerFromQuery(stmt sqlparser.Statement) (version plancontext.PlannerVersion, found bool) {
+func getPlannerFromQuery(stmt sqlparser.SelectStatement) (version plancontext.PlannerVersion, found bool) {
 	version, found = getPlannerFromQueryHint(stmt)
 	if found {
 		return
@@ -183,28 +142,40 @@ func getPlannerFromQuery(stmt sqlparser.Statement) (version plancontext.PlannerV
 	return
 }
 
-func getPlannerFromQueryHint(stmt sqlparser.Statement) (plancontext.PlannerVersion, bool) {
-	cm, isCom := stmt.(sqlparser.Commented)
-	if !isCom {
+func getPlannerFromQueryHint(stmt sqlparser.SelectStatement) (plancontext.PlannerVersion, bool) {
+	var d sqlparser.CommentDirectives
+
+	firstSelect := sqlparser.GetFirstSelect(stmt)
+	if firstSelect != nil {
+		d = sqlparser.ExtractCommentDirectives(firstSelect.Comments)
+	}
+	if d == nil {
 		return plancontext.PlannerVersion(0), false
 	}
 
-	d := cm.GetParsedComments().Directives()
-	val, ok := d.GetString(sqlparser.DirectiveQueryPlanner, "")
+	val, ok := d[sqlparser.DirectiveQueryPlanner]
 	if !ok {
 		return plancontext.PlannerVersion(0), false
 	}
-	return plancontext.PlannerNameToVersion(val)
+
+	str, ok := val.(string)
+	if !ok {
+		log.Errorf("planner specified with unknown type %v", val)
+		return plancontext.PlannerVersion(0), false
+	}
+	return plancontext.PlannerNameToVersion(str)
 }
 
-func buildRoutePlan(stmt sqlparser.Statement, reservedVars *sqlparser.ReservedVars, vschema plancontext.VSchema, f func(statement sqlparser.Statement, reservedVars *sqlparser.ReservedVars, schema plancontext.VSchema) (*planResult, error)) (*planResult, error) {
+func buildRoutePlan(stmt sqlparser.Statement, reservedVars *sqlparser.ReservedVars, vschema plancontext.VSchema, f func(statement sqlparser.Statement, reservedVars *sqlparser.ReservedVars, schema plancontext.VSchema) (engine.Primitive, error)) (engine.Primitive, error) {
 	if vschema.Destination() != nil {
 		return buildPlanForBypass(stmt, reservedVars, vschema)
 	}
 	return f(stmt, reservedVars, vschema)
 }
 
-func createInstructionFor(query string, stmt sqlparser.Statement, reservedVars *sqlparser.ReservedVars, vschema plancontext.VSchema, enableOnlineDDL, enableDirectDDL bool) (*planResult, error) {
+type selectPlanner func(sqlparser.Statement, *sqlparser.ReservedVars, plancontext.VSchema) (engine.Primitive, error)
+
+func createInstructionFor(query string, stmt sqlparser.Statement, reservedVars *sqlparser.ReservedVars, vschema plancontext.VSchema, enableOnlineDDL, enableDirectDDL bool) (engine.Primitive, error) {
 	switch stmt := stmt.(type) {
 	case *sqlparser.Select:
 		configuredPlanner, err := getConfiguredPlanner(vschema, buildSelectPlan, stmt, query)
@@ -215,17 +186,9 @@ func createInstructionFor(query string, stmt sqlparser.Statement, reservedVars *
 	case *sqlparser.Insert:
 		return buildRoutePlan(stmt, reservedVars, vschema, buildInsertPlan)
 	case *sqlparser.Update:
-		configuredPlanner, err := getConfiguredPlanner(vschema, buildUpdatePlan, stmt, query)
-		if err != nil {
-			return nil, err
-		}
-		return buildRoutePlan(stmt, reservedVars, vschema, configuredPlanner)
+		return buildRoutePlan(stmt, reservedVars, vschema, buildUpdatePlan)
 	case *sqlparser.Delete:
-		configuredPlanner, err := getConfiguredPlanner(vschema, buildDeletePlan, stmt, query)
-		if err != nil {
-			return nil, err
-		}
-		return buildRoutePlan(stmt, reservedVars, vschema, configuredPlanner)
+		return buildRoutePlan(stmt, reservedVars, vschema, buildDeletePlan)
 	case *sqlparser.Union:
 		configuredPlanner, err := getConfiguredPlanner(vschema, buildUnionPlan, stmt, query)
 		if err != nil {
@@ -240,14 +203,10 @@ func createInstructionFor(query string, stmt sqlparser.Statement, reservedVars *
 		return buildRevertMigrationPlan(query, stmt, vschema, enableOnlineDDL)
 	case *sqlparser.ShowMigrationLogs:
 		return buildShowMigrationLogsPlan(query, vschema, enableOnlineDDL)
-	case *sqlparser.ShowThrottledApps:
-		return buildShowThrottledAppsPlan(query, vschema)
-	case *sqlparser.ShowThrottlerStatus:
-		return buildShowThrottlerStatusPlan(query, vschema)
 	case *sqlparser.AlterVschema:
 		return buildVSchemaDDLPlan(stmt, vschema)
 	case *sqlparser.Use:
-		return buildUsePlan(stmt)
+		return buildUsePlan(stmt, vschema)
 	case sqlparser.Explain:
 		return buildExplainPlan(stmt, reservedVars, vschema, enableOnlineDDL, enableDirectDDL)
 	case *sqlparser.OtherRead, *sqlparser.OtherAdmin:
@@ -258,11 +217,13 @@ func createInstructionFor(query string, stmt sqlparser.Statement, reservedVars *
 		return buildLoadPlan(query, vschema)
 	case sqlparser.DBDDLStatement:
 		return buildRoutePlan(stmt, reservedVars, vschema, buildDBDDLPlan)
+	case *sqlparser.SetTransaction:
+		return nil, ErrPlanNotSupported
 	case *sqlparser.Begin, *sqlparser.Commit, *sqlparser.Rollback, *sqlparser.Savepoint, *sqlparser.SRollback, *sqlparser.Release:
 		// Empty by design. Not executed by a plan
 		return nil, nil
 	case *sqlparser.Show:
-		return buildShowPlan(query, stmt, reservedVars, vschema)
+		return buildRoutePlan(stmt, reservedVars, vschema, buildShowPlan)
 	case *sqlparser.LockTables:
 		return buildRoutePlan(stmt, reservedVars, vschema, buildLockPlan)
 	case *sqlparser.UnlockTables:
@@ -275,16 +236,12 @@ func createInstructionFor(query string, stmt sqlparser.Statement, reservedVars *
 		return buildStreamPlan(stmt, vschema)
 	case *sqlparser.VStream:
 		return buildVStreamPlan(stmt, vschema)
-	case *sqlparser.CommentOnly:
-		// There is only a comment in the input.
-		// This is essentially a No-op
-		return newPlanResult(engine.NewRowsPrimitive(nil, nil)), nil
 	}
 
 	return nil, vterrors.Errorf(vtrpcpb.Code_INTERNAL, "BUG: unexpected statement type: %T", stmt)
 }
 
-func buildDBDDLPlan(stmt sqlparser.Statement, _ *sqlparser.ReservedVars, vschema plancontext.VSchema) (*planResult, error) {
+func buildDBDDLPlan(stmt sqlparser.Statement, _ *sqlparser.ReservedVars, vschema plancontext.VSchema) (engine.Primitive, error) {
 	dbDDLstmt := stmt.(sqlparser.DBDDLStatement)
 	ksName := dbDDLstmt.GetDatabaseName()
 	if ksName == "" {
@@ -299,12 +256,12 @@ func buildDBDDLPlan(stmt sqlparser.Statement, _ *sqlparser.ReservedVars, vschema
 	switch dbDDL := dbDDLstmt.(type) {
 	case *sqlparser.DropDatabase:
 		if dbDDL.IfExists && !ksExists {
-			return newPlanResult(engine.NewRowsPrimitive(make([][]sqltypes.Value, 0), make([]*querypb.Field, 0))), nil
+			return engine.NewRowsPrimitive(make([][]sqltypes.Value, 0), make([]*querypb.Field, 0)), nil
 		}
 		if !ksExists {
 			return nil, vterrors.NewErrorf(vtrpcpb.Code_NOT_FOUND, vterrors.DbDropExists, "Can't drop database '%s'; database doesn't exists", ksName)
 		}
-		return newPlanResult(engine.NewDBDDL(ksName, false, queryTimeout(dbDDL.Comments.Directives()))), nil
+		return engine.NewDBDDL(ksName, false, queryTimeout(sqlparser.ExtractCommentDirectives(dbDDL.Comments))), nil
 	case *sqlparser.AlterDatabase:
 		if !ksExists {
 			return nil, vterrors.NewErrorf(vtrpcpb.Code_NOT_FOUND, vterrors.BadDb, "Can't alter database '%s'; unknown database", ksName)
@@ -312,17 +269,17 @@ func buildDBDDLPlan(stmt sqlparser.Statement, _ *sqlparser.ReservedVars, vschema
 		return nil, vterrors.New(vtrpcpb.Code_UNIMPLEMENTED, "alter database is not supported")
 	case *sqlparser.CreateDatabase:
 		if dbDDL.IfNotExists && ksExists {
-			return newPlanResult(engine.NewRowsPrimitive(make([][]sqltypes.Value, 0), make([]*querypb.Field, 0))), nil
+			return engine.NewRowsPrimitive(make([][]sqltypes.Value, 0), make([]*querypb.Field, 0)), nil
 		}
 		if !dbDDL.IfNotExists && ksExists {
 			return nil, vterrors.NewErrorf(vtrpcpb.Code_ALREADY_EXISTS, vterrors.DbCreateExists, "Can't create database '%s'; database exists", ksName)
 		}
-		return newPlanResult(engine.NewDBDDL(ksName, true, queryTimeout(dbDDL.Comments.Directives()))), nil
+		return engine.NewDBDDL(ksName, true, queryTimeout(sqlparser.ExtractCommentDirectives(dbDDL.Comments))), nil
 	}
 	return nil, vterrors.Errorf(vtrpcpb.Code_INTERNAL, "[BUG] database ddl not recognized: %s", sqlparser.String(dbDDLstmt))
 }
 
-func buildLoadPlan(query string, vschema plancontext.VSchema) (*planResult, error) {
+func buildLoadPlan(query string, vschema plancontext.VSchema) (engine.Primitive, error) {
 	keyspace, err := vschema.DefaultKeyspace()
 	if err != nil {
 		return nil, err
@@ -336,34 +293,34 @@ func buildLoadPlan(query string, vschema plancontext.VSchema) (*planResult, erro
 		destination = key.DestinationAnyShard{}
 	}
 
-	return newPlanResult(&engine.Send{
+	return &engine.Send{
 		Keyspace:          keyspace,
 		TargetDestination: destination,
 		Query:             query,
 		IsDML:             true,
 		SingleShardOnly:   true,
-	}), nil
+	}, nil
 }
 
-func buildVSchemaDDLPlan(stmt *sqlparser.AlterVschema, vschema plancontext.VSchema) (*planResult, error) {
+func buildVSchemaDDLPlan(stmt *sqlparser.AlterVschema, vschema plancontext.VSchema) (engine.Primitive, error) {
 	_, keyspace, _, err := vschema.TargetDestination(stmt.Table.Qualifier.String())
 	if err != nil {
 		return nil, err
 	}
-	return newPlanResult(&engine.AlterVSchema{
+	return &engine.AlterVSchema{
 		Keyspace:        keyspace,
 		AlterVschemaDDL: stmt,
-	}, singleTable(keyspace.Name, stmt.Table.Name.String())), nil
+	}, nil
 }
 
-func buildFlushPlan(stmt *sqlparser.Flush, vschema plancontext.VSchema) (*planResult, error) {
+func buildFlushPlan(stmt *sqlparser.Flush, vschema plancontext.VSchema) (engine.Primitive, error) {
 	if len(stmt.TableNames) == 0 {
 		return buildFlushOptions(stmt, vschema)
 	}
 	return buildFlushTables(stmt, vschema)
 }
 
-func buildFlushOptions(stmt *sqlparser.Flush, vschema plancontext.VSchema) (*planResult, error) {
+func buildFlushOptions(stmt *sqlparser.Flush, vschema plancontext.VSchema) (engine.Primitive, error) {
 	dest, keyspace, _, err := vschema.TargetDestination("")
 	if err != nil {
 		return nil, err
@@ -371,22 +328,16 @@ func buildFlushOptions(stmt *sqlparser.Flush, vschema plancontext.VSchema) (*pla
 	if dest == nil {
 		dest = key.DestinationAllShards{}
 	}
-	tc := &tableCollector{}
-	for _, tbl := range stmt.TableNames {
-		tc.addASTTable(keyspace.Name, tbl)
-	}
-
-	return newPlanResult(&engine.Send{
+	return &engine.Send{
 		Keyspace:          keyspace,
 		TargetDestination: dest,
 		Query:             sqlparser.String(stmt),
 		IsDML:             false,
 		SingleShardOnly:   false,
-	}, tc.getTables()...), nil
+	}, nil
 }
 
-func buildFlushTables(stmt *sqlparser.Flush, vschema plancontext.VSchema) (*planResult, error) {
-	tc := &tableCollector{}
+func buildFlushTables(stmt *sqlparser.Flush, vschema plancontext.VSchema) (engine.Primitive, error) {
 	type sendDest struct {
 		ks   *vindexes.Keyspace
 		dest key.Destination
@@ -411,7 +362,7 @@ func buildFlushTables(stmt *sqlparser.Flush, vschema plancontext.VSchema) (*plan
 		if table == nil {
 			return nil, vindexes.NotFoundError{TableName: tab.Name.String()}
 		}
-		tc.addTable(table.Keyspace.Name, table.Name.String())
+
 		ksTab = table.Keyspace
 		stmt.TableNames[i] = sqlparser.TableName{
 			Name: table.Name,
@@ -422,17 +373,17 @@ func buildFlushTables(stmt *sqlparser.Flush, vschema plancontext.VSchema) (*plan
 		if !isAvail {
 			keys = append(keys, key)
 		}
-		tables = append(tables, stmt.TableNames[i])
+		tables = append(tables, stmt.TableNames[i]) // = append(tables.TableNames, stmt.TableNames[i])
 		tablesMap[key] = tables
 	}
 
 	if len(tablesMap) == 1 {
 		for sendDest, tables := range tablesMap {
-			return newPlanResult(&engine.Send{
+			return &engine.Send{
 				Keyspace:          sendDest.ks,
 				TargetDestination: sendDest.dest,
 				Query:             sqlparser.String(newFlushStmt(stmt, tables)),
-			}, tc.getTables()...), nil
+			}, nil
 		}
 	}
 
@@ -440,61 +391,19 @@ func buildFlushTables(stmt *sqlparser.Flush, vschema plancontext.VSchema) (*plan
 		return keys[i].ks.Name < keys[j].ks.Name
 	})
 
-	var sources []engine.Primitive
+	finalPlan := &engine.Concatenate{
+		Sources: nil,
+	}
 	for _, sendDest := range keys {
 		plan := &engine.Send{
 			Keyspace:          sendDest.ks,
 			TargetDestination: sendDest.dest,
 			Query:             sqlparser.String(newFlushStmt(stmt, tablesMap[sendDest])),
 		}
-		sources = append(sources, plan)
-	}
-	return newPlanResult(engine.NewConcatenate(sources, nil), tc.getTables()...), nil
-}
-
-type tableCollector struct {
-	tables map[string]any
-}
-
-func (tc *tableCollector) addTable(ks, tbl string) {
-	if tc.tables == nil {
-		tc.tables = map[string]any{}
-	}
-	tc.tables[fmt.Sprintf("%s.%s", ks, tbl)] = nil
-}
-
-func (tc *tableCollector) addASTTable(ks string, tbl sqlparser.TableName) {
-	tc.addTable(ks, tbl.Name.String())
-}
-
-func (tc *tableCollector) getTables() []string {
-	tableNames := make([]string, 0, len(tc.tables))
-	for tbl := range tc.tables {
-		tableNames = append(tableNames, tbl)
+		finalPlan.Sources = append(finalPlan.Sources, plan)
 	}
 
-	sort.Strings(tableNames)
-	return tableNames
-}
-
-func (tc *tableCollector) addVindexTable(t *vindexes.Table) {
-	if t == nil {
-		return
-	}
-	ks, tbl := "", t.Name.String()
-	if t.Keyspace != nil {
-		ks = t.Keyspace.Name
-	}
-	tc.addTable(ks, tbl)
-}
-
-func (tc *tableCollector) addAllTables(tables []string) {
-	if tc.tables == nil {
-		tc.tables = map[string]any{}
-	}
-	for _, tbl := range tables {
-		tc.tables[tbl] = nil
-	}
+	return finalPlan, nil
 }
 
 func newFlushStmt(stmt *sqlparser.Flush, tables sqlparser.TableNames) *sqlparser.Flush {

@@ -18,7 +18,7 @@ package evalengine
 
 import (
 	"vitess.io/vitess/go/mysql/collations"
-	"vitess.io/vitess/go/sqltypes"
+	querypb "vitess.io/vitess/go/vt/proto/query"
 )
 
 func (expr *Literal) constant() bool {
@@ -81,7 +81,7 @@ func (expr *LikeExpr) simplify(env *ExpressionEnv) error {
 	}
 
 	lit2, _ := expr.Right.(*Literal)
-	if lit2 != nil && lit2.Val.isTextual() {
+	if lit2 != nil && lit2.Val.textual() {
 		expr.MatchCollation = lit2.Val.collation().Collation
 		coll := collations.Local().LookupByID(expr.MatchCollation)
 		expr.Match = coll.Wildcard(lit2.Val.bytes(), 0, 0, 0)
@@ -101,7 +101,7 @@ func (inexpr *InExpr) simplify(env *ExpressionEnv) error {
 
 	var (
 		collation collations.ID
-		typ       sqltypes.Type
+		typ       querypb.Type
 		optimize  = true
 	)
 
@@ -168,16 +168,6 @@ func (c *CallExpr) constant() bool {
 
 func (c *CallExpr) simplify(env *ExpressionEnv) error {
 	return c.Arguments.simplify(env)
-}
-
-func (c *WeightStringCallExpr) constant() bool {
-	return c.String.constant()
-}
-
-func (c *WeightStringCallExpr) simplify(env *ExpressionEnv) error {
-	var err error
-	c.String, err = simplifyExpr(env, c.String)
-	return err
 }
 
 func simplifyExpr(env *ExpressionEnv, e Expr) (Expr, error) {

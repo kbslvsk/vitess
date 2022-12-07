@@ -60,17 +60,17 @@ func newReplicationLagCache(historyCapacityPerReplica int) *replicationLagCache 
 
 // add inserts or updates "r" in the cache for the replica with the key "r.Key".
 func (c *replicationLagCache) add(r replicationLagRecord) {
-	if !r.Serving {
+	if !r.Up {
 		// Tablet is down. Do no longer track it.
-		delete(c.entries, discovery.TabletToMapKey(r.Tablet))
-		delete(c.ignoredSlowReplicasInARow, discovery.TabletToMapKey(r.Tablet))
+		delete(c.entries, r.Key)
+		delete(c.ignoredSlowReplicasInARow, r.Key)
 		return
 	}
 
-	entry, ok := c.entries[discovery.TabletToMapKey(r.Tablet)]
+	entry, ok := c.entries[r.Key]
 	if !ok {
 		entry = newReplicationLagHistory(c.historyCapacityPerReplica)
-		c.entries[discovery.TabletToMapKey(r.Tablet)] = entry
+		c.entries[r.Key] = entry
 	}
 
 	entry.add(r)
@@ -114,7 +114,7 @@ func (c *replicationLagCache) sortByLag(ignoreNSlowestReplicas int, minimumRepli
 	for _, v := range c.entries {
 		record := v.latest()
 		if int64(record.Stats.ReplicationLagSeconds) >= minimumReplicationLag {
-			list = append(list, record.TabletHealth)
+			list = append(list, record.LegacyTabletStats)
 			i++
 		}
 	}
@@ -122,13 +122,13 @@ func (c *replicationLagCache) sortByLag(ignoreNSlowestReplicas int, minimumRepli
 
 	// Now remember the N slowest replicas.
 	for i := len(list) - 1; len(list) > 0 && i >= len(list)-ignoreNSlowestReplicas; i-- {
-		c.slowReplicas[discovery.TabletToMapKey(list[i].Tablet)] = true
+		c.slowReplicas[list[i].Key] = true
 	}
 }
 
-// byLagAndTabletUID is a slice of discovery.TabletHealth elements that
+// byLagAndTabletUID is a slice of discovery.LegacyTabletStats elements that
 // implements sort.Interface to sort by replication lag and tablet Uid.
-type byLagAndTabletUID []discovery.TabletHealth
+type byLagAndTabletUID []discovery.LegacyTabletStats
 
 func (a byLagAndTabletUID) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
 func (a byLagAndTabletUID) Len() int      { return len(a) }

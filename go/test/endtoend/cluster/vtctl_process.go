@@ -50,7 +50,7 @@ func (vtctl *VtctlProcess) AddCellInfo(Cell string) (err error) {
 		tmpProcess.Args = append(tmpProcess.Args, "--test.coverprofile="+getCoveragePath("vtctl-addcell.out"))
 	}
 	tmpProcess.Args = append(tmpProcess.Args,
-		"AddCellInfo", "--",
+		"AddCellInfo",
 		"--root", vtctl.TopoRootPath+Cell,
 		"--server_address", vtctl.TopoServerAddress,
 		Cell)
@@ -72,6 +72,7 @@ func (vtctl *VtctlProcess) CreateKeyspace(keyspace string) (err error) {
 func (vtctl *VtctlProcess) ExecuteCommandWithOutput(args ...string) (result string, err error) {
 	args = append([]string{
 		"--log_dir", vtctl.LogDir,
+		"--enable_queries",
 		"--topo_implementation", vtctl.TopoImplementation,
 		"--topo_global_server_address", vtctl.TopoGlobalAddress,
 		"--topo_global_root", vtctl.TopoGlobalRoot}, args...)
@@ -90,6 +91,7 @@ func (vtctl *VtctlProcess) ExecuteCommandWithOutput(args ...string) (result stri
 // ExecuteCommand executes any vtctlclient command
 func (vtctl *VtctlProcess) ExecuteCommand(args ...string) (err error) {
 	args = append([]string{
+		"--enable_queries",
 		"--topo_implementation", vtctl.TopoImplementation,
 		"--topo_global_server_address", vtctl.TopoGlobalAddress,
 		"--topo_global_root", vtctl.TopoGlobalRoot}, args...)

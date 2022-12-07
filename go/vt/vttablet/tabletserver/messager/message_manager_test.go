@@ -64,7 +64,7 @@ var (
 
 func newMMTable() *schema.Table {
 	return &schema.Table{
-		Name: sqlparser.NewIdentifierCS("foo"),
+		Name: sqlparser.NewTableIdent("foo"),
 		Type: schema.Message,
 		MessageInfo: &schema.MessageInfo{
 			Fields:             testFields,
@@ -80,7 +80,7 @@ func newMMTable() *schema.Table {
 
 func newMMTableWithBackoff() *schema.Table {
 	return &schema.Table{
-		Name: sqlparser.NewIdentifierCS("foo"),
+		Name: sqlparser.NewTableIdent("foo"),
 		Type: schema.Message,
 		MessageInfo: &schema.MessageInfo{
 			Fields:             testFields,
@@ -216,7 +216,7 @@ func TestMessageManagerSend(t *testing.T) {
 	want := &sqltypes.Result{
 		Fields: testFields,
 	}
-	if got := <-r1.ch; !got.Equal(want) {
+	if got := <-r1.ch; !reflect.DeepEqual(got, want) {
 		t.Errorf("Received: %v, want %v", got, want)
 	}
 	// Set the channel to verify call to Postpone.
@@ -230,7 +230,7 @@ func TestMessageManagerSend(t *testing.T) {
 			sqltypes.NULL,
 		}},
 	}
-	if got := <-r1.ch; !got.Equal(want) {
+	if got := <-r1.ch; !reflect.DeepEqual(got, want) {
 		t.Errorf("Received: %v, want %v", got, want)
 	}
 
@@ -415,7 +415,7 @@ func TestMessageManagerBatchSend(t *testing.T) {
 			sqltypes.NULL,
 		}},
 	}
-	if got := <-r1.ch; !got.Equal(want) {
+	if got := <-r1.ch; !reflect.DeepEqual(got, want) {
 		t.Errorf("Received: %v, want %v", got, row1)
 	}
 	mm.mu.Lock()
@@ -432,7 +432,7 @@ func TestMessageManagerBatchSend(t *testing.T) {
 			sqltypes.NULL,
 		}},
 	}
-	if got := <-r1.ch; !got.Equal(want) {
+	if got := <-r1.ch; !reflect.DeepEqual(got, want) {
 		t.Errorf("Received: %+v, want %+v", got, row1)
 	}
 }
@@ -481,7 +481,7 @@ func TestMessageManagerStreamerSimple(t *testing.T) {
 			sqltypes.NewVarBinary("1"),
 		}},
 	}
-	if got := <-r1.ch; !got.Equal(want) {
+	if got := <-r1.ch; !reflect.DeepEqual(got, want) {
 		t.Errorf("Received: %v, want %v", got, want)
 	}
 }
@@ -569,7 +569,7 @@ func TestMessageManagerStreamerAndPoller(t *testing.T) {
 			sqltypes.NewVarBinary("3"),
 		}},
 	}
-	if got := <-r1.ch; !got.Equal(want) {
+	if got := <-r1.ch; !reflect.DeepEqual(got, want) {
 		t.Errorf("Received: %v, want %v", got, want)
 	}
 }
@@ -747,7 +747,7 @@ func TestMMGenerate(t *testing.T) {
 		t.Errorf("gotAcked: %d, should be with 10s of %d", gotAcked, wantAcked)
 	}
 	gotids := bv["ids"]
-	wantids := sqltypes.TestBindVariable([]any{[]byte{'1'}, []byte{'2'}})
+	wantids := sqltypes.TestBindVariable([]interface{}{[]byte{'1'}, []byte{'2'}})
 	utils.MustMatch(t, wantids, gotids, "did not match")
 
 	query, bv = mm.GeneratePostponeQuery([]string{"1", "2"})
@@ -792,7 +792,7 @@ func TestMMGenerateWithBackoff(t *testing.T) {
 	mm.Open()
 	defer mm.Close()
 
-	wantids := sqltypes.TestBindVariable([]any{[]byte{'1'}, []byte{'2'}})
+	wantids := sqltypes.TestBindVariable([]interface{}{[]byte{'1'}, []byte{'2'}})
 
 	query, bv := mm.GeneratePostponeQuery([]string{"1", "2"})
 	wantQuery := "update foo set time_next = :time_now + :wait_time + IF(FLOOR((:min_backoff<<ifnull(epoch, 0)) * :jitter) < :min_backoff, :min_backoff, IF(FLOOR((:min_backoff<<ifnull(epoch, 0)) * :jitter) > :max_backoff, :max_backoff, FLOOR((:min_backoff<<ifnull(epoch, 0)) * :jitter))), epoch = ifnull(epoch, 0)+1 where id in ::ids and time_acked is null"

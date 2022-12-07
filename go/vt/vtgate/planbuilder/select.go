@@ -20,9 +20,9 @@ import (
 	"errors"
 	"fmt"
 
-	"vitess.io/vitess/go/vt/log"
-
 	"vitess.io/vitess/go/vt/vtgate/planbuilder/plancontext"
+
+	"vitess.io/vitess/go/vt/orchestrator/external/golib/log"
 
 	"vitess.io/vitess/go/vt/key"
 
@@ -35,8 +35,8 @@ import (
 	"vitess.io/vitess/go/vt/vtgate/engine"
 )
 
-func buildSelectPlan(query string) stmtPlanner {
-	return func(stmt sqlparser.Statement, reservedVars *sqlparser.ReservedVars, vschema plancontext.VSchema) (*planResult, error) {
+func buildSelectPlan(query string) selectPlanner {
+	return func(stmt sqlparser.Statement, reservedVars *sqlparser.ReservedVars, vschema plancontext.VSchema) (engine.Primitive, error) {
 		sel := stmt.(*sqlparser.Select)
 		if sel.With != nil {
 			return nil, vterrors.New(vtrpcpb.Code_UNIMPLEMENTED, "unsupported: with expression in select statement")
@@ -47,7 +47,7 @@ func buildSelectPlan(query string) stmtPlanner {
 			return nil, err
 		}
 		if p != nil {
-			return newPlanResult(p), nil
+			return p, nil
 		}
 
 		getPlan := func(sel *sqlparser.Select) (logicalPlan, error) {
@@ -66,11 +66,11 @@ func buildSelectPlan(query string) stmtPlanner {
 			return nil, err
 		}
 
-		if shouldRetryAfterPredicateRewriting(plan) {
+		if shouldRetryWithCNFRewriting(plan) {
 			// by transforming the predicates to CNF, the planner will sometimes find better plans
 			primitive := rewriteToCNFAndReplan(stmt, getPlan)
 			if primitive != nil {
-				return newPlanResult(primitive), nil
+				return primitive, nil
 			}
 		}
 		primitive := plan.Primitive()
@@ -84,17 +84,17 @@ func buildSelectPlan(query string) stmtPlanner {
 			}
 		}
 
-		return newPlanResult(primitive), nil
+		return primitive, nil
 	}
 }
 
 func rewriteToCNFAndReplan(stmt sqlparser.Statement, getPlan func(sel *sqlparser.Select) (logicalPlan, error)) engine.Primitive {
-	rewritten := sqlparser.RewritePredicate(stmt)
+	rewritten := sqlparser.RewriteToCNF(stmt)
 	sel2, isSelect := rewritten.(*sqlparser.Select)
 	if isSelect {
 		log.Infof("retrying plan after cnf: %s", sqlparser.String(sel2))
 		plan2, err := getPlan(sel2)
-		if err == nil && !shouldRetryAfterPredicateRewriting(plan2) {
+		if err == nil && !shouldRetryWithCNFRewriting(plan2) {
 			// we only use this new plan if it's better than the old one we got
 			return plan2.Primitive()
 		}
@@ -102,7 +102,7 @@ func rewriteToCNFAndReplan(stmt sqlparser.Statement, getPlan func(sel *sqlparser
 	return nil
 }
 
-func shouldRetryAfterPredicateRewriting(plan logicalPlan) bool {
+func shouldRetryWithCNFRewriting(plan logicalPlan) bool {
 	// if we have a I_S query, but have not found table_schema or table_name, let's try CNF
 	var opcode engine.Opcode
 	var sysTableTableName map[string]evalengine.Expr
@@ -201,11 +201,12 @@ func (pb *primitiveBuilder) processSelect(sel *sqlparser.Select, reservedVars *s
 
 	if rb, ok := pb.plan.(*route); ok {
 		// TODO(sougou): this can probably be improved.
-		directives := sel.Comments.Directives()
+		directives := sqlparser.ExtractCommentDirectives(sel.Comments)
 		rb.eroute.QueryTimeout = queryTimeout(directives)
 		if rb.eroute.TargetDestination != nil {
 			return errors.New("unsupported: SELECT with a target destination")
 		}
+
 		if directives.IsSet(sqlparser.DirectiveScatterErrorsAsWarnings) {
 			rb.eroute.ScatterErrorsAsWarnings = true
 		}
@@ -301,7 +302,10 @@ func buildSQLCalcFoundRowsPlan(
 	sel2.Limit = nil
 
 	countStartExpr := []sqlparser.SelectExpr{&sqlparser.AliasedExpr{
-		Expr: &sqlparser.CountStar{},
+		Expr: &sqlparser.FuncExpr{
+			Name:  sqlparser.NewColIdent("count"),
+			Exprs: []sqlparser.SelectExpr{&sqlparser.StarExpr{}},
+		},
 	}}
 	if sel2.GroupBy == nil && sel2.Having == nil {
 		// if there is no grouping, we can use the same query and
@@ -316,7 +320,7 @@ func buildSQLCalcFoundRowsPlan(
 			From: []sqlparser.TableExpr{
 				&sqlparser.AliasedTableExpr{
 					Expr: &sqlparser.DerivedTable{Select: sel2},
-					As:   sqlparser.NewIdentifierCS("t"),
+					As:   sqlparser.NewTableIdent("t"),
 				},
 			},
 		}
@@ -346,30 +350,17 @@ func handleDualSelects(sel *sqlparser.Select, vschema plancontext.VSchema) (engi
 
 	exprs := make([]evalengine.Expr, len(sel.SelectExprs))
 	cols := make([]string, len(sel.SelectExprs))
-	var lockFunctions []*engine.LockFunc
 	for i, e := range sel.SelectExprs {
 		expr, ok := e.(*sqlparser.AliasedExpr)
 		if !ok {
 			return nil, nil
 		}
 		var err error
-		lFunc, isLFunc := expr.Expr.(*sqlparser.LockingFunc)
-		if isLFunc {
-			elem := &engine.LockFunc{Typ: expr.Expr.(*sqlparser.LockingFunc)}
-			if lFunc.Name != nil {
-				n, err := evalengine.Translate(lFunc.Name, nil)
-				if err != nil {
-					return nil, err
-				}
-				elem.Name = n
-			}
-			lockFunctions = append(lockFunctions, elem)
-			continue
+		if sqlparser.IsLockingFunc(expr.Expr) {
+			// if we are using any locking functions, we bail out here and send the whole query to a single destination
+			return buildLockingPrimitive(sel, vschema)
 		}
-		if len(lockFunctions) > 0 {
-			return nil, vterrors.New(vtrpcpb.Code_UNIMPLEMENTED, "unsupported: lock function and other expression in same select query")
-		}
-		exprs[i], err = evalengine.Translate(expr.Expr, evalengine.LookupDefaultCollation(vschema.ConnCollation()))
+		exprs[i], err = evalengine.Convert(expr.Expr, evalengine.LookupDefaultCollation(vschema.ConnCollation()))
 		if err != nil {
 			return nil, nil
 		}
@@ -378,9 +369,6 @@ func handleDualSelects(sel *sqlparser.Select, vschema plancontext.VSchema) (engi
 			cols[i] = sqlparser.String(expr.Expr)
 		}
 	}
-	if len(lockFunctions) > 0 {
-		return buildLockingPrimitive(sel, vschema, lockFunctions)
-	}
 	return &engine.Projection{
 		Exprs: exprs,
 		Cols:  cols,
@@ -388,7 +376,7 @@ func handleDualSelects(sel *sqlparser.Select, vschema plancontext.VSchema) (engi
 	}, nil
 }
 
-func buildLockingPrimitive(sel *sqlparser.Select, vschema plancontext.VSchema, lockFunctions []*engine.LockFunc) (engine.Primitive, error) {
+func buildLockingPrimitive(sel *sqlparser.Select, vschema plancontext.VSchema) (engine.Primitive, error) {
 	ks, err := vschema.FirstSortedKeyspace()
 	if err != nil {
 		return nil, err
@@ -397,8 +385,8 @@ func buildLockingPrimitive(sel *sqlparser.Select, vschema plancontext.VSchema, l
 	return &engine.Lock{
 		Keyspace:          ks,
 		TargetDestination: key.DestinationKeyspaceID{0},
+		Query:             sqlparser.String(sel),
 		FieldQuery:        buf.String(),
-		LockFunctions:     lockFunctions,
 	}, nil
 }
 

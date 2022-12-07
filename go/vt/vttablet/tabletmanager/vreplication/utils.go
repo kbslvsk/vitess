@@ -22,9 +22,6 @@ import (
 	"fmt"
 	"strconv"
 
-	"vitess.io/vitess/go/vt/log"
-
-	"vitess.io/vitess/go/mysql"
 	"vitess.io/vitess/go/vt/sqlparser"
 
 	"vitess.io/vitess/go/sqltypes"
@@ -128,43 +125,4 @@ func insertLogWithParams(dbClient *vdbClient, action string, vreplID uint32, par
 		return err
 	}
 	return nil
-}
-
-// isUnrecoverableError returns true if vreplication cannot recover from the given error and should completely terminate
-func isUnrecoverableError(err error) bool {
-	if err == nil {
-		return false
-	}
-	sqlErr, isSQLErr := err.(*mysql.SQLError)
-	if !isSQLErr {
-		return false
-	}
-	switch sqlErr.Num {
-	case
-		mysql.ERWarnDataOutOfRange,
-		mysql.ERDataTooLong,
-		mysql.ERWarnDataTruncated,
-		mysql.ERTruncatedWrongValue,
-		mysql.ERTruncatedWrongValueForField,
-		mysql.ERIllegalValueForType,
-		mysql.ErrWrongValueForType,
-		mysql.ErrCantCreateGeometryObject,
-		mysql.ErrGISDataWrongEndianess,
-		mysql.ErrNotImplementedForCartesianSRS,
-		mysql.ErrNotImplementedForProjectedSRS,
-		mysql.ErrNonPositiveRadius,
-		mysql.ERBadNullError,
-		mysql.ERDupEntry,
-		mysql.ERNoDefaultForField,
-		mysql.ERInvalidJSONText,
-		mysql.ERInvalidJSONTextInParams,
-		mysql.ERInvalidJSONBinaryData,
-		mysql.ERInvalidJSONCharset,
-		mysql.ERInvalidCastToJSON,
-		mysql.ERJSONValueTooBig,
-		mysql.ERJSONDocumentTooDeep:
-		log.Errorf("Got unrecoverable error: %v", sqlErr)
-		return true
-	}
-	return false
 }

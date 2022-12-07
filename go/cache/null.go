@@ -20,17 +20,17 @@ package cache
 type nullCache struct{}
 
 // Get never returns anything on the nullCache
-func (n *nullCache) Get(_ string) (any, bool) {
+func (n *nullCache) Get(_ string) (interface{}, bool) {
 	return nil, false
 }
 
 // Set is a no-op in the nullCache
-func (n *nullCache) Set(_ string, _ any) bool {
+func (n *nullCache) Set(_ string, _ interface{}) bool {
 	return false
 }
 
 // ForEach iterates the nullCache, which is always empty
-func (n *nullCache) ForEach(_ func(any) bool) {}
+func (n *nullCache) ForEach(_ func(interface{}) bool) {}
 
 // Delete is a no-op in the nullCache
 func (n *nullCache) Delete(_ string) {}

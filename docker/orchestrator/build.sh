@@ -18,7 +18,7 @@ set -e
 
 tmpdir=`mktemp -d`
 
-script="go install vitess.io/vitess/go/cmd/vtctlclient@latest && \
+script="go get vitess.io/vitess/go/cmd/vtctlclient && \
   git clone https://github.com/openark/orchestrator.git src/github.com/openark/orchestrator && \
   go install github.com/openark/orchestrator/go/cmd/orchestrator"
 
@@ -35,3 +35,4 @@ cp Dockerfile orchestrator.conf.json $tmpdir
 
 # Clean up
 rm -r $tmpdir
+

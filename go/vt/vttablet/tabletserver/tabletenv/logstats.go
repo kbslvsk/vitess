@@ -80,6 +80,11 @@ func (stats *LogStats) Send() {
 	StatsLogger.Send(stats)
 }
 
+// Context returns the context used by LogStats.
+func (stats *LogStats) Context() context.Context {
+	return stats.Ctx
+}
+
 // ImmediateCaller returns the immediate caller stored in LogStats.Ctx
 func (stats *LogStats) ImmediateCaller() string {
 	return callerid.GetUsername(callerid.ImmediateCallerIDFromContext(stats.Ctx))
@@ -184,14 +189,14 @@ func (stats *LogStats) Logf(w io.Writer, params url.Values) error {
 	rewrittenSQL := "[REDACTED]"
 	formattedBindVars := "\"[REDACTED]\""
 
-	if !streamlog.GetRedactDebugUIQueries() {
+	if !*streamlog.RedactDebugUIQueries {
 		rewrittenSQL = stats.RewrittenSQL()
 
 		_, fullBindParams := params["full"]
 		formattedBindVars = sqltypes.FormatBindVariables(
 			stats.BindVariables,
 			fullBindParams,
-			streamlog.GetQueryLogFormat() == streamlog.QueryLogFormatJSON,
+			*streamlog.QueryLogFormat == streamlog.QueryLogFormatJSON,
 		)
 	}
 
@@ -200,7 +205,7 @@ func (stats *LogStats) Logf(w io.Writer, params url.Values) error {
 
 	// Valid options for the QueryLogFormat are text or json
 	var fmtString string
-	switch streamlog.GetQueryLogFormat() {
+	switch *streamlog.QueryLogFormat {
 	case streamlog.QueryLogFormatText:
 		fmtString = "%v\t%v\t%v\t'%v'\t'%v'\t%v\t%v\t%.6f\t%v\t%q\t%v\t%v\t%q\t%v\t%.6f\t%.6f\t%v\t%v\t%v\t%q\t\n"
 	case streamlog.QueryLogFormatJSON:

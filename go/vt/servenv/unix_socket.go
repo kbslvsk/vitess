@@ -17,27 +17,26 @@ limitations under the License.
 package servenv
 
 import (
+	"flag"
 	"net"
 	"os"
-
-	"github.com/spf13/pflag"
 
 	"vitess.io/vitess/go/vt/log"
 )
 
 var (
-	// socketFile has the flag used when calling
+	// SocketFile has the flag used when calling
 	// RegisterDefaultSocketFileFlags.
-	socketFile string
+	SocketFile *string
 )
 
 // serveSocketFile listen to the named socket and serves RPCs on it.
 func serveSocketFile() {
-	if socketFile == "" {
+	if SocketFile == nil || *SocketFile == "" {
 		log.Infof("Not listening on socket file")
 		return
 	}
-	name := socketFile
+	name := *SocketFile
 
 	// try to delete if file exists
 	if _, err := os.Stat(name); err == nil {
@@ -58,7 +57,5 @@ func serveSocketFile() {
 // RegisterDefaultSocketFileFlags registers the default flags for listening
 // to a socket. This needs to be called before flags are parsed.
 func RegisterDefaultSocketFileFlags() {
-	OnParse(func(fs *pflag.FlagSet) {
-		fs.StringVar(&socketFile, "socket_file", socketFile, "Local unix socket file to listen on")
-	})
+	SocketFile = flag.String("socket_file", "", "Local unix socket file to listen on")
 }

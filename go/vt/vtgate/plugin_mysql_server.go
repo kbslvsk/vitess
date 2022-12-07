@@ -44,7 +44,6 @@ import (
 
 	querypb "vitess.io/vitess/go/vt/proto/query"
 	vtgatepb "vitess.io/vitess/go/vt/proto/vtgate"
-	vtrpcpb "vitess.io/vitess/go/vt/proto/vtrpc"
 
 	"github.com/google/uuid"
 )
@@ -74,8 +73,6 @@ var (
 	mysqlConnReadTimeout  = flag.Duration("mysql_server_read_timeout", 0, "connection read timeout")
 	mysqlConnWriteTimeout = flag.Duration("mysql_server_write_timeout", 0, "connection write timeout")
 	mysqlQueryTimeout     = flag.Duration("mysql_server_query_timeout", 0, "mysql query timeout")
-
-	mysqlConnBufferPooling = flag.Bool("mysql-server-pool-conn-read-buffers", false, "If set, the server will pool incoming connection read buffers")
 
 	mysqlDefaultWorkloadName = flag.String("mysql_default_workload", "OLTP", "Default session workload (OLTP, OLAP, DBA)")
 	mysqlDefaultWorkload     int32
@@ -340,11 +337,6 @@ func (vh *vtgateHandler) WarningCount(c *mysql.Conn) uint16 {
 	return uint16(len(vh.session(c).GetWarnings()))
 }
 
-// ComBinlogDumpGTID is part of the mysql.Handler interface.
-func (vh *vtgateHandler) ComBinlogDumpGTID(c *mysql.Conn, gtidSet mysql.GTIDSet) error {
-	return vterrors.New(vtrpcpb.Code_UNIMPLEMENTED, "ComBinlogDumpGTID")
-}
-
 func (vh *vtgateHandler) session(c *mysql.Conn) *vtgatepb.Session {
 	session, _ := c.ClientData.(*vtgatepb.Session)
 	if session == nil {
@@ -357,9 +349,9 @@ func (vh *vtgateHandler) session(c *mysql.Conn) *vtgatepb.Session {
 				// The collation field of ExecuteOption is set right before an execution.
 			},
 			Autocommit:           true,
-			DDLStrategy:          defaultDDLStrategy,
+			DDLStrategy:          *defaultDDLStrategy,
 			SessionUUID:          u.String(),
-			EnableSystemSettings: sysVarSetEnabled,
+			EnableSystemSettings: *sysVarSetEnabled,
 		}
 		if c.Capabilities&mysql.CapabilityClientFoundRows != 0 {
 			session.Options.ClientFoundRows = true
@@ -435,21 +427,12 @@ func initMySQLProtocol() {
 	var err error
 	vtgateHandle = newVtgateHandler(rpcVTGate)
 	if *mysqlServerPort >= 0 {
-		mysqlListener, err = mysql.NewListener(
-			*mysqlTCPVersion,
-			net.JoinHostPort(*mysqlServerBindAddress, fmt.Sprintf("%v", *mysqlServerPort)),
-			authServer,
-			vtgateHandle,
-			*mysqlConnReadTimeout,
-			*mysqlConnWriteTimeout,
-			*mysqlProxyProtocol,
-			*mysqlConnBufferPooling,
-		)
+		mysqlListener, err = mysql.NewListener(*mysqlTCPVersion, net.JoinHostPort(*mysqlServerBindAddress, fmt.Sprintf("%v", *mysqlServerPort)), authServer, vtgateHandle, *mysqlConnReadTimeout, *mysqlConnWriteTimeout, *mysqlProxyProtocol)
 		if err != nil {
 			log.Exitf("mysql.NewListener failed: %v", err)
 		}
-		if mySQLVersion := servenv.MySQLServerVersion(); mySQLVersion != "" {
-			mysqlListener.ServerVersion = mySQLVersion
+		if *servenv.MySQLServerVersion != "" {
+			mysqlListener.ServerVersion = *servenv.MySQLServerVersion
 		}
 		if *mysqlSslCert != "" && *mysqlSslKey != "" {
 			tlsVersion, err := vttls.TLSVersionToNumber(*mysqlTLSMinVersion)
@@ -487,17 +470,7 @@ func initMySQLProtocol() {
 // newMysqlUnixSocket creates a new unix socket mysql listener. If a socket file already exists, attempts
 // to clean it up.
 func newMysqlUnixSocket(address string, authServer mysql.AuthServer, handler mysql.Handler) (*mysql.Listener, error) {
-	listener, err := mysql.NewListener(
-		"unix",
-		address,
-		authServer,
-		handler,
-		*mysqlConnReadTimeout,
-		*mysqlConnWriteTimeout,
-		false,
-		*mysqlConnBufferPooling,
-	)
-
+	listener, err := mysql.NewListener("unix", address, authServer, handler, *mysqlConnReadTimeout, *mysqlConnWriteTimeout, false)
 	switch err := err.(type) {
 	case nil:
 		return listener, nil
@@ -518,16 +491,7 @@ func newMysqlUnixSocket(address string, authServer mysql.AuthServer, handler mys
 			log.Errorf("Couldn't remove existent socket file: %s", address)
 			return nil, err
 		}
-		listener, listenerErr := mysql.NewListener(
-			"unix",
-			address,
-			authServer,
-			handler,
-			*mysqlConnReadTimeout,
-			*mysqlConnWriteTimeout,
-			false,
-			*mysqlConnBufferPooling,
-		)
+		listener, listenerErr := mysql.NewListener("unix", address, authServer, handler, *mysqlConnReadTimeout, *mysqlConnWriteTimeout, false)
 		return listener, listenerErr
 	default:
 		return nil, err
@@ -564,10 +528,6 @@ func shutdownMysqlProtocolAndDrain() {
 
 func rollbackAtShutdown() {
 	defer log.Flush()
-	if vtgateHandle == nil {
-		// we still haven't been able to initialise the vtgateHandler, so we don't need to rollback anything
-		return
-	}
 
 	// Close all open connections. If they're waiting for reads, this will cause
 	// them to error out, which will automatically rollback open transactions.

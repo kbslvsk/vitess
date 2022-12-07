@@ -168,7 +168,7 @@ type messageManager struct {
 	tsv TabletService
 	vs  VStreamer
 
-	name         sqlparser.IdentifierCS
+	name         sqlparser.TableIdent
 	fieldResult  *sqltypes.Result
 	ackWaitTime  time.Duration
 	purgeAfter   time.Duration
@@ -284,8 +284,8 @@ func newMessageManager(tsv TabletService, vs VStreamer, table *schema.Table, pos
 	return mm
 }
 
-func buildPostponeQuery(name sqlparser.IdentifierCS, minBackoff, maxBackoff time.Duration) *sqlparser.ParsedQuery {
-	var args []any
+func buildPostponeQuery(name sqlparser.TableIdent, minBackoff, maxBackoff time.Duration) *sqlparser.ParsedQuery {
+	var args []interface{}
 
 	// since messages are immediately postponed upon sending, we need to add exponential backoff on top
 	// of the ackWaitTime, otherwise messages will be resent too quickly.
@@ -337,9 +337,9 @@ func buildSelectColumnList(t *schema.Table) string {
 	for i, c := range t.MessageInfo.Fields {
 		// Column names may have to be escaped.
 		if i == 0 {
-			buf.Myprintf("%v", sqlparser.NewIdentifierCI(c.Name))
+			buf.Myprintf("%v", sqlparser.NewColIdent(c.Name))
 		} else {
-			buf.Myprintf(", %v", sqlparser.NewIdentifierCI(c.Name))
+			buf.Myprintf(", %v", sqlparser.NewColIdent(c.Name))
 		}
 	}
 	return buf.String()
@@ -364,37 +364,27 @@ func (mm *messageManager) Open() {
 
 // Close stops the messageManager service.
 func (mm *messageManager) Close() {
-	log.Infof("messageManager - started execution of Close")
 	mm.pollerTicks.Stop()
 	mm.purgeTicks.Stop()
-	log.Infof("messageManager - stopped the ticks. Acquiring mu Lock")
 
 	mm.mu.Lock()
-	log.Infof("messageManager - acquired mu Lock")
 	if !mm.isOpen {
-		log.Infof("messageManager - manager is not open")
 		mm.mu.Unlock()
 		return
 	}
 	mm.isOpen = false
-	log.Infof("messageManager - cancelling all receivers")
 	for _, rcvr := range mm.receivers {
 		rcvr.receiver.cancel()
 	}
 	mm.receivers = nil
 	MessageStats.Set([]string{mm.name.String(), "ClientCount"}, 0)
-	log.Infof("messageManager - clearing cache")
 	mm.cache.Clear()
-	log.Infof("messageManager - sending a broadcast")
 	// This broadcast will cause runSend to exit.
 	mm.cond.Broadcast()
-	log.Infof("messageManager - stopping VStream")
 	mm.stopVStream()
 	mm.mu.Unlock()
 
-	log.Infof("messageManager - Waiting for the wait group")
 	mm.wg.Wait()
-	log.Infof("messageManager - closed")
 }
 
 // Subscribe registers the send function as a receiver of messages

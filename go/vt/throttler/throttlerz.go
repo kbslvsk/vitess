@@ -77,7 +77,7 @@ func listThrottlers(w http.ResponseWriter, m *managerImpl) {
 	throttlers := m.Throttlers()
 
 	// Log error
-	if err := listTemplate.Execute(w, map[string]any{
+	if err := listTemplate.Execute(w, map[string]interface{}{
 		"Throttlers": throttlers,
 	}); err != nil {
 		log.Errorf("listThrottlers failed :%v", err)

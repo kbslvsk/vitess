@@ -19,10 +19,5 @@
 
 source ./env.sh
 
-cell=${CELL:-'test'}
-uid=$TABLET_UID
-printf -v alias '%s-%010d' $cell $uid
-echo "Shutting down MySQL for tablet $alias..."
-
-mysqlctl --tablet_uid $TABLET_UID shutdown
+mysqlctl -tablet_uid $TABLET_UID shutdown 
 

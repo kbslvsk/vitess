@@ -30,7 +30,6 @@ import { ContentContainer } from '../layout/ContentContainer';
 import { WorkspaceHeader } from '../layout/WorkspaceHeader';
 import { WorkspaceTitle } from '../layout/WorkspaceTitle';
 import { KeyspaceLink } from '../links/KeyspaceLink';
-import { QueryLoadingPlaceholder } from '../placeholders/QueryLoadingPlaceholder';
 import { HelpTooltip } from '../tooltip/HelpTooltip';
 
 const TABLE_COLUMNS = [
@@ -63,11 +62,11 @@ const TABLE_COLUMNS = [
 export const Schemas = () => {
     useDocumentTitle('Schemas');
 
-    const schemasQuery = useSchemas();
+    const { data = [] } = useSchemas();
     const { value: filter, updateValue: updateFilter } = useSyncedURLParam('filter');
 
     const filteredData = React.useMemo(() => {
-        const tableDefinitions = getTableDefinitions(schemasQuery.data);
+        const tableDefinitions = getTableDefinitions(data);
 
         const mapped = tableDefinitions.map((d) => ({
             cluster: d.cluster?.name,
@@ -79,7 +78,7 @@ export const Schemas = () => {
 
         const filtered = filterNouns(filter, mapped);
         return orderBy(filtered, ['cluster', 'keyspace', 'table']);
-    }, [schemasQuery.data, filter]);
+    }, [data, filter]);
 
     const renderRows = (rows: typeof filteredData) =>
         rows.map((row, idx) => {
@@ -121,7 +120,6 @@ export const Schemas = () => {
                     value={filter || ''}
                 />
                 <DataTable columns={TABLE_COLUMNS} data={filteredData} renderRows={renderRows} />
-                <QueryLoadingPlaceholder query={schemasQuery} />
             </ContentContainer>
         </div>
     );

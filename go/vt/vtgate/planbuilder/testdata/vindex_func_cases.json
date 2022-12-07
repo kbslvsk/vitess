@@ -2,7 +2,7 @@
   {
     "comment": "vindex func read all cols",
     "query": "select id, keyspace_id, range_start, range_end, hex_keyspace_id, shard from user_index where id = :id",
-    "v3-plan": {
+    "plan": {
       "QueryType": "SELECT",
       "Original": "select id, keyspace_id, range_start, range_end, hex_keyspace_id, shard from user_index where id = :id",
       "Instructions": {
@@ -27,41 +27,12 @@
         "Value": ":id",
         "Vindex": "user_index"
       }
-    },
-    "gen4-plan": {
-      "QueryType": "SELECT",
-      "Original": "select id, keyspace_id, range_start, range_end, hex_keyspace_id, shard from user_index where id = :id",
-      "Instructions": {
-        "OperatorType": "VindexFunc",
-        "Variant": "VindexMap",
-        "Columns": [
-          0,
-          1,
-          2,
-          3,
-          4,
-          5
-        ],
-        "Fields": {
-          "hex_keyspace_id": "VARBINARY",
-          "id": "VARBINARY",
-          "keyspace_id": "VARBINARY",
-          "range_end": "VARBINARY",
-          "range_start": "VARBINARY",
-          "shard": "VARBINARY"
-        },
-        "Value": ":id",
-        "Vindex": "user_index"
-      },
-      "TablesUsed": [
-        "user_index"
-      ]
     }
   },
   {
     "comment": "vindex func select *",
     "query": "select * from user_index where id = :id",
-    "v3-plan": {
+    "plan": {
       "QueryType": "SELECT",
       "Original": "select * from user_index where id = :id",
       "Instructions": {
@@ -86,41 +57,12 @@
         "Value": ":id",
         "Vindex": "user_index"
       }
-    },
-    "gen4-plan": {
-      "QueryType": "SELECT",
-      "Original": "select * from user_index where id = :id",
-      "Instructions": {
-        "OperatorType": "VindexFunc",
-        "Variant": "VindexMap",
-        "Columns": [
-          0,
-          1,
-          2,
-          3,
-          4,
-          5
-        ],
-        "Fields": {
-          "hex_keyspace_id": "VARBINARY",
-          "id": "VARBINARY",
-          "keyspace_id": "VARBINARY",
-          "range_end": "VARBINARY",
-          "range_start": "VARBINARY",
-          "shard": "VARBINARY"
-        },
-        "Value": ":id",
-        "Vindex": "user_index"
-      },
-      "TablesUsed": [
-        "user_index"
-      ]
     }
   },
   {
     "comment": "vindex func read with id repeated",
     "query": "select id, keyspace_id, id from user_index where id = :id",
-    "v3-plan": {
+    "plan": {
       "QueryType": "SELECT",
       "Original": "select id, keyspace_id, id from user_index where id = :id",
       "Instructions": {
@@ -138,28 +80,6 @@
         "Value": ":id",
         "Vindex": "user_index"
       }
-    },
-    "gen4-plan": {
-      "QueryType": "SELECT",
-      "Original": "select id, keyspace_id, id from user_index where id = :id",
-      "Instructions": {
-        "OperatorType": "VindexFunc",
-        "Variant": "VindexMap",
-        "Columns": [
-          0,
-          1,
-          0
-        ],
-        "Fields": {
-          "id": "VARBINARY",
-          "keyspace_id": "VARBINARY"
-        },
-        "Value": ":id",
-        "Vindex": "user_index"
-      },
-      "TablesUsed": [
-        "user_index"
-      ]
     }
   },
   {
@@ -170,7 +90,7 @@
   {
     "comment": "disambiguated vindex reference",
     "query": "select id, keyspace_id, id from second_user.hash_dup where id = :id",
-    "v3-plan": {
+    "plan": {
       "QueryType": "SELECT",
       "Original": "select id, keyspace_id, id from second_user.hash_dup where id = :id",
       "Instructions": {
@@ -188,28 +108,6 @@
         "Value": ":id",
         "Vindex": "hash_dup"
       }
-    },
-    "gen4-plan": {
-      "QueryType": "SELECT",
-      "Original": "select id, keyspace_id, id from second_user.hash_dup where id = :id",
-      "Instructions": {
-        "OperatorType": "VindexFunc",
-        "Variant": "VindexMap",
-        "Columns": [
-          0,
-          1,
-          0
-        ],
-        "Fields": {
-          "id": "VARBINARY",
-          "keyspace_id": "VARBINARY"
-        },
-        "Value": ":id",
-        "Vindex": "hash_dup"
-      },
-      "TablesUsed": [
-        "hash_dup"
-      ]
     }
   },
   {
@@ -221,7 +119,7 @@
       "Instructions": {
         "OperatorType": "Join",
         "Variant": "Join",
-        "JoinColumnIndexes": "L:0,R:0",
+        "JoinColumnIndexes": "-1,1",
         "TableName": "_unsharded",
         "Inputs": [
           {
@@ -256,7 +154,7 @@
       "Instructions": {
         "OperatorType": "Join",
         "Variant": "Join",
-        "JoinColumnIndexes": "L:0,R:0",
+        "JoinColumnIndexes": "-1,1",
         "TableName": "_unsharded",
         "Inputs": [
           {
@@ -266,7 +164,7 @@
               1
             ],
             "Fields": {
-              "keyspace_id": "VARBINARY"
+              "user_index.keyspace_id": "VARBINARY"
             },
             "Value": ":id",
             "Vindex": "user_index"
@@ -283,11 +181,7 @@
             "Table": "unsharded"
           }
         ]
-      },
-      "TablesUsed": [
-        "main.unsharded",
-        "user_index"
-      ]
+      }
     }
   },
   {
@@ -299,7 +193,7 @@
       "Instructions": {
         "OperatorType": "Join",
         "Variant": "Join",
-        "JoinColumnIndexes": "R:0,L:0",
+        "JoinColumnIndexes": "1,-1",
         "TableName": "unsharded_",
         "Inputs": [
           {
@@ -334,7 +228,7 @@
       "Instructions": {
         "OperatorType": "Join",
         "Variant": "Join",
-        "JoinColumnIndexes": "R:0,L:0",
+        "JoinColumnIndexes": "1,-1",
         "TableName": "unsharded_",
         "Inputs": [
           {
@@ -355,17 +249,13 @@
               1
             ],
             "Fields": {
-              "keyspace_id": "VARBINARY"
+              "user_index.keyspace_id": "VARBINARY"
             },
             "Value": ":id",
             "Vindex": "user_index"
           }
         ]
-      },
-      "TablesUsed": [
-        "main.unsharded",
-        "user_index"
-      ]
+      }
     }
   },
   {
@@ -377,7 +267,7 @@
       "Instructions": {
         "OperatorType": "Join",
         "Variant": "Join",
-        "JoinColumnIndexes": "L:0,L:1,R:0",
+        "JoinColumnIndexes": "-1,-2,1",
         "JoinVars": {
           "user_index_id": 0
         },
@@ -417,7 +307,7 @@
       "Instructions": {
         "OperatorType": "Join",
         "Variant": "Join",
-        "JoinColumnIndexes": "L:0,L:1,R:0",
+        "JoinColumnIndexes": "-1,-2,1",
         "JoinVars": {
           "user_index_id": 0
         },
@@ -431,8 +321,8 @@
               1
             ],
             "Fields": {
-              "id": "VARBINARY",
-              "keyspace_id": "VARBINARY"
+              "user_index.id": "VARBINARY",
+              "user_index.keyspace_id": "VARBINARY"
             },
             "Value": ":id",
             "Vindex": "user_index"
@@ -449,11 +339,7 @@
             "Table": "unsharded"
           }
         ]
-      },
-      "TablesUsed": [
-        "main.unsharded",
-        "user_index"
-      ]
+      }
     }
   },
   {
@@ -465,7 +351,7 @@
       "Instructions": {
         "OperatorType": "Join",
         "Variant": "Join",
-        "JoinColumnIndexes": "L:0,L:1,R:0",
+        "JoinColumnIndexes": "-1,-2,1",
         "JoinVars": {
           "user_index_id": 1
         },
@@ -505,7 +391,7 @@
       "Instructions": {
         "OperatorType": "Join",
         "Variant": "Join",
-        "JoinColumnIndexes": "L:1,L:0,R:0",
+        "JoinColumnIndexes": "-2,-1,1",
         "JoinVars": {
           "user_index_id": 0
         },
@@ -519,8 +405,8 @@
               1
             ],
             "Fields": {
-              "id": "VARBINARY",
-              "keyspace_id": "VARBINARY"
+              "user_index.id": "VARBINARY",
+              "user_index.keyspace_id": "VARBINARY"
             },
             "Value": ":id",
             "Vindex": "user_index"
@@ -537,11 +423,7 @@
             "Table": "unsharded"
           }
         ]
-      },
-      "TablesUsed": [
-        "main.unsharded",
-        "user_index"
-      ]
+      }
     }
   },
   {
@@ -553,7 +435,7 @@
       "Instructions": {
         "OperatorType": "Join",
         "Variant": "Join",
-        "JoinColumnIndexes": "L:0,R:0",
+        "JoinColumnIndexes": "-1,1",
         "JoinVars": {
           "user_index_id": 1
         },
@@ -593,7 +475,7 @@
       "Instructions": {
         "OperatorType": "Join",
         "Variant": "Join",
-        "JoinColumnIndexes": "L:1,R:0",
+        "JoinColumnIndexes": "-2,1",
         "JoinVars": {
           "user_index_id": 0
         },
@@ -607,8 +489,8 @@
               1
             ],
             "Fields": {
-              "id": "VARBINARY",
-              "keyspace_id": "VARBINARY"
+              "user_index.id": "VARBINARY",
+              "user_index.keyspace_id": "VARBINARY"
             },
             "Value": ":id",
             "Vindex": "user_index"
@@ -625,11 +507,7 @@
             "Table": "unsharded"
           }
         ]
-      },
-      "TablesUsed": [
-        "main.unsharded",
-        "user_index"
-      ]
+      }
     }
   },
   {
@@ -641,7 +519,7 @@
       "Instructions": {
         "OperatorType": "Join",
         "Variant": "Join",
-        "JoinColumnIndexes": "L:0,R:0",
+        "JoinColumnIndexes": "-1,1",
         "JoinVars": {
           "ui_id": 1
         },
@@ -681,7 +559,7 @@
       "Instructions": {
         "OperatorType": "Join",
         "Variant": "Join",
-        "JoinColumnIndexes": "L:1,R:0",
+        "JoinColumnIndexes": "-2,1",
         "JoinVars": {
           "ui_id": 0
         },
@@ -695,8 +573,8 @@
               1
             ],
             "Fields": {
-              "id": "VARBINARY",
-              "keyspace_id": "VARBINARY"
+              "ui.id": "VARBINARY",
+              "ui.keyspace_id": "VARBINARY"
             },
             "Value": ":id",
             "Vindex": "user_index"
@@ -713,11 +591,7 @@
             "Table": "unsharded"
           }
         ]
-      },
-      "TablesUsed": [
-        "main.unsharded",
-        "user_index"
-      ]
+      }
     }
   },
   {

@@ -21,18 +21,23 @@ import (
 	"fmt"
 	"testing"
 
-	"vitess.io/vitess/go/test/endtoend/utils"
+	"vitess.io/vitess/go/test/endtoend/vtgate/utils"
 
 	"github.com/stretchr/testify/assert"
 
 	"github.com/stretchr/testify/require"
 
 	"vitess.io/vitess/go/mysql"
+	"vitess.io/vitess/go/test/endtoend/cluster"
 )
 
 func TestUnownedLookupInsertNull(t *testing.T) {
-	conn, closer := start(t)
-	defer closer()
+	defer cluster.PanicHandler(t)
+
+	ctx := context.Background()
+	conn, err := mysql.Connect(ctx, &vtParams)
+	require.Nil(t, err)
+	defer conn.Close()
 
 	utils.Exec(t, conn, "insert into t9(id, parent_id) VALUES (1, 1)")
 	utils.Exec(t, conn, "insert into t9(id, parent_id) VALUES (2, 2)")
@@ -40,35 +45,60 @@ func TestUnownedLookupInsertNull(t *testing.T) {
 	utils.Exec(t, conn, "insert into t8(id, parent_id, t9_id) VALUES (1, 1, NULL)")
 	utils.Exec(t, conn, "insert into t8(id, parent_id, t9_id) VALUES (2, 1, 1)")
 	utils.Exec(t, conn, "insert into t8(id, parent_id, t9_id) VALUES (3, 2, 2)")
+
+	// Cleanup
+	utils.Exec(t, conn, "delete from t8 WHERE parent_id = 1")
+	utils.Exec(t, conn, "delete from t8 WHERE parent_id = 2")
+	utils.Exec(t, conn, "delete from t9 WHERE parent_id = 1")
+	utils.Exec(t, conn, "delete from t9 WHERE parent_id = 2")
+	utils.Exec(t, conn, "delete from t9_id_to_keyspace_id_idx WHERE id = 1")
+	utils.Exec(t, conn, "delete from t9_id_to_keyspace_id_idx WHERE id = 2")
 }
 
 func TestUnownedLookupInsertChecksKeyspaceIdsAreMatching(t *testing.T) {
-	conn, closer := start(t)
-	defer closer()
+	defer cluster.PanicHandler(t)
+
+	ctx := context.Background()
+	conn, err := mysql.Connect(ctx, &vtParams)
+	require.Nil(t, err)
+	defer conn.Close()
 
 	utils.Exec(t, conn, "insert into t9(id, parent_id) VALUES (1, 1)")
 
 	// This fails because the keyspace id for `parent_id` does not match the one for `t9_id`
-	_, err := utils.ExecAllowError(t, conn, "insert into t8(id, parent_id, t9_id) VALUES (4, 2, 1)")
+	_, err = conn.ExecuteFetch("insert into t8(id, parent_id, t9_id) VALUES (4, 2, 1)", 1, false)
 	require.EqualError(t, err, "values [[INT64(1)]] for column [t9_id] does not map to keyspace ids (errno 1105) (sqlstate HY000) during query: insert into t8(id, parent_id, t9_id) VALUES (4, 2, 1)")
 
 	// This fails because the `t9_id` value can't be mapped to a keyspace id
-	_, err = utils.ExecAllowError(t, conn, "insert into t8(id, parent_id, t9_id) VALUES (4, 2, 2)")
+	_, err = conn.ExecuteFetch("insert into t8(id, parent_id, t9_id) VALUES (4, 2, 2)", 1, false)
 	require.EqualError(t, err, "values [[INT64(2)]] for column [t9_id] does not map to keyspace ids (errno 1105) (sqlstate HY000) during query: insert into t8(id, parent_id, t9_id) VALUES (4, 2, 2)")
+
+	// Cleanup
+	utils.Exec(t, conn, "delete from t9 WHERE parent_id = 1")
 }
 
 func TestUnownedLookupSelectNull(t *testing.T) {
-	conn, closer := start(t)
-	defer closer()
+	defer cluster.PanicHandler(t)
+
+	ctx := context.Background()
+	conn, err := mysql.Connect(ctx, &vtParams)
+	require.Nil(t, err)
+	defer conn.Close()
 
 	utils.Exec(t, conn, "select * from t8 WHERE t9_id IS NULL")
+
+	// Cleanup
+	utils.Exec(t, conn, "delete from t9 WHERE parent_id = 1")
 }
 
 func TestConsistentLookup(t *testing.T) {
-	conn, closer := start(t)
-	defer closer()
+	defer cluster.PanicHandler(t)
+	ctx := context.Background()
+	conn, err := mysql.Connect(ctx, &vtParams)
+	require.Nil(t, err)
+	defer conn.Close()
 	// conn2 is for queries that target shards.
-	conn2, err := mysql.Connect(context.Background(), &vtParams)
+	conn2, err := mysql.Connect(ctx, &vtParams)
 	require.Nil(t, err)
 	defer conn2.Close()
 
@@ -92,7 +122,7 @@ func TestConsistentLookup(t *testing.T) {
 	mysqlErr := err.(*mysql.SQLError)
 	assert.Equal(t, 1062, mysqlErr.Num)
 	assert.Equal(t, "23000", mysqlErr.State)
-	assert.Contains(t, mysqlErr.Message, "reverted partial DML execution")
+	assert.Contains(t, mysqlErr.Message, "Duplicate entry")
 
 	// Simple delete.
 	utils.Exec(t, conn, "begin")
@@ -193,11 +223,14 @@ func TestConsistentLookup(t *testing.T) {
 	if got, want := fmt.Sprintf("%v", qr.Rows), "[[INT64(5) VARBINARY(\"\\x16k@\\xb4J\\xbaK\\xd6\")]]"; got != want {
 		t.Errorf("select:\n%v want\n%v", got, want)
 	}
+	utils.Exec(t, conn, "delete from t1 where id2=5")
 }
 
 func TestDMLScatter(t *testing.T) {
-	conn, closer := start(t)
-	defer closer()
+	ctx := context.Background()
+	conn, err := mysql.Connect(ctx, &vtParams)
+	require.NoError(t, err)
+	defer conn.Close()
 
 	/* Simple insert. after this dml, the tables will contain the following:
 	t3 (id5, id6, id7):
@@ -284,8 +317,10 @@ func TestDMLScatter(t *testing.T) {
 }
 
 func TestDMLIn(t *testing.T) {
-	conn, closer := start(t)
-	defer closer()
+	ctx := context.Background()
+	conn, err := mysql.Connect(ctx, &vtParams)
+	require.NoError(t, err)
+	defer conn.Close()
 
 	/* Simple insert. after this dml, the tables will contain the following:
 	t3 (id5, id6, id7):
@@ -372,10 +407,13 @@ func TestDMLIn(t *testing.T) {
 }
 
 func TestConsistentLookupMultiInsert(t *testing.T) {
-	conn, closer := start(t)
-	defer closer()
+	defer cluster.PanicHandler(t)
+	ctx := context.Background()
+	conn, err := mysql.Connect(ctx, &vtParams)
+	require.Nil(t, err)
+	defer conn.Close()
 	// conn2 is for queries that target shards.
-	conn2, err := mysql.Connect(context.Background(), &vtParams)
+	conn2, err := mysql.Connect(ctx, &vtParams)
 	require.Nil(t, err)
 	defer conn2.Close()
 
@@ -415,13 +453,21 @@ func TestConsistentLookupMultiInsert(t *testing.T) {
 	if got, want := fmt.Sprintf("%v", qr.Rows), "[[INT64(5)]]"; got != want {
 		t.Errorf("select:\n%v want\n%v", got, want)
 	}
+	utils.Exec(t, conn, "delete from t1 where id1=1")
+	utils.Exec(t, conn, "delete from t1 where id1=2")
+	utils.Exec(t, conn, "delete from t1 where id1=3")
+	utils.Exec(t, conn, "delete from t1 where id1=4")
+	utils.Exec(t, conn, "delete from t1_id2_idx where id2=4")
 }
 
 func TestHashLookupMultiInsertIgnore(t *testing.T) {
-	conn, closer := start(t)
-	defer closer()
+	defer cluster.PanicHandler(t)
+	ctx := context.Background()
+	conn, err := mysql.Connect(ctx, &vtParams)
+	require.Nil(t, err)
+	defer conn.Close()
 	// conn2 is for queries that target shards.
-	conn2, err := mysql.Connect(context.Background(), &vtParams)
+	conn2, err := mysql.Connect(ctx, &vtParams)
 	require.Nil(t, err)
 	defer conn2.Close()
 
@@ -447,8 +493,10 @@ func TestHashLookupMultiInsertIgnore(t *testing.T) {
 }
 
 func TestConsistentLookupUpdate(t *testing.T) {
-	conn, closer := start(t)
-	defer closer()
+	ctx := context.Background()
+	conn, err := mysql.Connect(ctx, &vtParams)
+	require.NoError(t, err)
+	defer conn.Close()
 
 	/* Simple insert. after this dml, the tables will contain the following:
 	t4 (id1, id2):
@@ -514,10 +562,13 @@ func TestConsistentLookupUpdate(t *testing.T) {
 }
 
 func TestSelectNullLookup(t *testing.T) {
-	conn, closer := start(t)
-	defer closer()
+	ctx := context.Background()
+	conn, err := mysql.Connect(ctx, &vtParams)
+	require.NoError(t, err)
+	defer conn.Close()
 
 	utils.Exec(t, conn, "insert into t6(id1, id2) values(1, 'a'), (2, 'b'), (3, null)")
+	defer utils.Exec(t, conn, "set workload = oltp;delete from t6")
 
 	for _, workload := range []string{"oltp", "olap"} {
 		t.Run(workload, func(t *testing.T) {
@@ -535,10 +586,13 @@ func TestSelectNullLookup(t *testing.T) {
 }
 
 func TestUnicodeLooseMD5CaseInsensitive(t *testing.T) {
-	conn, closer := start(t)
-	defer closer()
+	ctx := context.Background()
+	conn, err := mysql.Connect(ctx, &vtParams)
+	require.NoError(t, err)
+	defer conn.Close()
 
 	utils.Exec(t, conn, "insert into t4(id1, id2) values(1, 'test')")
+	defer utils.Exec(t, conn, "delete from t4")
 
 	utils.AssertMatches(t, conn, "SELECT id1, id2 from t4 where id2 = 'Test'", `[[INT64(1) VARCHAR("test")]]`)
 }

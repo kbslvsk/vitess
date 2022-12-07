@@ -37,6 +37,7 @@ var _ TableInfo = (*vTableInfo)(nil)
 // dependencies implements the TableInfo interface
 func (v *vTableInfo) dependencies(colName string, org originable) (dependencies, error) {
 	var deps dependencies = &nothing{}
+	var err error
 	for i, name := range v.columnNames {
 		if name != colName {
 			continue
@@ -44,7 +45,10 @@ func (v *vTableInfo) dependencies(colName string, org originable) (dependencies,
 		directDeps, recursiveDeps, qt := org.depsForExpr(v.cols[i])
 
 		newDeps := createCertain(directDeps, recursiveDeps, qt)
-		deps = deps.merge(newDeps, false)
+		deps, err = deps.merge(newDeps)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if deps.empty() && v.hasStar() {
 		return createUncertain(v.tables, v.tables), nil
@@ -89,11 +93,11 @@ func (v *vTableInfo) getColumns() []ColumnInfo {
 }
 
 func (v *vTableInfo) hasStar() bool {
-	return v.tables.NonEmpty()
+	return v.tables.NumberOfTables() > 0
 }
 
 // GetTables implements the TableInfo interface
-func (v *vTableInfo) getTableSet(_ originable) TableSet {
+func (v *vTableInfo) getTableSet(org originable) TableSet {
 	return v.tables
 }
 
@@ -138,7 +142,7 @@ func selectExprsToInfos(
 			}
 		case *sqlparser.StarExpr:
 			for _, table := range tables {
-				ts = ts.Merge(table.getTableSet(org))
+				ts.MergeInPlace(table.getTableSet(org))
 			}
 		}
 	}

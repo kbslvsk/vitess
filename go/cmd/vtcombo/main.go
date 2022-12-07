@@ -23,16 +23,15 @@ package main
 
 import (
 	"context"
+	"flag"
 	"os"
 	"strings"
 	"time"
 
-	"github.com/spf13/pflag"
+	"google.golang.org/protobuf/encoding/prototext"
 	"google.golang.org/protobuf/proto"
 
-	"vitess.io/vitess/go/acl"
 	"vitess.io/vitess/go/exit"
-	"vitess.io/vitess/go/mysql"
 	"vitess.io/vitess/go/vt/dbconfigs"
 	"vitess.io/vitess/go/vt/log"
 	"vitess.io/vitess/go/vt/logutil"
@@ -45,9 +44,7 @@ import (
 	"vitess.io/vitess/go/vt/vtcombo"
 	"vitess.io/vitess/go/vt/vtctld"
 	"vitess.io/vitess/go/vt/vtgate"
-	"vitess.io/vitess/go/vt/vtgate/planbuilder/plancontext"
 	"vitess.io/vitess/go/vt/vttablet/tabletserver/tabletenv"
-	"vitess.io/vitess/go/vt/vttest"
 	"vitess.io/vitess/go/vt/wrangler"
 
 	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
@@ -55,28 +52,23 @@ import (
 )
 
 var (
-	flags              = pflag.NewFlagSet("vtcombo", pflag.ContinueOnError)
-	schemaDir          = flags.String("schema_dir", "", "Schema base directory. Should contain one directory per keyspace, with a vschema.json file if necessary.")
-	startMysql         = flags.Bool("start_mysql", false, "Should vtcombo also start mysql")
-	mysqlPort          = flags.Int("mysql_port", 3306, "mysql port")
-	externalTopoServer = flags.Bool("external_topo_server", false, "Should vtcombo use an external topology server instead of starting its own in-memory topology server. "+
-		"If true, vtcombo will use the flags defined in topo/server.go to open topo server")
-	plannerName = flags.String("planner-version", "", "Sets the default planner to use when the session has not changed it. Valid values are: V3, Gen4, Gen4Greedy and Gen4Fallback. Gen4Fallback tries the gen4 planner and falls back to the V3 planner if the gen4 fails.")
+	protoTopo = flag.String("proto_topo", "", "vttest proto definition of the topology, encoded in compact text format. See vttest.proto for more information.")
 
-	tpb             vttestpb.VTTestTopology
+	schemaDir = flag.String("schema_dir", "", "Schema base directory. Should contain one directory per keyspace, with a vschema.json file if necessary.")
+
+	startMysql = flag.Bool("start_mysql", false, "Should vtcombo also start mysql")
+
+	mysqlPort = flag.Int("mysql_port", 3306, "mysql port")
+
+	externalTopoServer = flag.Bool("external_topo_server", false, "Should vtcombo use an external topology server instead of starting its own in-memory topology server. "+
+		"If true, vtcombo will use the flags defined in topo/server.go to open topo server")
+
 	ts              *topo.Server
 	resilientServer *srvtopo.ResilientServer
 )
 
 func init() {
-	flags.Var(vttest.TextTopoData(&tpb), "proto_topo", "vttest proto definition of the topology, encoded in compact text format. See vttest.proto for more information.")
-	flags.Var(vttest.JSONTopoData(&tpb), "json_topo", "vttest proto definition of the topology, encoded in json format. See vttest.proto for more information.")
-
 	servenv.RegisterDefaultFlags()
-	servenv.RegisterFlags()
-	servenv.RegisterGRPCServerFlags()
-	servenv.RegisterGRPCServerAuthFlags()
-	servenv.RegisterServiceMapFlag()
 }
 
 func startMysqld(uid uint32) (*mysqlctl.Mysqld, *mysqlctl.Mycnf) {
@@ -119,59 +111,38 @@ func startMysqld(uid uint32) (*mysqlctl.Mysqld, *mysqlctl.Mycnf) {
 
 func main() {
 	defer exit.Recover()
+
 	// flag parsing
-	var globalFlags *pflag.FlagSet
 	dbconfigs.RegisterFlags(dbconfigs.All...)
 	mysqlctl.RegisterFlags()
-	servenv.OnParseFor("vtcombo", func(fs *pflag.FlagSet) {
-		// We're going to force the value later, so don't even bother letting
-		// the user know about this flag.
-		fs.MarkHidden("tablet_protocol")
-
-		// Add the vtcombo flags declared above in var/init sections to the
-		// global flags.
-		fs.AddFlagSet(flags)
-		// Save for later -- see comment directly after ParseFlags for why.
-		globalFlags = fs
-
-		acl.RegisterFlags(fs)
-	})
-
 	servenv.ParseFlags("vtcombo")
 
-	// At this point, servenv.ParseFlags has invoked _flag.Parse, which has
-	// combined all the flags everywhere into the globalFlags variable we
-	// stashed a reference to earlier in our OnParseFor callback function.
-	//
-	// We now take those flags and make them available to our `flags` instance,
-	// which we call `Set` on various flags to force their values further down
-	// in main().
-	//
-	// N.B.: we could just as easily call Set on globalFlags on everything
-	// (including our local flags), but we need to save a reference either way,
-	// and that in particular (globalFlags.Set on a local flag) feels more
-	// potentially confusing than its inverse (flags.Set on a global flag), so
-	// we go this way.
-	flags.AddFlagSet(globalFlags)
+	// parse the input topology
+	tpb := &vttestpb.VTTestTopology{}
+	if err := prototext.Unmarshal([]byte(*protoTopo), tpb); err != nil {
+		log.Errorf("cannot parse topology: %v", err)
+		exit.Return(1)
+	}
 
 	// Stash away a copy of the topology that vtcombo was started with.
 	//
 	// We will use this to determine the shard structure when keyspaces
 	// get recreated.
-	originalTopology := proto.Clone(&tpb).(*vttestpb.VTTestTopology)
+	originalTopology := proto.Clone(tpb).(*vttestpb.VTTestTopology)
 
 	// default cell to "test" if unspecified
 	if len(tpb.Cells) == 0 {
 		tpb.Cells = append(tpb.Cells, "test")
 	}
 
-	flags.Set("cells_to_watch", strings.Join(tpb.Cells, ","))
+	// set discoverygateway flag to default value
+	flag.Set("cells_to_watch", strings.Join(tpb.Cells, ","))
 
 	// vtctld UI requires the cell flag
-	flags.Set("cell", tpb.Cells[0])
-	flags.Set("enable_realtime_stats", "true")
-	if flags.Lookup("log_dir") == nil {
-		flags.Set("log_dir", "$VTDATAROOT/tmp")
+	flag.Set("cell", tpb.Cells[0])
+	flag.Set("enable_realtime_stats", "true")
+	if flag.Lookup("log_dir") == nil {
+		flag.Set("log_dir", "$VTDATAROOT/tmp")
 	}
 
 	if *externalTopoServer {
@@ -182,20 +153,13 @@ func main() {
 		// Create topo server. We use a 'memorytopo' implementation.
 		ts = memorytopo.NewServer(tpb.Cells...)
 	}
-
-	// attempt to load any routing rules specified by tpb
-	if err := vtcombo.InitRoutingRules(context.Background(), ts, tpb.GetRoutingRules()); err != nil {
-		log.Errorf("Failed to load routing rules: %v", err)
-		exit.Return(1)
-	}
-
 	servenv.Init()
 	tabletenv.Init()
 
-	mysqld := &vtcomboMysqld{}
+	var mysqld *mysqlctl.Mysqld
 	var cnf *mysqlctl.Mycnf
 	if *startMysql {
-		mysqld.Mysqld, cnf = startMysqld(1)
+		mysqld, cnf = startMysqld(1)
 		servenv.OnClose(func() {
 			mysqld.Shutdown(context.TODO(), cnf, true)
 		})
@@ -204,18 +168,13 @@ func main() {
 
 	} else {
 		dbconfigs.GlobalDBConfigs.InitWithSocket("")
-		mysqld.Mysqld = mysqlctl.NewMysqld(&dbconfigs.GlobalDBConfigs)
+		mysqld = mysqlctl.NewMysqld(&dbconfigs.GlobalDBConfigs)
 		servenv.OnClose(mysqld.Close)
 	}
 
-	// Tablet configuration and init.
+	// tablets configuration and init.
 	// Send mycnf as nil because vtcombo won't do backups and restores.
-	//
-	// Also force the `--tablet_manager_protocol` and `--tablet_protocol` flags
-	// to be the "internal" protocol that InitTabletMap registers.
-	flags.Set("tablet_manager_protocol", "internal")
-	flags.Set("tablet_protocol", "internal")
-	uid, err := vtcombo.InitTabletMap(ts, &tpb, mysqld, &dbconfigs.GlobalDBConfigs, *schemaDir, *startMysql)
+	uid, err := vtcombo.InitTabletMap(ts, tpb, mysqld, &dbconfigs.GlobalDBConfigs, *schemaDir, *startMysql)
 	if err != nil {
 		log.Errorf("initTabletMapProto failed: %v", err)
 		// ensure we start mysql in the event we fail here
@@ -239,7 +198,7 @@ func main() {
 		}
 
 		wr := wrangler.New(logutil.NewConsoleLogger(), ts, nil)
-		newUID, err := vtcombo.CreateKs(ctx, ts, &tpb, mysqld, &dbconfigs.GlobalDBConfigs, *schemaDir, ks, true, uid, wr)
+		newUID, err := vtcombo.CreateKs(ctx, ts, tpb, mysqld, &dbconfigs.GlobalDBConfigs, *schemaDir, ks, true, uid, wr)
 		if err != nil {
 			return err
 		}
@@ -249,7 +208,7 @@ func main() {
 	}
 
 	globalDropDb = func(ctx context.Context, ksName string) error {
-		if err := vtcombo.DeleteKs(ctx, ts, ksName, mysqld, &tpb); err != nil {
+		if err := vtcombo.DeleteKs(ctx, ts, ksName, mysqld, tpb); err != nil {
 			return err
 		}
 
@@ -279,13 +238,11 @@ func main() {
 		topodatapb.TabletType_REPLICA,
 		topodatapb.TabletType_RDONLY,
 	}
-	plannerVersion, _ := plancontext.PlannerNameToVersion(*plannerName)
 
 	vtgate.QueryLogHandler = "/debug/vtgate/querylog"
 	vtgate.QueryLogzHandler = "/debug/vtgate/querylogz"
 	vtgate.QueryzHandler = "/debug/vtgate/queryz"
-	// pass nil for healthcheck, it will get created
-	vtg := vtgate.Init(context.Background(), nil, resilientServer, tpb.Cells[0], tabletTypesToWait, plannerVersion)
+	vtg := vtgate.Init(context.Background(), resilientServer, tpb.Cells[0], tabletTypesToWait)
 
 	// vtctld configuration and init
 	err = vtctld.InitVtctld(ts)
@@ -307,42 +264,4 @@ func main() {
 		ts.Close()
 	})
 	servenv.RunDefault()
-}
-
-// vtcomboMysqld is a wrapper on top of mysqlctl.Mysqld.
-// We need this wrapper because vtcombo runs with a single MySQL instance
-// which all the tablets connect to. (replica, primary, all). This means that we shouldn't
-// be trying to run any replication related commands on it, otherwise they fail.
-type vtcomboMysqld struct {
-	*mysqlctl.Mysqld
-}
-
-// SetReplicationSource implements the MysqlDaemon interface
-func (mysqld *vtcomboMysqld) SetReplicationSource(ctx context.Context, host string, port int, replicationStopBefore bool, replicationStartAfter bool) error {
-	return nil
-}
-
-// StartReplication implements the MysqlDaemon interface
-func (mysqld *vtcomboMysqld) StartReplication(hookExtraEnv map[string]string) error {
-	return nil
-}
-
-// RestartReplication implements the MysqlDaemon interface
-func (mysqld *vtcomboMysqld) RestartReplication(hookExtraEnv map[string]string) error {
-	return nil
-}
-
-// StartReplicationUntilAfter implements the MysqlDaemon interface
-func (mysqld *vtcomboMysqld) StartReplicationUntilAfter(ctx context.Context, pos mysql.Position) error {
-	return nil
-}
-
-// StopReplication implements the MysqlDaemon interface
-func (mysqld *vtcomboMysqld) StopReplication(hookExtraEnv map[string]string) error {
-	return nil
-}
-
-// SetSemiSyncEnabled implements the MysqlDaemon interface
-func (mysqld *vtcomboMysqld) SetSemiSyncEnabled(source, replica bool) error {
-	return nil
 }

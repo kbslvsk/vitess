@@ -18,22 +18,16 @@ package reparentutil
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
 	"vitess.io/vitess/go/mysql"
-	"vitess.io/vitess/go/vt/concurrency"
-	"vitess.io/vitess/go/vt/log"
 	"vitess.io/vitess/go/vt/logutil"
 	"vitess.io/vitess/go/vt/topo"
 	"vitess.io/vitess/go/vt/topo/topoproto"
-	"vitess.io/vitess/go/vt/topotools"
-	"vitess.io/vitess/go/vt/vtctl/reparentutil/promotionrule"
 	"vitess.io/vitess/go/vt/vterrors"
 	"vitess.io/vitess/go/vt/vttablet/tmclient"
 
-	replicationdatapb "vitess.io/vitess/go/vt/proto/replicationdata"
 	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 	"vitess.io/vitess/go/vt/proto/vtrpc"
 )
@@ -55,7 +49,6 @@ func ChooseNewPrimary(
 	tabletMap map[string]*topo.TabletInfo,
 	avoidPrimaryAlias *topodatapb.TabletAlias,
 	waitReplicasTimeout time.Duration,
-	durability Durabler,
 	// (TODO:@ajm188) it's a little gross we need to pass this, maybe embed in the context?
 	logger logutil.Logger,
 ) (*topodatapb.TabletAlias, error) {
@@ -107,7 +100,7 @@ func ChooseNewPrimary(
 	}
 
 	// sort the tablets for finding the best primary
-	err := sortTabletsForReparent(validTablets, tabletPositions, durability)
+	err := sortTabletsForReparent(validTablets, tabletPositions)
 	if err != nil {
 		return nil, err
 	}
@@ -200,52 +193,6 @@ func FindCurrentPrimary(tabletMap map[string]*topo.TabletInfo, logger logutil.Lo
 	return currentPrimary
 }
 
-// ShardReplicationStatuses returns the ReplicationStatus for each tablet in a shard.
-func ShardReplicationStatuses(ctx context.Context, ts *topo.Server, tmc tmclient.TabletManagerClient, keyspace, shard string) ([]*topo.TabletInfo, []*replicationdatapb.Status, error) {
-	tabletMap, err := ts.GetTabletMapForShard(ctx, keyspace, shard)
-	if err != nil {
-		return nil, nil, err
-	}
-	tablets := topotools.CopyMapValues(tabletMap, []*topo.TabletInfo{}).([]*topo.TabletInfo)
-
-	log.Infof("Gathering tablet replication status for: %v", tablets)
-	wg := sync.WaitGroup{}
-	rec := concurrency.AllErrorRecorder{}
-	result := make([]*replicationdatapb.Status, len(tablets))
-
-	for i, ti := range tablets {
-		// Don't scan tablets that won't return something
-		// useful. Otherwise, you'll end up waiting for a timeout.
-		if ti.Type == topodatapb.TabletType_PRIMARY {
-			wg.Add(1)
-			go func(i int, ti *topo.TabletInfo) {
-				defer wg.Done()
-				pos, err := tmc.PrimaryPosition(ctx, ti.Tablet)
-				if err != nil {
-					rec.RecordError(fmt.Errorf("PrimaryPosition(%v) failed: %v", ti.AliasString(), err))
-					return
-				}
-				result[i] = &replicationdatapb.Status{
-					Position: pos,
-				}
-			}(i, ti)
-		} else if ti.IsReplicaType() {
-			wg.Add(1)
-			go func(i int, ti *topo.TabletInfo) {
-				defer wg.Done()
-				status, err := tmc.ReplicationStatus(ctx, ti.Tablet)
-				if err != nil {
-					rec.RecordError(fmt.Errorf("ReplicationStatus(%v) failed: %v", ti.AliasString(), err))
-					return
-				}
-				result[i] = status
-			}(i, ti)
-		}
-	}
-	wg.Wait()
-	return tablets, result, rec.Error()
-}
-
 // getValidCandidatesAndPositionsAsList converts the valid candidates from a map to a list of tablets, making it easier to sort
 func getValidCandidatesAndPositionsAsList(validCandidates map[string]mysql.Position, tabletMap map[string]*topo.TabletInfo) ([]*topodatapb.Tablet, []mysql.Position, error) {
 	var validTablets []*topodatapb.Tablet
@@ -278,32 +225,47 @@ func restrictValidCandidates(validCandidates map[string]mysql.Position, tabletMa
 	return restrictedValidCandidates, nil
 }
 
-func findCandidate(
-	intermediateSource *topodatapb.Tablet,
+func findCandidateSameCell(
+	newPrimary *topodatapb.Tablet,
+	prevPrimary *topodatapb.Tablet,
+	possibleCandidates []*topodatapb.Tablet,
+) *topodatapb.Tablet {
+	// check whether the one we have selected as the source is in the same cell and belongs to the candidate list provided
+	for _, candidate := range possibleCandidates {
+		if !(topoproto.TabletAliasEqual(newPrimary.Alias, candidate.Alias)) {
+			continue
+		}
+		if prevPrimary != nil && !(prevPrimary.Alias.Cell == candidate.Alias.Cell) {
+			continue
+		}
+		return candidate
+	}
+	// check whether there is some other tablet in the same cell belonging to the candidate list provided
+	for _, candidate := range possibleCandidates {
+		if prevPrimary != nil && !(prevPrimary.Alias.Cell == candidate.Alias.Cell) {
+			continue
+		}
+		return candidate
+	}
+	return nil
+}
+
+func findCandidateAnyCell(
+	newPrimary *topodatapb.Tablet,
 	possibleCandidates []*topodatapb.Tablet,
 ) *topodatapb.Tablet {
 	// check whether the one we have selected as the source belongs to the candidate list provided
 	for _, candidate := range possibleCandidates {
-		if topoproto.TabletAliasEqual(intermediateSource.Alias, candidate.Alias) {
-			return candidate
+		if !(topoproto.TabletAliasEqual(newPrimary.Alias, candidate.Alias)) {
+			continue
 		}
+		return candidate
 	}
 	// return the first candidate from this list, if it isn't empty
 	if len(possibleCandidates) > 0 {
 		return possibleCandidates[0]
 	}
 	return nil
-}
-
-// getTabletsWithPromotionRules gets the tablets with the given promotion rule from the list of tablets
-func getTabletsWithPromotionRules(durability Durabler, tablets []*topodatapb.Tablet, rule promotionrule.CandidatePromotionRule) (res []*topodatapb.Tablet) {
-	for _, candidate := range tablets {
-		promotionRule := PromotionRule(durability, candidate)
-		if promotionRule == rule {
-			res = append(res, candidate)
-		}
-	}
-	return res
 }
 
 // waitForCatchUp is used to wait for the given tablet until it has caught up to the source

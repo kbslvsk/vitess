@@ -21,16 +21,11 @@ import (
 	"vitess.io/vitess/go/vt/sqlparser"
 	"vitess.io/vitess/go/vt/vterrors"
 	"vitess.io/vitess/go/vt/vtgate/engine"
-	"vitess.io/vitess/go/vt/vtgate/planbuilder/plancontext"
 	"vitess.io/vitess/go/vt/vtgate/semantics"
 )
 
 type concatenateGen4 struct {
 	sources []logicalPlan
-
-	// These column offsets do not need to be typed checked - they usually contain weight_string()
-	// columns that are not going to be returned to the user
-	noNeedToTypeCheck []int
 }
 
 var _ logicalPlan = (*concatenateGen4)(nil)
@@ -56,9 +51,9 @@ func (c *concatenateGen4) Wireup(plan logicalPlan, jt *jointab) error {
 }
 
 // WireupGen4 implements the logicalPlan interface
-func (c *concatenateGen4) WireupGen4(ctx *plancontext.PlanningContext) error {
+func (c *concatenateGen4) WireupGen4(semTable *semantics.SemTable) error {
 	for _, source := range c.sources {
-		err := source.WireupGen4(ctx)
+		err := source.WireupGen4(semTable)
 		if err != nil {
 			return err
 		}
@@ -87,8 +82,9 @@ func (c *concatenateGen4) Primitive() engine.Primitive {
 	for _, source := range c.sources {
 		sources = append(sources, source.Primitive())
 	}
-
-	return engine.NewConcatenate(sources, c.noNeedToTypeCheck)
+	return &engine.Concatenate{
+		Sources: sources,
+	}
 }
 
 // Rewrite implements the logicalPlan interface
@@ -104,7 +100,7 @@ func (c *concatenateGen4) Rewrite(inputs ...logicalPlan) error {
 func (c *concatenateGen4) ContainsTables() semantics.TableSet {
 	var tableSet semantics.TableSet
 	for _, source := range c.sources {
-		tableSet = tableSet.Merge(source.ContainsTables())
+		tableSet.MergeInPlace(source.ContainsTables())
 	}
 	return tableSet
 }

@@ -42,7 +42,6 @@ func (pc *sysvarPlanCache) initForSettings(systemVariables []sysvars.SystemVaria
 			name:               sysvar.Name,
 			boolean:            sysvar.IsBoolean,
 			identifierAsString: sysvar.IdentifierAsString,
-			supportSetVar:      sysvar.SupportSetVar,
 		}
 
 		if sysvar.Default != "" {
@@ -59,7 +58,7 @@ func (pc *sysvarPlanCache) parseAndBuildDefaultValue(sysvar sysvars.SystemVariab
 	}
 	sel := stmt.(*sqlparser.Select)
 	aliasedExpr := sel.SelectExprs[0].(*sqlparser.AliasedExpr)
-	def, err := evalengine.Translate(aliasedExpr.Expr, nil)
+	def, err := evalengine.Convert(aliasedExpr.Expr, nil)
 	if err != nil {
 		panic(fmt.Sprintf("bug in set plan init - default value for %s not able to convert to evalengine.Expr: %s", sysvar.Name, sysvar.Default))
 	}
@@ -82,7 +81,7 @@ var sysvarPlanningFuncs sysvarPlanCache
 
 func (pc *sysvarPlanCache) Get(expr *sqlparser.SetExpr) (planFunc, error) {
 	pc.init()
-	pf, ok := pc.funcs[expr.Var.Name.Lowered()]
+	pf, ok := pc.funcs[expr.Name.Lowered()]
 	if !ok {
 		return nil, vterrors.NewErrorf(vtrpcpb.Code_NOT_FOUND, vterrors.UnknownSystemVariable, "Unknown system variable '%s'", sqlparser.String(expr))
 	}

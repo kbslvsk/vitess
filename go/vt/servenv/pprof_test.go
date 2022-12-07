@@ -1,19 +1,8 @@
-//go:build !race
-
-// Disabling race detector because it doesn't like TestPProfInitWithWaitSig and TestPProfInitWithoutWaitSig,
-// but the profileStarted variable is updated in response to signals invoked in the tests and works as intended.
-
 package servenv
 
 import (
-	"os/signal"
 	"reflect"
-	"strings"
-	"syscall"
 	"testing"
-	"time"
-
-	"github.com/stretchr/testify/assert"
 )
 
 func TestParseProfileFlag(t *testing.T) {
@@ -45,11 +34,7 @@ func TestParseProfileFlag(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.arg, func(t *testing.T) {
-			var profileFlag []string
-			if tt.arg != "" {
-				profileFlag = strings.Split(tt.arg, ",")
-			}
-			got, err := parseProfileFlag(profileFlag)
+			got, err := parseProfileFlag(tt.arg)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("parseProfileFlag() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -59,52 +44,4 @@ func TestParseProfileFlag(t *testing.T) {
 			}
 		})
 	}
-}
-
-// with waitSig, we should start with profiling off and toggle on-off-on-off
-func TestPProfInitWithWaitSig(t *testing.T) {
-	signal.Reset(syscall.SIGUSR1)
-	pprofFlag = strings.Split("cpu,waitSig", ",")
-
-	pprofInit()
-	time.Sleep(1 * time.Second)
-	assert.Equal(t, uint32(0), profileStarted)
-
-	syscall.Kill(syscall.Getpid(), syscall.SIGUSR1)
-	time.Sleep(1 * time.Second)
-	assert.Equal(t, uint32(1), profileStarted)
-
-	syscall.Kill(syscall.Getpid(), syscall.SIGUSR1)
-	time.Sleep(1 * time.Second)
-	assert.Equal(t, uint32(0), profileStarted)
-
-	syscall.Kill(syscall.Getpid(), syscall.SIGUSR1)
-	time.Sleep(1 * time.Second)
-	assert.Equal(t, uint32(1), profileStarted)
-
-	syscall.Kill(syscall.Getpid(), syscall.SIGUSR1)
-	time.Sleep(1 * time.Second)
-	assert.Equal(t, uint32(0), profileStarted)
-}
-
-// without waitSig, we should start with profiling on and toggle off-on-off
-func TestPProfInitWithoutWaitSig(t *testing.T) {
-	signal.Reset(syscall.SIGUSR1)
-	pprofFlag = strings.Split("cpu", ",")
-
-	pprofInit()
-	time.Sleep(1 * time.Second)
-	assert.Equal(t, uint32(1), profileStarted)
-
-	syscall.Kill(syscall.Getpid(), syscall.SIGUSR1)
-	time.Sleep(1 * time.Second)
-	assert.Equal(t, uint32(0), profileStarted)
-
-	syscall.Kill(syscall.Getpid(), syscall.SIGUSR1)
-	time.Sleep(1 * time.Second)
-	assert.Equal(t, uint32(1), profileStarted)
-
-	syscall.Kill(syscall.Getpid(), syscall.SIGUSR1)
-	time.Sleep(1 * time.Second)
-	assert.Equal(t, uint32(0), profileStarted)
 }

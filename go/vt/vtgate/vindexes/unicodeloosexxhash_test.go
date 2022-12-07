@@ -17,7 +17,6 @@ limitations under the License.
 package vindexes
 
 import (
-	"context"
 	"reflect"
 	"testing"
 
@@ -80,7 +79,7 @@ func TestUnicodeLooseXXHashMap(t *testing.T) {
 		out: "\x99\xe9\xd8Q7\xdbF\xef",
 	}}
 	for _, tcase := range tcases {
-		got, err := charVindexXXHash.Map(context.Background(), nil, []sqltypes.Value{tcase.in})
+		got, err := charVindexXXHash.Map(nil, []sqltypes.Value{tcase.in})
 		if err != nil {
 			t.Error(err)
 		}
@@ -94,7 +93,7 @@ func TestUnicodeLooseXXHashMap(t *testing.T) {
 func TestUnicodeLooseXXHashVerify(t *testing.T) {
 	ids := []sqltypes.Value{sqltypes.NewVarBinary("Test"), sqltypes.NewVarBinary("TEst"), sqltypes.NewVarBinary("different")}
 	ksids := [][]byte{[]byte("B\xd2\x13a\bzL\a"), []byte("B\xd2\x13a\bzL\a"), []byte(" \xaf\x87\xfc6\xe3\xfdQ")}
-	got, err := charVindexXXHash.Verify(context.Background(), nil, ids, ksids)
+	got, err := charVindexXXHash.Verify(nil, ids, ksids)
 	if err != nil {
 		t.Fatal(err)
 	}

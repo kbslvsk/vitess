@@ -48,37 +48,33 @@ var (
 	ErrIncompatibleTypeCast = errors.New("Cannot convert value to desired type")
 )
 
-type (
-	// BinWriter interface is used for encoding values.
-	// Types like bytes.Buffer conform to this interface.
-	// We expect the writer objects to be in-memory buffers.
-	// So, we don't expect the write operations to fail.
-	BinWriter interface {
-		Write([]byte) (int, error)
-	}
+// BinWriter interface is used for encoding values.
+// Types like bytes.Buffer conform to this interface.
+// We expect the writer objects to be in-memory buffers.
+// So, we don't expect the write operations to fail.
+type BinWriter interface {
+	Write([]byte) (int, error)
+}
 
-	// Value can store any SQL value. If the value represents
-	// an integral type, the bytes are always stored as a canonical
-	// representation that matches how MySQL returns such values.
-	Value struct {
-		typ querypb.Type
-		val []byte
-	}
-
-	Row = []Value
-)
+// Value can store any SQL value. If the value represents
+// an integral type, the bytes are always stored as a canonical
+// representation that matches how MySQL returns such values.
+type Value struct {
+	typ querypb.Type
+	val []byte
+}
 
 // NewValue builds a Value using typ and val. If the value and typ
 // don't match, it returns an error.
 func NewValue(typ querypb.Type, val []byte) (v Value, err error) {
 	switch {
 	case IsSigned(typ):
-		if _, err := strconv.ParseInt(string(val), 10, 64); err != nil {
+		if _, err := strconv.ParseInt(string(val), 0, 64); err != nil {
 			return NULL, err
 		}
 		return MakeTrusted(typ, val), nil
 	case IsUnsigned(typ):
-		if _, err := strconv.ParseUint(string(val), 10, 64); err != nil {
+		if _, err := strconv.ParseUint(string(val), 0, 64); err != nil {
 			return NULL, err
 		}
 		return MakeTrusted(typ, val), nil
@@ -87,7 +83,7 @@ func NewValue(typ querypb.Type, val []byte) (v Value, err error) {
 			return NULL, err
 		}
 		return MakeTrusted(typ, val), nil
-	case IsQuoted(typ) || typ == Bit || typ == HexNum || typ == HexVal || typ == Null || typ == BitNum:
+	case IsQuoted(typ) || typ == Bit || typ == HexNum || typ == HexVal || typ == Null:
 		return MakeTrusted(typ, val), nil
 	}
 	// All other types are unsafe or invalid.
@@ -118,11 +114,6 @@ func NewHexNum(v []byte) Value {
 // NewHexVal builds a HexVal Value.
 func NewHexVal(v []byte) Value {
 	return MakeTrusted(HexVal, v)
-}
-
-// NewBitNum builds a BitNum Value.
-func NewBitNum(v []byte) Value {
-	return MakeTrusted(BitNum, v)
 }
 
 // NewInt64 builds an Int64 Value.
@@ -210,7 +201,7 @@ func NewIntegral(val string) (n Value, err error) {
 // string and []byte.
 // This function is deprecated. Use the type-specific
 // functions instead.
-func InterfaceToValue(goval any) (Value, error) {
+func InterfaceToValue(goval interface{}) (Value, error) {
 	switch goval := goval.(type) {
 	case nil:
 		return NULL, nil
@@ -252,18 +243,18 @@ func (v Value) RawStr() string {
 // match MySQL's representation for hex encoded binary data or newer types.
 // If the value is not convertible like in the case of Expression, it returns an error.
 func (v Value) ToBytes() ([]byte, error) {
-	switch v.typ {
-	case Expression:
+	if v.typ == Expression {
 		return nil, vterrors.New(vtrpcpb.Code_INVALID_ARGUMENT, "expression cannot be converted to bytes")
-	case HexVal: // TODO: all the decode below have problem when decoding odd number of bytes. This needs to be fixed.
-		return v.decodeHexVal()
-	case HexNum:
-		return v.decodeHexNum()
-	case BitNum:
-		return v.decodeBitNum()
-	default:
-		return v.val, nil
 	}
+	if v.typ == HexVal {
+		dv, err := v.decodeHexVal()
+		return dv, err
+	}
+	if v.typ == HexNum {
+		dv, err := v.decodeHexNum()
+		return dv, err
+	}
+	return v.val, nil
 }
 
 // Len returns the length.
@@ -277,7 +268,7 @@ func (v Value) ToInt64() (int64, error) {
 		return 0, ErrIncompatibleTypeCast
 	}
 
-	return strconv.ParseInt(v.RawStr(), 10, 64)
+	return strconv.ParseInt(v.ToString(), 10, 64)
 }
 
 // ToFloat64 returns the value as MySQL would return it as a float64.
@@ -286,7 +277,7 @@ func (v Value) ToFloat64() (float64, error) {
 		return 0, ErrIncompatibleTypeCast
 	}
 
-	return strconv.ParseFloat(v.RawStr(), 64)
+	return strconv.ParseFloat(v.ToString(), 64)
 }
 
 // ToUint64 returns the value as MySQL would return it as a uint64.
@@ -295,7 +286,7 @@ func (v Value) ToUint64() (uint64, error) {
 		return 0, ErrIncompatibleTypeCast
 	}
 
-	return strconv.ParseUint(v.RawStr(), 10, 64)
+	return strconv.ParseUint(v.ToString(), 10, 64)
 }
 
 // ToBool returns the value as a bool value
@@ -465,7 +456,7 @@ func (v *Value) UnmarshalJSON(b []byte) error {
 	if len(b) == 0 {
 		return fmt.Errorf("error unmarshaling empty bytes")
 	}
-	var val any
+	var val interface{}
 	var err error
 	switch b[0] {
 	case '-':
@@ -520,26 +511,6 @@ func (v *Value) decodeHexNum() ([]byte, error) {
 	return decodedHexBytes, nil
 }
 
-// decodeBitNum decodes the SQL bit value of the form 0b101 into a byte
-// array matching what MySQL would return when querying the column where
-// an INSERT was performed with 0x5 having been specified as a value
-func (v *Value) decodeBitNum() ([]byte, error) {
-	if len(v.val) < 3 || v.val[0] != '0' || v.val[1] != 'b' {
-		return nil, vterrors.Errorf(vtrpc.Code_INVALID_ARGUMENT, "invalid bit number: %v", v.val)
-	}
-	bitBytes := v.val[2:]
-	ui, err := strconv.ParseUint(string(bitBytes), 2, 64)
-	if err != nil {
-		return nil, err
-	}
-	hexVal := fmt.Sprintf("%x", ui)
-	decodedHexBytes, err := hex.DecodeString(hexVal)
-	if err != nil {
-		return nil, err
-	}
-	return decodedHexBytes, nil
-}
-
 func encodeBytesSQL(val []byte, b BinWriter) {
 	buf := &bytes2.Buffer{}
 	encodeBytesSQLBytes2(val, buf)
@@ -548,12 +519,7 @@ func encodeBytesSQL(val []byte, b BinWriter) {
 
 func encodeBytesSQLBytes2(val []byte, buf *bytes2.Buffer) {
 	buf.WriteByte('\'')
-	for idx, ch := range val {
-		// If \% or \_ is present, we want to keep them as is, and don't want to escape \ again
-		if ch == '\\' && idx+1 < len(val) && (val[idx+1] == '%' || val[idx+1] == '_') {
-			buf.WriteByte(ch)
-			continue
-		}
+	for _, ch := range val {
 		if encodedChar := SQLEncodeMap[ch]; encodedChar == DontEscape {
 			buf.WriteByte(ch)
 		} else {
@@ -566,12 +532,7 @@ func encodeBytesSQLBytes2(val []byte, buf *bytes2.Buffer) {
 
 func encodeBytesSQLStringBuilder(val []byte, buf *strings.Builder) {
 	buf.WriteByte('\'')
-	for idx, ch := range val {
-		// If \% or \_ is present, we want to keep them as is, and don't want to escape \ again
-		if ch == '\\' && idx+1 < len(val) && (val[idx+1] == '%' || val[idx+1] == '_') {
-			buf.WriteByte(ch)
-			continue
-		}
+	for _, ch := range val {
 		if encodedChar := SQLEncodeMap[ch]; encodedChar == DontEscape {
 			buf.WriteByte(ch)
 		} else {
@@ -585,13 +546,8 @@ func encodeBytesSQLStringBuilder(val []byte, buf *strings.Builder) {
 // BufEncodeStringSQL encodes the string into a strings.Builder
 func BufEncodeStringSQL(buf *strings.Builder, val string) {
 	buf.WriteByte('\'')
-	for idx, ch := range val {
+	for _, ch := range val {
 		if ch > 255 {
-			buf.WriteRune(ch)
-			continue
-		}
-		// If \% or \_ is present, we want to keep them as is, and don't want to escape \ again
-		if ch == '\\' && idx+1 < len(val) && (val[idx+1] == '%' || val[idx+1] == '_') {
 			buf.WriteRune(ch)
 			continue
 		}
@@ -631,13 +587,7 @@ func encodeBytesASCII(val []byte, b BinWriter) {
 }
 
 // SQLEncodeMap specifies how to escape binary data with '\'.
-// Complies to https://dev.mysql.com/doc/refman/5.7/en/string-literals.html
-// Handling escaping of % and _ is different than other characters.
-// When escaped in a like clause, they are supposed to be treated as literals
-// Everywhere else, they evaluate to strings '\%' and '\_' respectively.
-// In Vitess, the way we are choosing to handle this behaviour is to always
-// preserve the escaping of % and _ as is in all the places and handle it like MySQL
-// in our evaluation engine for Like.
+// Complies to http://dev.mysql.com/doc/refman/5.1/en/string-syntax.html
 var SQLEncodeMap [256]byte
 
 // SQLDecodeMap is the reverse of SQLEncodeMap

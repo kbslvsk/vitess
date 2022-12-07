@@ -22,15 +22,16 @@ import (
 	"vitess.io/vitess/go/vt/vtgate/planbuilder/plancontext"
 
 	"vitess.io/vitess/go/vt/sqlparser"
+	"vitess.io/vitess/go/vt/vtgate/engine"
 )
 
 type fallbackPlanner struct {
-	primary, fallback stmtPlanner
+	primary, fallback selectPlanner
 }
 
-var _ stmtPlanner = (*fallbackPlanner)(nil).plan
+var _ selectPlanner = (*fallbackPlanner)(nil).plan
 
-func (fp *fallbackPlanner) safePrimary(stmt sqlparser.Statement, reservedVars *sqlparser.ReservedVars, vschema plancontext.VSchema) (res *planResult, err error) {
+func (fp *fallbackPlanner) safePrimary(stmt sqlparser.Statement, reservedVars *sqlparser.ReservedVars, vschema plancontext.VSchema) (res engine.Primitive, err error) {
 	defer func() {
 		// if the primary planner panics, we want to catch it here so we can fall back
 		if r := recover(); r != nil {
@@ -41,7 +42,7 @@ func (fp *fallbackPlanner) safePrimary(stmt sqlparser.Statement, reservedVars *s
 	return
 }
 
-func (fp *fallbackPlanner) plan(stmt sqlparser.Statement, reservedVars *sqlparser.ReservedVars, vschema plancontext.VSchema) (*planResult, error) {
+func (fp *fallbackPlanner) plan(stmt sqlparser.Statement, reservedVars *sqlparser.ReservedVars, vschema plancontext.VSchema) (engine.Primitive, error) {
 	res, err := fp.safePrimary(sqlparser.CloneStatement(stmt), reservedVars, vschema)
 	if err != nil {
 		return fp.fallback(stmt, reservedVars, vschema)

@@ -17,8 +17,8 @@ limitations under the License.
 package engine
 
 import (
-	"context"
 	"fmt"
+	"time"
 
 	"vitess.io/vitess/go/vt/vtgate/evalengine"
 
@@ -41,12 +41,32 @@ type Delete struct {
 	noInputs
 }
 
-// TryExecute performs a non-streaming exec.
-func (del *Delete) TryExecute(ctx context.Context, vcursor VCursor, bindVars map[string]*querypb.BindVariable, _ bool) (*sqltypes.Result, error) {
-	ctx, cancelFunc := addQueryTimeout(ctx, vcursor, del.QueryTimeout)
-	defer cancelFunc()
+// RouteType returns a description of the query routing type used by the primitive
+func (del *Delete) RouteType() string {
+	return del.Opcode.String()
+}
 
-	rss, _, err := del.findRoute(ctx, vcursor, bindVars)
+// GetKeyspaceName specifies the Keyspace that this primitive routes to.
+func (del *Delete) GetKeyspaceName() string {
+	return del.Keyspace.Name
+}
+
+// GetTableName specifies the table that this primitive routes to.
+func (del *Delete) GetTableName() string {
+	if del.Table != nil {
+		return del.Table.Name.String()
+	}
+	return ""
+}
+
+// TryExecute performs a non-streaming exec.
+func (del *Delete) TryExecute(vcursor VCursor, bindVars map[string]*querypb.BindVariable, _ bool) (*sqltypes.Result, error) {
+	if del.QueryTimeout != 0 {
+		cancel := vcursor.SetContextTimeout(time.Duration(del.QueryTimeout) * time.Millisecond)
+		defer cancel()
+	}
+
+	rss, _, err := del.findRoute(vcursor, bindVars)
 	if err != nil {
 		return nil, err
 	}
@@ -57,9 +77,9 @@ func (del *Delete) TryExecute(ctx context.Context, vcursor VCursor, bindVars map
 
 	switch del.Opcode {
 	case Unsharded:
-		return del.execUnsharded(ctx, vcursor, bindVars, rss)
-	case Equal, IN, Scatter, ByDestination, SubShard, EqualUnique, MultiEqual:
-		return del.execMultiDestination(ctx, vcursor, bindVars, rss, del.deleteVindexEntries)
+		return del.execUnsharded(vcursor, bindVars, rss)
+	case Equal, IN, Scatter, ByDestination:
+		return del.execMultiDestination(vcursor, bindVars, rss, del.deleteVindexEntries)
 	default:
 		// Unreachable.
 		return nil, fmt.Errorf("unsupported opcode: %v", del.Opcode)
@@ -67,8 +87,8 @@ func (del *Delete) TryExecute(ctx context.Context, vcursor VCursor, bindVars map
 }
 
 // TryStreamExecute performs a streaming exec.
-func (del *Delete) TryStreamExecute(ctx context.Context, vcursor VCursor, bindVars map[string]*querypb.BindVariable, wantfields bool, callback func(*sqltypes.Result) error) error {
-	res, err := del.TryExecute(ctx, vcursor, bindVars, wantfields)
+func (del *Delete) TryStreamExecute(vcursor VCursor, bindVars map[string]*querypb.BindVariable, wantfields bool, callback func(*sqltypes.Result) error) error {
+	res, err := del.TryExecute(vcursor, bindVars, wantfields)
 	if err != nil {
 		return err
 	}
@@ -76,14 +96,14 @@ func (del *Delete) TryStreamExecute(ctx context.Context, vcursor VCursor, bindVa
 }
 
 // GetFields fetches the field info.
-func (del *Delete) GetFields(context.Context, VCursor, map[string]*querypb.BindVariable) (*sqltypes.Result, error) {
+func (del *Delete) GetFields(VCursor, map[string]*querypb.BindVariable) (*sqltypes.Result, error) {
 	return nil, fmt.Errorf("BUG: unreachable code for %q", del.Query)
 }
 
 // deleteVindexEntries performs an delete if table owns vindex.
 // Note: the commit order may be different from the DML order because it's possible
 // for DMLs to reuse existing transactions.
-func (del *Delete) deleteVindexEntries(ctx context.Context, vcursor VCursor, bindVars map[string]*querypb.BindVariable, rss []*srvtopo.ResolvedShard) error {
+func (del *Delete) deleteVindexEntries(vcursor VCursor, bindVars map[string]*querypb.BindVariable, rss []*srvtopo.ResolvedShard) error {
 	if del.OwnedVindexQuery == "" {
 		return nil
 	}
@@ -91,7 +111,7 @@ func (del *Delete) deleteVindexEntries(ctx context.Context, vcursor VCursor, bin
 	for i := range rss {
 		queries[i] = &querypb.BoundQuery{Sql: del.OwnedVindexQuery, BindVariables: bindVars}
 	}
-	subQueryResults, errors := vcursor.ExecuteMultiShard(ctx, rss, queries, false /* rollbackOnError */, false /* canAutocommit */)
+	subQueryResults, errors := vcursor.ExecuteMultiShard(rss, queries, false, false)
 	for _, err := range errors {
 		if err != nil {
 			return err
@@ -103,23 +123,19 @@ func (del *Delete) deleteVindexEntries(ctx context.Context, vcursor VCursor, bin
 	}
 
 	for _, row := range subQueryResults.Rows {
-		ksid, err := resolveKeyspaceID(ctx, vcursor, del.KsidVindex, row[0:del.KsidLength])
+		ksid, err := resolveKeyspaceID(vcursor, del.KsidVindex, row[0:del.KsidLength])
 		if err != nil {
 			return err
 		}
 		colnum := del.KsidLength
-		vindexTable, err := del.GetSingleTable()
-		if err != nil {
-			return err
-		}
-		for _, colVindex := range vindexTable.Owned {
+		for _, colVindex := range del.Table.Owned {
 			// Fetch the column values. colnum must keep incrementing.
 			fromIds := make([]sqltypes.Value, 0, len(colVindex.Columns))
 			for range colVindex.Columns {
 				fromIds = append(fromIds, row[colnum])
 				colnum++
 			}
-			if err := colVindex.Vindex.(vindexes.Lookup).Delete(ctx, vcursor, [][]sqltypes.Value{fromIds}, ksid); err != nil {
+			if err := colVindex.Vindex.(vindexes.Lookup).Delete(vcursor, [][]sqltypes.Value{fromIds}, ksid); err != nil {
 				return err
 			}
 		}
@@ -129,7 +145,7 @@ func (del *Delete) deleteVindexEntries(ctx context.Context, vcursor VCursor, bin
 }
 
 func (del *Delete) description() PrimitiveDescription {
-	other := map[string]any{
+	other := map[string]interface{}{
 		"Query":                del.Query,
 		"Table":                del.GetTableName(),
 		"OwnedVindexQuery":     del.OwnedVindexQuery,
@@ -148,7 +164,7 @@ func (del *Delete) description() PrimitiveDescription {
 	}
 }
 
-func addFieldsIfNotEmpty(dml *DML, other map[string]any) {
+func addFieldsIfNotEmpty(dml *DML, other map[string]interface{}) {
 	if dml.Vindex != nil {
 		other["Vindex"] = dml.Vindex.String()
 	}

@@ -10,7 +10,6 @@
     "vtgates": [
         {
             "host": {
-                "fqdn": "localhost:15001",
                 "hostname": "localhost:15991"
             }
         }

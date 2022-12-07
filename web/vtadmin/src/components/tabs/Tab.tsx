@@ -30,12 +30,7 @@ interface Props {
 
 export const Tab = ({ activeClassName, className, count, status, text, to }: Props) => {
     return (
-        <NavLink
-            activeClassName={cx(style.active, activeClassName)}
-            className={cx(style.tab, className)}
-            role="tab"
-            to={to}
-        >
+        <NavLink activeClassName={cx(style.active, activeClassName)} className={cx(style.tab, className)} to={to}>
             {!!status && <Pip className={style.pip} state={status} />}
             {text}
             {typeof count === 'number' && <span className={style.count}>{count}</span>}

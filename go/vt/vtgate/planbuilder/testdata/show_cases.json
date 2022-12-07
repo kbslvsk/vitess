@@ -55,10 +55,10 @@
   },
   {
     "comment": "Show Table status with a keyspace name with a condition",
-    "query": "SHOW table StatUs In user WHERE `Rows` > 70",
+    "query": "SHOW table StatUs In user WHERE Rows > 70",
     "plan": {
       "QueryType": "SHOW",
-      "Original": "SHOW table StatUs In user WHERE `Rows` > 70",
+      "Original": "SHOW table StatUs In user WHERE Rows > 70",
       "Instructions": {
         "OperatorType": "Send",
         "Keyspace": {
@@ -615,159 +615,6 @@
         "TargetDestination": "AnyShard()",
         "Query": "show global status",
         "SingleShardOnly": true
-      }
-    }
-  },
-  {
-    "comment": "show plugins",
-    "query": "show plugins",
-    "plan": {
-      "QueryType": "SHOW",
-      "Original": "show plugins",
-      "Instructions": {
-        "OperatorType": "Rows"
-      }
-    }
-  },
-  {
-    "comment": "show engines",
-    "query": "show engines",
-    "plan": {
-      "QueryType": "SHOW",
-      "Original": "show engines",
-      "Instructions": {
-        "OperatorType": "Rows"
-      }
-    }
-  },
-  {
-    "comment": "show vitess_shards",
-    "query": "show vitess_shards",
-    "plan": {
-      "QueryType": "SHOW",
-      "Original": "show vitess_shards",
-      "Instructions": {
-        "OperatorType": "ShowExec",
-        "Variant": " vitess_shards"
-      }
-    }
-  },
-  {
-    "comment": "show vitess_tablets",
-    "query": "show vitess_tablets",
-    "plan": {
-      "QueryType": "SHOW",
-      "Original": "show vitess_tablets",
-      "Instructions": {
-        "OperatorType": "ShowExec",
-        "Variant": " vitess_tablets"
-      }
-    }
-  },
-  {
-    "comment": "show vitess_tablets with filter",
-    "query": "show vitess_tablets like '-2%'",
-    "plan": {
-      "QueryType": "SHOW",
-      "Original": "show vitess_tablets like '-2%'",
-      "Instructions": {
-        "OperatorType": "ShowExec",
-        "Variant": " vitess_tablets",
-        "Filter": " like '-2%'"
-      }
-    }
-  },
-  {
-    "comment": "show vschema tables",
-    "query": "show vschema tables",
-    "plan": {
-      "QueryType": "SHOW",
-      "Original": "show vschema tables",
-      "Instructions": {
-        "OperatorType": "Rows"
-      }
-    }
-  },
-  {
-    "comment": "show vschema vindexes",
-    "query": "show vschema vindexes",
-    "plan": {
-      "QueryType": "SHOW",
-      "Original": "show vschema vindexes",
-      "Instructions": {
-        "OperatorType": "Rows"
-      }
-    }
-  },
-  {
-    "comment": "show vschema vindexes on a table",
-    "query": "show vschema vindexes on user.user",
-    "plan": {
-      "QueryType": "SHOW",
-      "Original": "show vschema vindexes on user.user",
-      "Instructions": {
-        "OperatorType": "Rows"
-      }
-    }
-  },
-  {
-    "comment": "show vitess target",
-    "query": "show vitess_target",
-    "plan": {
-      "QueryType": "SHOW",
-      "Original": "show vitess_target",
-      "Instructions": {
-        "OperatorType": "Rows"
-      }
-    }
-  },
-  {
-    "comment": "show vitess_replication_status",
-    "query": "show vitess_replication_status",
-    "plan": {
-      "QueryType": "SHOW",
-      "Original": "show vitess_replication_status",
-      "Instructions": {
-        "OperatorType": "ShowExec",
-        "Variant": " vitess_replication_status"
-      }
-    }
-  },
-  {
-    "comment": "show vitess_replication_status with filter",
-    "query": "show vitess_replication_status like 'x'",
-    "plan": {
-      "QueryType": "SHOW",
-      "Original": "show vitess_replication_status like 'x'",
-      "Instructions": {
-        "OperatorType": "ShowExec",
-        "Variant": " vitess_replication_status",
-        "Filter": " like 'x'"
-      }
-    }
-  },
-  {
-    "comment": "show vitess_metadata variables",
-    "query": "show vitess_metadata variables",
-    "plan": {
-      "QueryType": "SHOW",
-      "Original": "show vitess_metadata variables",
-      "Instructions": {
-        "OperatorType": "ShowExec",
-        "Variant": " vitess_metadata variables"
-      }
-    }
-  },
-  {
-    "comment": "show vitess_metadata variables with filter",
-    "query": "show vitess_metadata variables like 'x'",
-    "plan": {
-      "QueryType": "SHOW",
-      "Original": "show vitess_metadata variables like 'x'",
-      "Instructions": {
-        "OperatorType": "ShowExec",
-        "Variant": " vitess_metadata variables",
-        "Filter": " like 'x'"
       }
     }
   }

@@ -40,118 +40,75 @@ func newKeyRange(value string) *topodatapb.KeyRange {
 	return result
 }
 
-func executeTestSuite(f func(*testing.T, *topo.Server), t *testing.T, ts *topo.Server, ignoreList []string, name string) {
-	// some test does not apply every where therefore we ignore them
-	for _, n := range ignoreList {
-		if n == name {
-			t.Logf("=== ignoring test %s", name)
-			return
-		}
-	}
-	f(t, ts)
-}
-
 // TopoServerTestSuite runs the full topo.Server/Conn test suite.
 // The factory method should return a topo.Server that has a single cell
 // called LocalCellName.
-// Not all tests are applicable for each Topo server, therefore we provide ignoreList in order to
-// avoid them for given Topo server tests. For example `TryLock` implementation is same as `Lock` for some Topo servers.
-// Hence, for these Topo servers we ignore executing TryLock Tests.
-func TopoServerTestSuite(t *testing.T, factory func() *topo.Server, ignoreList []string) {
+func TopoServerTestSuite(t *testing.T, factory func() *topo.Server) {
 	var ts *topo.Server
 
 	t.Log("=== checkKeyspace")
 	ts = factory()
-	executeTestSuite(checkKeyspace, t, ts, ignoreList, "checkKeyspace")
+	checkKeyspace(t, ts)
 	ts.Close()
 
 	t.Log("=== checkShard")
 	ts = factory()
-	executeTestSuite(checkShard, t, ts, ignoreList, "checkShard")
-	ts.Close()
-
-	t.Log("=== checkShardWithLock")
-	ts = factory()
-	executeTestSuite(checkShardWithLock, t, ts, ignoreList, "checkShardWithLock")
+	checkShard(t, ts)
 	ts.Close()
 
 	t.Log("=== checkTablet")
 	ts = factory()
-	executeTestSuite(checkTablet, t, ts, ignoreList, "checkTablet")
+	checkTablet(t, ts)
 	ts.Close()
 
 	t.Log("=== checkShardReplication")
 	ts = factory()
-	executeTestSuite(checkShardReplication, t, ts, ignoreList, "checkShardReplication")
+	checkShardReplication(t, ts)
 	ts.Close()
 
 	t.Log("=== checkSrvKeyspace")
 	ts = factory()
-	executeTestSuite(checkSrvKeyspace, t, ts, ignoreList, "checkSrvKeyspace")
+	checkSrvKeyspace(t, ts)
 	ts.Close()
 
 	t.Log("=== checkSrvVSchema")
 	ts = factory()
-	executeTestSuite(checkSrvVSchema, t, ts, ignoreList, "checkSrvVSchema")
+	checkSrvVSchema(t, ts)
 	ts.Close()
 
 	t.Log("=== checkLock")
 	ts = factory()
-	executeTestSuite(checkLock, t, ts, ignoreList, "checkLock")
-	ts.Close()
-
-	t.Log("=== checkTryLock")
-	ts = factory()
-	executeTestSuite(checkTryLock, t, ts, ignoreList, "checkTryLock")
+	checkLock(t, ts)
 	ts.Close()
 
 	t.Log("=== checkVSchema")
 	ts = factory()
-	executeTestSuite(checkVSchema, t, ts, ignoreList, "checkVSchema")
+	checkVSchema(t, ts)
 	ts.Close()
 
 	t.Log("=== checkRoutingRules")
 	ts = factory()
-	executeTestSuite(checkRoutingRules, t, ts, ignoreList, "checkRoutingRules")
+	checkRoutingRules(t, ts)
 	ts.Close()
 
 	t.Log("=== checkElection")
 	ts = factory()
-	executeTestSuite(checkElection, t, ts, ignoreList, "checkElection")
-	ts.Close()
-
-	t.Log("=== checkWaitForNewLeader")
-	ts = factory()
-	executeTestSuite(checkWaitForNewLeader, t, ts, ignoreList, "checkWaitForNewLeader")
+	checkElection(t, ts)
 	ts.Close()
 
 	t.Log("=== checkDirectory")
 	ts = factory()
-	executeTestSuite(checkDirectory, t, ts, ignoreList, "checkDirectory")
+	checkDirectory(t, ts)
 	ts.Close()
 
 	t.Log("=== checkFile")
 	ts = factory()
-	executeTestSuite(checkFile, t, ts, ignoreList, "checkFile")
+	checkFile(t, ts)
 	ts.Close()
 
 	t.Log("=== checkWatch")
 	ts = factory()
-	executeTestSuite(checkWatch, t, ts, ignoreList, "checkWatch")
-	ts.Close()
-
-	ts = factory()
-	t.Log("=== checkWatchInterrupt")
-	executeTestSuite(checkWatchInterrupt, t, ts, ignoreList, "checkWatchInterrupt")
-	ts.Close()
-
-	ts = factory()
-	t.Log("=== checkList")
-	executeTestSuite(checkList, t, ts, ignoreList, "checkList")
-	ts.Close()
-
-	ts = factory()
-	t.Log("=== checkWatchRecursive")
-	executeTestSuite(checkWatchRecursive, t, ts, ignoreList, "checkWatchRecursive")
+	checkWatch(t, ts)
+	checkWatchInterrupt(t, ts)
 	ts.Close()
 }

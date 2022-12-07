@@ -41,6 +41,7 @@ describe('vitess-mixin: Cluster Overview Dashboard Test', function () {
         'keyspace',
         'shard',
         'vtctld',
+        'vtworker',
         'Requests',
         'Error rate',
         'Duration 99th quantile',

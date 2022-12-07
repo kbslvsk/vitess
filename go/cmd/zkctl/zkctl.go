@@ -19,14 +19,13 @@ package main
 
 import (
 	"bufio"
+	"flag"
+	"fmt"
 	"os"
-
-	"github.com/spf13/pflag"
 
 	"vitess.io/vitess/go/exit"
 	"vitess.io/vitess/go/vt/log"
 	"vitess.io/vitess/go/vt/logutil"
-	"vitess.io/vitess/go/vt/servenv"
 	"vitess.io/vitess/go/vt/zkctl"
 )
 
@@ -37,21 +36,21 @@ Commands:
 `
 
 var (
-	// Reason for nolint : Used in line 54 (stdin = bufio.NewReader(os.Stdin)) in the init function
-	stdin *bufio.Reader //nolint
-	zkCfg = "6@<hostname>:3801:3802:3803"
-	myID  uint
-)
-
-func registerZkctlFlags(fs *pflag.FlagSet) {
-	fs.StringVar(&zkCfg, "zk.cfg", zkCfg,
+	zkCfg = flag.String("zk.cfg", "6@<hostname>:3801:3802:3803",
 		"zkid@server1:leaderPort1:electionPort1:clientPort1,...)")
-	fs.UintVar(&myID, "zk.myid", myID,
+	myID = flag.Uint("zk.myid", 0,
 		"which server do you want to be? only needed when running multiple instance on one box, otherwise myid is implied by hostname")
 
-}
+	// Reason for nolint : Used in line 54 (stdin = bufio.NewReader(os.Stdin)) in the init function
+	stdin *bufio.Reader //nolint
+)
+
 func init() {
-	servenv.OnParse(registerZkctlFlags)
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage of %s:\n", os.Args[0])
+		flag.PrintDefaults()
+		fmt.Fprint(os.Stderr, usage)
+	}
 	stdin = bufio.NewReader(os.Stdin)
 }
 
@@ -59,15 +58,18 @@ func main() {
 	defer exit.Recover()
 	defer logutil.Flush()
 
-	fs := pflag.NewFlagSet("zkctl", pflag.ExitOnError)
-	log.RegisterFlags(fs)
-	logutil.RegisterFlags(fs)
-	args := servenv.ParseFlagsWithArgs("zkctl")
+	flag.Parse()
+	args := flag.Args()
 
-	zkConfig := zkctl.MakeZkConfigFromString(zkCfg, uint32(myID))
+	if len(args) == 0 {
+		flag.Usage()
+		exit.Return(1)
+	}
+
+	zkConfig := zkctl.MakeZkConfigFromString(*zkCfg, uint32(*myID))
 	zkd := zkctl.NewZkd(zkConfig)
 
-	action := args[0]
+	action := flag.Arg(0)
 	var err error
 	switch action {
 	case "init":
@@ -80,7 +82,6 @@ func main() {
 		err = zkd.Teardown()
 	default:
 		log.Errorf("invalid action: %v", action)
-		log.Errorf(usage)
 		exit.Return(1)
 	}
 	if err != nil {

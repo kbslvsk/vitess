@@ -12,10 +12,11 @@ import (
 	"testing"
 	"time"
 
+	"vitess.io/vitess/go/mysql"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"vitess.io/vitess/go/mysql"
 	"vitess.io/vitess/go/mysql/fakesqldb"
 	"vitess.io/vitess/go/vt/logutil"
 	"vitess.io/vitess/go/vt/mysqlctl"
@@ -30,8 +31,8 @@ import (
 )
 
 func setBuiltinBackupMysqldDeadline(t time.Duration) time.Duration {
-	old := mysqlctl.BuiltinBackupMysqldTimeout
-	mysqlctl.BuiltinBackupMysqldTimeout = t
+	old := *mysqlctl.BuiltinBackupMysqldTimeout
+	mysqlctl.BuiltinBackupMysqldTimeout = &t
 
 	return old
 }
@@ -49,7 +50,7 @@ func createBackupDir(root string, dirs ...string) error {
 func TestExecuteBackup(t *testing.T) {
 	// Set up local backup directory
 	backupRoot := "testdata/builtinbackup_test"
-	filebackupstorage.FileBackupStorageRoot = backupRoot
+	*filebackupstorage.FileBackupStorageRoot = backupRoot
 	require.NoError(t, createBackupDir(backupRoot, "innodb", "log", "datadir"))
 	defer os.RemoveAll(backupRoot)
 

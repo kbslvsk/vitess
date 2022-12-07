@@ -17,7 +17,6 @@ limitations under the License.
 package wrangler
 
 import (
-	"context"
 	"fmt"
 	"regexp"
 	"runtime/debug"
@@ -27,16 +26,18 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"vitess.io/vitess/go/sqltypes"
 	"vitess.io/vitess/go/vt/key"
-	"vitess.io/vitess/go/vt/logutil"
-	"vitess.io/vitess/go/vt/topo"
-	"vitess.io/vitess/go/vt/topo/memorytopo"
-	"vitess.io/vitess/go/vt/vttablet/tmclient"
 
+	"context"
+
+	"vitess.io/vitess/go/sqltypes"
+	"vitess.io/vitess/go/vt/logutil"
 	querypb "vitess.io/vitess/go/vt/proto/query"
 	tabletmanagerdatapb "vitess.io/vitess/go/vt/proto/tabletmanagerdata"
 	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
+	"vitess.io/vitess/go/vt/topo"
+	"vitess.io/vitess/go/vt/topo/memorytopo"
+	"vitess.io/vitess/go/vt/vttablet/tmclient"
 )
 
 type testResharderEnv struct {
@@ -52,7 +53,7 @@ type testResharderEnv struct {
 }
 
 var (
-	testMode = "" // "debug"
+	testMode = "" //"debug"
 )
 
 //----------------------------------------------
@@ -200,7 +201,7 @@ func newTestResharderTMClient() *testResharderTMClient {
 	}
 }
 
-func (tmc *testResharderTMClient) GetSchema(ctx context.Context, tablet *topodatapb.Tablet, request *tabletmanagerdatapb.GetSchemaRequest) (*tabletmanagerdatapb.SchemaDefinition, error) {
+func (tmc *testResharderTMClient) GetSchema(ctx context.Context, tablet *topodatapb.Tablet, tables, excludeTables []string, includeViews bool) (*tabletmanagerdatapb.SchemaDefinition, error) {
 	return tmc.schema, nil
 }
 
@@ -240,9 +241,9 @@ func (tmc *testResharderTMClient) VReplicationExec(ctx context.Context, tablet *
 	return qrs[0].result, nil
 }
 
-func (tmc *testResharderTMClient) ExecuteFetchAsDba(ctx context.Context, tablet *topodatapb.Tablet, usePool bool, req *tabletmanagerdatapb.ExecuteFetchAsDbaRequest) (*querypb.QueryResult, error) {
+func (tmc *testResharderTMClient) ExecuteFetchAsDba(ctx context.Context, tablet *topodatapb.Tablet, usePool bool, query []byte, maxRows int, disableBinlogs, reloadSchema bool) (*querypb.QueryResult, error) {
 	// Reuse VReplicationExec
-	return tmc.VReplicationExec(ctx, tablet, string(req.Query))
+	return tmc.VReplicationExec(ctx, tablet, string(query))
 }
 
 func (tmc *testResharderTMClient) verifyQueries(t *testing.T) {

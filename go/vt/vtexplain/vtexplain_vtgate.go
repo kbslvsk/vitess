@@ -34,7 +34,6 @@ import (
 	"vitess.io/vitess/go/vt/vterrors"
 
 	"vitess.io/vitess/go/json2"
-	"vitess.io/vitess/go/streamlog"
 	"vitess.io/vitess/go/vt/discovery"
 	"vitess.io/vitess/go/vt/key"
 	"vitess.io/vitess/go/vt/log"
@@ -49,41 +48,49 @@ import (
 	vtgatepb "vitess.io/vitess/go/vt/proto/vtgate"
 )
 
-func (vte *VTExplain) initVtgateExecutor(vSchemaStr, ksShardMapStr string, opts *Options) error {
-	vte.explainTopo = &ExplainTopo{NumShards: opts.NumShards}
-	vte.explainTopo.TopoServer = memorytopo.NewServer(vtexplainCell)
-	vte.healthCheck = discovery.NewFakeHealthCheck(nil)
+var (
+	explainTopo    *ExplainTopo
+	vtgateExecutor *vtgate.Executor
+	healthCheck    *discovery.FakeHealthCheck
 
-	resolver := vte.newFakeResolver(opts, vte.explainTopo, vtexplainCell)
+	vtgateSession = &vtgatepb.Session{
+		TargetString: "",
+		Autocommit:   true,
+	}
+)
 
-	err := vte.buildTopology(opts, vSchemaStr, ksShardMapStr, opts.NumShards)
+func initVtgateExecutor(vSchemaStr, ksShardMapStr string, opts *Options) error {
+	explainTopo = &ExplainTopo{NumShards: opts.NumShards}
+	explainTopo.TopoServer = memorytopo.NewServer(vtexplainCell)
+	healthCheck = discovery.NewFakeHealthCheck(nil)
+
+	resolver := newFakeResolver(opts, explainTopo, vtexplainCell)
+
+	err := buildTopology(opts, vSchemaStr, ksShardMapStr, opts.NumShards)
 	if err != nil {
 		return err
 	}
 
-	vte.vtgateSession.TargetString = opts.Target
+	vtgateSession.TargetString = opts.Target
 
 	if opts.PlannerVersion != querypb.ExecuteOptions_DEFAULT_PLANNER {
-		if vte.vtgateSession.Options == nil {
-			vte.vtgateSession.Options = &querypb.ExecuteOptions{}
+		if vtgateSession.Options == nil {
+			vtgateSession.Options = &querypb.ExecuteOptions{}
 		}
-		vte.vtgateSession.Options.PlannerVersion = opts.PlannerVersion
+		vtgateSession.Options.PlannerVersion = opts.PlannerVersion
 	}
 
 	streamSize := 10
 	var schemaTracker vtgate.SchemaInfo // no schema tracker for these tests
-	vte.vtgateExecutor = vtgate.NewExecutor(context.Background(), vte.explainTopo, vtexplainCell, resolver, opts.Normalize, false, streamSize, cache.DefaultConfig, schemaTracker, false, opts.PlannerVersion)
-
-	queryLogBufferSize := 10
-	vtgate.QueryLogger = streamlog.New("VTGate", queryLogBufferSize)
+	vtgateExecutor = vtgate.NewExecutor(context.Background(), explainTopo, vtexplainCell, resolver, opts.Normalize, false /*do not warn for sharded only*/, streamSize, cache.DefaultConfig, schemaTracker, false /*no-scatter*/)
 
 	return nil
 }
 
-func (vte *VTExplain) newFakeResolver(opts *Options, serv srvtopo.Server, cell string) *vtgate.Resolver {
+func newFakeResolver(opts *Options, serv srvtopo.Server, cell string) *vtgate.Resolver {
 	ctx := context.Background()
-	gw := vtgate.NewTabletGateway(ctx, vte.healthCheck, serv, cell)
-	_ = gw.WaitForTablets([]topodatapb.TabletType{topodatapb.TabletType_REPLICA})
+	gw := vtgate.NewTabletGateway(ctx, healthCheck, serv, cell)
+	_ = gw.WaitForTablets(ctx, []topodatapb.TabletType{topodatapb.TabletType_REPLICA})
 
 	txMode := vtgatepb.TransactionMode_MULTI
 	if opts.ExecutionMode == ModeTwoPC {
@@ -95,9 +102,9 @@ func (vte *VTExplain) newFakeResolver(opts *Options, serv srvtopo.Server, cell s
 	return vtgate.NewResolver(srvResolver, serv, cell, sc)
 }
 
-func (vte *VTExplain) buildTopology(opts *Options, vschemaStr string, ksShardMapStr string, numShardsPerKeyspace int) error {
-	vte.explainTopo.Lock.Lock()
-	defer vte.explainTopo.Lock.Unlock()
+func buildTopology(opts *Options, vschemaStr string, ksShardMapStr string, numShardsPerKeyspace int) error {
+	explainTopo.Lock.Lock()
+	defer explainTopo.Lock.Unlock()
 
 	// We have to use proto's custom json loader so it can
 	// handle string->enum conversion correctly.
@@ -113,40 +120,32 @@ func (vte *VTExplain) buildTopology(opts *Options, vschemaStr string, ksShardMap
 			return vterrors.Wrapf(ksSchema.Error, "vschema failed to load on keyspace [%s]", ks)
 		}
 	}
-	vte.explainTopo.Keyspaces = srvVSchema.Keyspaces
+	explainTopo.Keyspaces = srvVSchema.Keyspaces
 
 	ksShardMap, err := getKeyspaceShardMap(ksShardMapStr)
 	if err != nil {
 		return err
 	}
 
-	vte.explainTopo.TabletConns = make(map[string]*explainTablet)
-	vte.explainTopo.KeyspaceShards = make(map[string]map[string]*topodatapb.ShardReference)
-	for ks, vschema := range vte.explainTopo.Keyspaces {
+	explainTopo.TabletConns = make(map[string]*explainTablet)
+	explainTopo.KeyspaceShards = make(map[string]map[string]*topodatapb.ShardReference)
+	for ks, vschema := range explainTopo.Keyspaces {
 		shards, err := getShardRanges(ks, vschema, ksShardMap, numShardsPerKeyspace)
 		if err != nil {
 			return err
 		}
 
-		vte.explainTopo.KeyspaceShards[ks] = make(map[string]*topodatapb.ShardReference)
+		explainTopo.KeyspaceShards[ks] = make(map[string]*topodatapb.ShardReference)
 
 		for _, shard := range shards {
-			// If the topology is in the middle of a reshard, there can be two shards covering the same key range (e.g.
-			// both source shard 80- and target shard 80-c0 cover the keyrange 80-c0). For the purposes of explain, we
-			// should only consider the one that is serving, hence we skip the ones not serving. Otherwise, vtexplain
-			// gives inconsistent results - sometimes it will route the query being explained to the source shard, and
-			// sometimes to the destination shard. See https://github.com/vitessio/vitess/issues/11632 .
-			if shardInfo, ok := ksShardMap[ks][shard.Name]; ok && !shardInfo.IsPrimaryServing {
-				continue
-			}
 			hostname := fmt.Sprintf("%s/%s", ks, shard.Name)
 			log.Infof("registering test tablet %s for keyspace %s shard %s", hostname, ks, shard.Name)
 
-			tablet := vte.healthCheck.AddFakeTablet(vtexplainCell, hostname, 1, ks, shard.Name, topodatapb.TabletType_PRIMARY, true, 1, nil, func(t *topodatapb.Tablet) queryservice.QueryService {
-				return vte.newTablet(opts, t)
+			tablet := healthCheck.AddFakeTablet(vtexplainCell, hostname, 1, ks, shard.Name, topodatapb.TabletType_PRIMARY, true, 1, nil, func(t *topodatapb.Tablet) queryservice.QueryService {
+				return newTablet(opts, t)
 			})
-			vte.explainTopo.TabletConns[hostname] = tablet.(*explainTablet)
-			vte.explainTopo.KeyspaceShards[ks][shard.Name] = shard
+			explainTopo.TabletConns[hostname] = tablet.(*explainTablet)
+			explainTopo.KeyspaceShards[ks][shard.Name] = shard
 		}
 	}
 
@@ -203,18 +202,18 @@ func getShardRanges(ks string, vschema *vschemapb.Keyspace, ksShardMap map[strin
 	return shards, nil
 }
 
-func (vte *VTExplain) vtgateExecute(sql string) ([]*engine.Plan, map[string]*TabletActions, error) {
+func vtgateExecute(sql string) ([]*engine.Plan, map[string]*TabletActions, error) {
 	// This method will sort the shard session lexicographically.
 	// This will ensure that the commit/rollback order is predictable.
-	vte.sortShardSession()
+	sortShardSession()
 
 	// use the plan cache to get the set of plans used for this query, then
 	// clear afterwards for the next run
-	planCache := vte.vtgateExecutor.Plans()
+	planCache := vtgateExecutor.Plans()
 
-	_, err := vte.vtgateExecutor.Execute(context.Background(), "VtexplainExecute", vtgate.NewSafeSession(vte.vtgateSession), sql, nil)
+	_, err := vtgateExecutor.Execute(context.Background(), "VtexplainExecute", vtgate.NewSafeSession(vtgateSession), sql, nil)
 	if err != nil {
-		for _, tc := range vte.explainTopo.TabletConns {
+		for _, tc := range explainTopo.TabletConns {
 			tc.tabletQueries = nil
 			tc.mysqlQueries = nil
 		}
@@ -224,7 +223,7 @@ func (vte *VTExplain) vtgateExecute(sql string) ([]*engine.Plan, map[string]*Tab
 	}
 
 	var plans []*engine.Plan
-	planCache.ForEach(func(value any) bool {
+	planCache.ForEach(func(value interface{}) bool {
 		plan := value.(*engine.Plan)
 		plan.ExecTime = 0
 		plans = append(plans, plan)
@@ -233,7 +232,7 @@ func (vte *VTExplain) vtgateExecute(sql string) ([]*engine.Plan, map[string]*Tab
 	planCache.Clear()
 
 	tabletActions := make(map[string]*TabletActions)
-	for shard, tc := range vte.explainTopo.TabletConns {
+	for shard, tc := range explainTopo.TabletConns {
 		if len(tc.tabletQueries) == 0 {
 			continue
 		}
@@ -255,13 +254,14 @@ func (vte *VTExplain) vtgateExecute(sql string) ([]*engine.Plan, map[string]*Tab
 	return plans, tabletActions, nil
 }
 
-func (vte *VTExplain) sortShardSession() {
-	ss := vte.vtgateSession.ShardSessions
-
-	sort.Slice(ss, func(i, j int) bool {
-		if ss[i].Target.Keyspace != ss[j].Target.Keyspace {
-			return strings.Compare(ss[i].Target.Keyspace, ss[j].Target.Keyspace) <= 0
-		}
-		return strings.Compare(ss[i].Target.Shard, ss[j].Target.Shard) <= 0
-	})
+func sortShardSession() {
+	if len(vtgateSession.ShardSessions) > 1 {
+		ss := vtgateSession.ShardSessions
+		sort.Slice(ss, func(i, j int) bool {
+			if ss[i].Target.Keyspace != ss[j].Target.Keyspace {
+				return strings.Compare(ss[i].Target.Keyspace, ss[j].Target.Keyspace) <= 0
+			}
+			return strings.Compare(ss[i].Target.Shard, ss[j].Target.Shard) <= 0
+		})
+	}
 }

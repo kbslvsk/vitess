@@ -17,43 +17,35 @@ limitations under the License.
 package mysql
 
 import (
-	"context"
+	"flag"
 	"math/rand"
 	"net"
 	"strings"
 	"testing"
+
+	"context"
 )
 
-// Override the default here to test with different values.
 var testReadConnBufferSize = connBufferSize
+
+func init() {
+	flag.IntVar(&testReadConnBufferSize, "test.read_conn_buffer_size", connBufferSize, "buffer size for reads from connections in tests")
+}
 
 const benchmarkQueryPrefix = "benchmark "
 
-type mkListenerCfg func(AuthServer, Handler) ListenerConfig
-
-func mkDefaultListenerCfg(authServer AuthServer, handler Handler) ListenerConfig {
-	return ListenerConfig{
-		Protocol:           "tcp",
-		Address:            "127.0.0.1:",
-		AuthServer:         authServer,
-		Handler:            handler,
-		ConnReadBufferSize: testReadConnBufferSize,
-	}
-}
-
-func mkReadBufferPoolingCfg(authServer AuthServer, handler Handler) ListenerConfig {
-	cfg := mkDefaultListenerCfg(authServer, handler)
-	cfg.ConnBufferPooling = true
-	return cfg
-}
-
-func benchmarkQuery(b *testing.B, threads int, query string, mkCfg mkListenerCfg) {
+func benchmarkQuery(b *testing.B, threads int, query string) {
 	th := &testHandler{}
 
 	authServer := NewAuthServerNone()
 
-	lCfg := mkCfg(authServer, th)
-
+	lCfg := ListenerConfig{
+		Protocol:           "tcp",
+		Address:            "127.0.0.1:",
+		AuthServer:         authServer,
+		Handler:            th,
+		ConnReadBufferSize: testReadConnBufferSize,
+	}
 	l, err := NewListenerWithConfig(lCfg)
 	if err != nil {
 		b.Fatalf("NewListener failed: %v", err)
@@ -115,35 +107,13 @@ func benchmarkQuery(b *testing.B, threads int, query string, mkCfg mkListenerCfg
 // executes M queries on them, then closes them.
 // It is meant as a somewhat real load test.
 func BenchmarkParallelShortQueries(b *testing.B) {
-	benchmarkQuery(b, 10, benchmarkQueryPrefix+"select rows", mkDefaultListenerCfg)
+	benchmarkQuery(b, 10, benchmarkQueryPrefix+"select rows")
 }
 
 func BenchmarkParallelMediumQueries(b *testing.B) {
-	benchmarkQuery(
-		b,
-		10,
-		benchmarkQueryPrefix+"select"+strings.Repeat("x", connBufferSize),
-		mkDefaultListenerCfg,
-	)
+	benchmarkQuery(b, 10, benchmarkQueryPrefix+"select"+strings.Repeat("x", connBufferSize))
 }
 
 func BenchmarkParallelRandomQueries(b *testing.B) {
-	benchmarkQuery(b, 10, "", mkDefaultListenerCfg)
-}
-
-func BenchmarkParallelShortQueriesWithReadBufferPooling(b *testing.B) {
-	benchmarkQuery(b, 10, benchmarkQueryPrefix+"select rows", mkReadBufferPoolingCfg)
-}
-
-func BenchmarkParallelMediumQueriesWithReadBufferPooling(b *testing.B) {
-	benchmarkQuery(
-		b,
-		10,
-		benchmarkQueryPrefix+"select"+strings.Repeat("x", connBufferSize),
-		mkReadBufferPoolingCfg,
-	)
-}
-
-func BenchmarkParallelRandomQueriesWithReadBufferPooling(b *testing.B) {
-	benchmarkQuery(b, 10, "", mkReadBufferPoolingCfg)
+	benchmarkQuery(b, 10, "")
 }

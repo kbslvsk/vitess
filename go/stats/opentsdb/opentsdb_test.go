@@ -375,14 +375,14 @@ func checkOutput(t *testing.T, statName string, wantJSON string) {
 				t.Errorf("Failed to marshal json: %v", err)
 				return
 			}
-			var got any
+			var got interface{}
 			err = json.Unmarshal(gotBytes, &got)
 			if err != nil {
 				t.Errorf("Failed to marshal json: %v", err)
 				return
 			}
 
-			var want any
+			var want interface{}
 			err = json.Unmarshal([]byte(wantJSON), &want)
 			if err != nil {
 				t.Errorf("Failed to marshal json: %v", err)

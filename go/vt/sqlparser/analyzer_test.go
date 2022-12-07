@@ -165,30 +165,30 @@ func TestAndExpressions(t *testing.T) {
 	greaterThanExpr := &ComparisonExpr{
 		Operator: GreaterThanOp,
 		Left: &ColName{
-			Name: NewIdentifierCI("val"),
+			Name: NewColIdent("val"),
 			Qualifier: TableName{
-				Name: NewIdentifierCS("a"),
+				Name: NewTableIdent("a"),
 			},
 		},
 		Right: &ColName{
-			Name: NewIdentifierCI("val"),
+			Name: NewColIdent("val"),
 			Qualifier: TableName{
-				Name: NewIdentifierCS("b"),
+				Name: NewTableIdent("b"),
 			},
 		},
 	}
 	equalExpr := &ComparisonExpr{
 		Operator: EqualOp,
 		Left: &ColName{
-			Name: NewIdentifierCI("id"),
+			Name: NewColIdent("id"),
 			Qualifier: TableName{
-				Name: NewIdentifierCS("a"),
+				Name: NewTableIdent("a"),
 			},
 		},
 		Right: &ColName{
-			Name: NewIdentifierCI("id"),
+			Name: NewColIdent("id"),
 			Qualifier: TableName{
-				Name: NewIdentifierCS("b"),
+				Name: NewTableIdent("b"),
 			},
 		},
 	}

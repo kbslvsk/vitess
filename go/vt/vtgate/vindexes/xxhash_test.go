@@ -18,7 +18,6 @@ package vindexes
 
 import (
 	"bytes"
-	"context"
 	"encoding/hex"
 	"fmt"
 	"reflect"
@@ -84,7 +83,7 @@ func TestXXHashMap(t *testing.T) {
 	}}
 
 	for _, tcase := range tcases {
-		got, err := xxHash.Map(context.Background(), nil, []sqltypes.Value{tcase.in})
+		got, err := xxHash.Map(nil, []sqltypes.Value{tcase.in})
 		if err != nil {
 			t.Error(err)
 		}
@@ -102,7 +101,7 @@ func TestXXHashVerify(t *testing.T) {
 	hexBytes, _ := hex.DecodeString(hexValStr)
 	ids := []sqltypes.Value{sqltypes.NewUint64(1), sqltypes.NewUint64(2), sqltypes.NewHexVal([]byte(hexValStrSQL)), sqltypes.NewHexNum([]byte(hexNumStrSQL))}
 	ksids := [][]byte{{0xd4, 0x64, 0x5, 0x36, 0x76, 0x12, 0xb4, 0xb7}, {0xd4, 0x64, 0x5, 0x36, 0x76, 0x12, 0xb4, 0xb7}, vXXHash(hexBytes), vXXHash(hexBytes)}
-	got, err := xxHash.Verify(context.Background(), nil, ids, ksids)
+	got, err := xxHash.Verify(nil, ids, ksids)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -17,46 +17,36 @@ limitations under the License.
 package vtctld
 
 import (
-	"context"
+	"flag"
 	"time"
 
-	"github.com/spf13/pflag"
+	"context"
 
 	"vitess.io/vitess/go/trace"
 
+	"vitess.io/vitess/go/flagutil"
 	"vitess.io/vitess/go/vt/log"
 	"vitess.io/vitess/go/vt/servenv"
 	"vitess.io/vitess/go/vt/topo"
 	"vitess.io/vitess/go/vt/vtctl"
 	"vitess.io/vitess/go/vt/workflow"
+	"vitess.io/vitess/go/vt/workflow/resharding"
+	"vitess.io/vitess/go/vt/workflow/reshardingworkflowgen"
 	"vitess.io/vitess/go/vt/workflow/topovalidator"
 )
 
 var (
-	workflowManagerInit        bool
-	workflowManagerUseElection bool
-
-	workflowManagerDisable []string
+	workflowManagerInit        = flag.Bool("workflow_manager_init", false, "Initialize the workflow manager in this vtctld instance.")
+	workflowManagerUseElection = flag.Bool("workflow_manager_use_election", false, "if specified, will use a topology server-based master election to ensure only one workflow manager is active at a time.")
+	workflowManagerDisable     flagutil.StringListValue
 )
 
-func registerVtctldWorkflowFlags(fs *pflag.FlagSet) {
-	fs.BoolVar(&workflowManagerInit, "workflow_manager_init", workflowManagerInit, "Initialize the workflow manager in this vtctld instance.")
-	fs.MarkDeprecated("workflow_manager_init", "it will be removed in a future releases.")
-	fs.BoolVar(&workflowManagerUseElection, "workflow_manager_use_election", workflowManagerUseElection, "if specified, will use a topology server-based master election to ensure only one workflow manager is active at a time.")
-	fs.MarkDeprecated("workflow_manager_use_election", "it will be removed in a future releases.")
-	fs.StringSliceVar(&workflowManagerDisable, "workflow_manager_disable", workflowManagerDisable, "comma separated list of workflow types to disable")
-	fs.MarkDeprecated("workflow_manager_disable", "it will be removed in a future releases.")
-}
-
 func init() {
-	for _, cmd := range []string{"vtcombo", "vtctld"} {
-		servenv.OnParseFor(cmd, registerVtctldWorkflowFlags)
-	}
-
+	flag.Var(&workflowManagerDisable, "workflow_manager_disable", "comma separated list of workflow types to disable")
 }
 
 func initWorkflowManager(ts *topo.Server) {
-	if workflowManagerInit {
+	if *workflowManagerInit {
 		// Uncomment this line to register the UI test validator.
 		// topovalidator.RegisterUITestValidator()
 
@@ -65,6 +55,12 @@ func initWorkflowManager(ts *topo.Server) {
 		topovalidator.RegisterShardValidator()
 		topovalidator.Register()
 
+		// Register the Horizontal Resharding workflow.
+		resharding.Register()
+
+		// Register workflow that generates Horizontal Resharding workflows.
+		reshardingworkflowgen.Register()
+
 		// Unregister the disabled workflows.
 		for _, name := range workflowManagerDisable {
 			workflow.Unregister(name)
@@ -72,13 +68,12 @@ func initWorkflowManager(ts *topo.Server) {
 
 		// Create the WorkflowManager.
 		vtctl.WorkflowManager = workflow.NewManager(ts)
-		vtctl.WorkflowManager.SetSanitizeHTTPHeaders(sanitizeLogMessages)
 
 		// Register the long polling and websocket handlers.
 		vtctl.WorkflowManager.HandleHTTPLongPolling(apiPrefix + "workflow")
 		vtctl.WorkflowManager.HandleHTTPWebSocket(apiPrefix + "workflow")
 
-		if workflowManagerUseElection {
+		if *workflowManagerUseElection {
 			runWorkflowManagerElection(ts)
 		} else {
 			runWorkflowManagerAlone()

@@ -24,9 +24,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-
 	"vitess.io/vitess/go/mysql"
 	"vitess.io/vitess/go/mysql/collations"
 	"vitess.io/vitess/go/mysql/collations/internal/charset"
@@ -58,7 +55,10 @@ func testRemoteWeights(t *testing.T, golden io.Writer, cases []testweight) {
 			if err := remote.LastError(); err != nil {
 				t.Fatalf("remote collation failed: %v", err)
 			}
-			assert.True(t, bytes.Equal(localResult, remoteResult), "expected WEIGHT_STRING(%#v) = %#v (got %#v)", tc.input, remoteResult, localResult)
+
+			if !bytes.Equal(localResult, remoteResult) {
+				t.Errorf("expected WEIGHT_STRING(%#v) = %#v (got %#v)", tc.input, remoteResult, localResult)
+			}
 
 			if golden != nil {
 				fmt.Fprintf(golden, "{\n\tcollation: %q,\n\texpected: %#v,\n},\n", tc.collation, remoteResult)
@@ -91,8 +91,9 @@ func testRemoteComparison(t *testing.T, golden io.Writer, cases []testcmp) {
 			if err := remote.LastError(); err != nil {
 				t.Fatalf("remote collation failed: %v", err)
 			}
-			assert.Equal(t, remoteResult, localResult, "expected STRCMP(%q, %q) = %d (got %d)", string(tc.left), string(tc.right), remoteResult, localResult)
-
+			if localResult != remoteResult {
+				t.Errorf("expected STRCMP(%q, %q) = %d (got %d)", string(tc.left), string(tc.right), remoteResult, localResult)
+			}
 			if golden != nil {
 				fmt.Fprintf(golden, "{\n\tcollation: %q,\n\tleft: %#v,\n\tright: %#v,\n\texpected: %d,\n},\n",
 					tc.collation, tc.left, tc.right, remoteResult)
@@ -103,12 +104,16 @@ func testRemoteComparison(t *testing.T, golden io.Writer, cases []testcmp) {
 
 func verifyTranscoding(t *testing.T, local collations.Collation, remote *remote.Collation, text []byte) []byte {
 	transRemote, err := charset.ConvertFromUTF8(nil, remote.Charset(), text)
-	require.NoError(t, err, "remote transcoding failed: %v", err)
+	if err != nil {
+		t.Fatalf("remote transcoding failed: %v", err)
+	}
 
 	transLocal, _ := charset.ConvertFromUTF8(nil, local.Charset(), text)
-	require.True(t, bytes.Equal(transLocal, transRemote), "transcoding mismatch with %s (%d, charset: %s)\ninput:\n%s\nremote:\n%s\nlocal:\n%s\n", local.Name(), local.ID(), local.Charset().Name(),
-		hex.Dump(text), hex.Dump(transRemote), hex.Dump(transLocal))
-
+	if !bytes.Equal(transLocal, transRemote) {
+		t.Fatalf("transcoding mismatch with %s (%d, charset: %s)\ninput:\n%s\nremote:\n%s\nlocal:\n%s\n",
+			local.Name(), local.ID(), local.Charset().Name(),
+			hex.Dump(text), hex.Dump(transRemote), hex.Dump(transLocal))
+	}
 	return transLocal
 }
 
@@ -138,8 +143,9 @@ func verifyWeightString(t *testing.T, local collations.Collation, remote *remote
 
 func exec(t *testing.T, conn *mysql.Conn, query string) *sqltypes.Result {
 	res, err := conn.ExecuteFetch(query, -1, true)
-	require.NoError(t, err, "failed to execute %q: %v", query, err)
-
+	if err != nil {
+		t.Fatalf("failed to execute %q: %v", query, err)
+	}
 	return res
 }
 

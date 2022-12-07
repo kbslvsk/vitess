@@ -17,13 +17,14 @@ limitations under the License.
 package vreplication
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"context"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -56,7 +57,7 @@ func TestEngineOpen(t *testing.T) {
 	), nil)
 	dbClient.ExpectRequestRE("update _vt.vreplication set message='Picked source tablet.*", testDMLResponse, nil)
 	dbClient.ExpectRequest("update _vt.vreplication set state='Running', message='' where id=1", testDMLResponse, nil)
-	dbClient.ExpectRequest("select pos, stop_pos, max_tps, max_replication_lag, state, workflow_type, workflow, workflow_sub_type from _vt.vreplication where id=1", testSettingsResponse, nil)
+	dbClient.ExpectRequest("select pos, stop_pos, max_tps, max_replication_lag, state from _vt.vreplication where id=1", testSettingsResponse, nil)
 	dbClient.ExpectRequest("begin", nil, nil)
 	dbClient.ExpectRequest("insert into t values(1)", testDMLResponse, nil)
 	dbClient.ExpectRequestRE("update _vt.vreplication set pos='MariaDB/0-1-1235', time_updated=.*", testDMLResponse, nil)
@@ -162,9 +163,10 @@ func TestEngineExec(t *testing.T) {
 		),
 		fmt.Sprintf(`1|Running|keyspace:"%s" shard:"0" key_range:{end:"\x80"}|PRIMARY,REPLICA`, env.KeyspaceName),
 	), nil)
+	dbClient.ExpectRequest(changeMasterToPrimary, testDMLResponse, nil)
 	dbClient.ExpectRequestRE("update _vt.vreplication set message='Picked source tablet.*", testDMLResponse, nil)
 	dbClient.ExpectRequest("update _vt.vreplication set state='Running', message='' where id=1", testDMLResponse, nil)
-	dbClient.ExpectRequest("select pos, stop_pos, max_tps, max_replication_lag, state, workflow_type, workflow, workflow_sub_type from _vt.vreplication where id=1", testSettingsResponse, nil)
+	dbClient.ExpectRequest("select pos, stop_pos, max_tps, max_replication_lag, state from _vt.vreplication where id=1", testSettingsResponse, nil)
 	dbClient.ExpectRequest("begin", nil, nil)
 	dbClient.ExpectRequest("insert into t values(1)", testDMLResponse, nil)
 	dbClient.ExpectRequestRE("update _vt.vreplication set pos='MariaDB/0-1-1235', time_updated=.*", testDMLResponse, nil)
@@ -175,7 +177,7 @@ func TestEngineExec(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantqr := &sqltypes.Result{InsertID: 1}
-	if !qr.Equal(wantqr) {
+	if !reflect.DeepEqual(qr, wantqr) {
 		t.Errorf("Exec: %v, want %v", qr, wantqr)
 	}
 	dbClient.Wait()
@@ -204,9 +206,10 @@ func TestEngineExec(t *testing.T) {
 		),
 		fmt.Sprintf(`1|Running|keyspace:"%s" shard:"0" key_range:{end:"\x80"}`, env.KeyspaceName),
 	), nil)
+	dbClient.ExpectRequest(changeMasterToPrimary, testDMLResponse, nil)
 	dbClient.ExpectRequestRE("update _vt.vreplication set message='Picked source tablet.*", testDMLResponse, nil)
 	dbClient.ExpectRequest("update _vt.vreplication set state='Running', message='' where id=1", testDMLResponse, nil)
-	dbClient.ExpectRequest("select pos, stop_pos, max_tps, max_replication_lag, state, workflow_type, workflow, workflow_sub_type from _vt.vreplication where id=1", testSettingsResponse, nil)
+	dbClient.ExpectRequest("select pos, stop_pos, max_tps, max_replication_lag, state from _vt.vreplication where id=1", testSettingsResponse, nil)
 	dbClient.ExpectRequest("begin", nil, nil)
 	dbClient.ExpectRequest("insert into t values(1)", testDMLResponse, nil)
 	dbClient.ExpectRequestRE("update _vt.vreplication set pos='MariaDB/0-1-1235', time_updated=.*", testDMLResponse, nil)
@@ -217,7 +220,7 @@ func TestEngineExec(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantqr = &sqltypes.Result{RowsAffected: 1}
-	if !qr.Equal(wantqr) {
+	if !reflect.DeepEqual(qr, wantqr) {
 		t.Errorf("Exec: %v, want %v", qr, wantqr)
 	}
 	dbClient.Wait()
@@ -257,7 +260,7 @@ func TestEngineExec(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantqr = &sqltypes.Result{RowsAffected: 1}
-	if !qr.Equal(wantqr) {
+	if !reflect.DeepEqual(qr, wantqr) {
 		t.Errorf("Exec: %v, want %v", qr, wantqr)
 	}
 	dbClient.Wait()
@@ -355,7 +358,7 @@ func TestEngineSelect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !qr.Equal(wantResult) {
+	if !reflect.DeepEqual(qr, wantResult) {
 		t.Errorf("Exec: %v, want %v", qr, wantResult)
 	}
 }
@@ -415,7 +418,7 @@ func TestWaitForPosError(t *testing.T) {
 
 	dbClient.ExpectRequest("select pos, state, message from _vt.vreplication where id=1", &sqltypes.Result{Rows: [][]sqltypes.Value{{}}}, nil)
 	err = vre.WaitForPos(context.Background(), 1, "MariaDB/0-1-1084")
-	want = "unexpected result: &{[] 0 0 [[]]  0 }"
+	want = "unexpected result: &{[] 0 0 [[]]  0}"
 	assert.EqualError(t, err, want, "WaitForPos:")
 
 	dbClient.ExpectRequest("select pos, state, message from _vt.vreplication where id=1", &sqltypes.Result{Rows: [][]sqltypes.Value{{
@@ -424,7 +427,7 @@ func TestWaitForPosError(t *testing.T) {
 		sqltypes.NewVarBinary("MariaDB/0-1-1083"),
 	}}}, nil)
 	err = vre.WaitForPos(context.Background(), 1, "MariaDB/0-1-1084")
-	want = `unexpected result: &{[] 0 0 [[VARBINARY("MariaDB/0-1-1083")] [VARBINARY("MariaDB/0-1-1083")]]  0 }`
+	want = `unexpected result: &{[] 0 0 [[VARBINARY("MariaDB/0-1-1083")] [VARBINARY("MariaDB/0-1-1083")]]  0}`
 	assert.EqualError(t, err, want, "WaitForPos:")
 }
 
@@ -507,13 +510,8 @@ func TestCreateDBAndTable(t *testing.T) {
 			"ALTER TABLE _vt.vreplication ADD COLUMN rows_copied.*",
 			"ALTER TABLE _vt.vreplication ADD COLUMN tags.*",
 			"ALTER TABLE _vt.vreplication ADD COLUMN time_heartbeat.*",
-			"ALTER TABLE _vt.vreplication ADD COLUMN workflow_type int NOT NULL DEFAULT 0",
-			"ALTER TABLE _vt.vreplication ADD COLUMN time_throttled.*",
-			"ALTER TABLE _vt.vreplication ADD COLUMN component_throttled.*",
-			"ALTER TABLE _vt.vreplication ADD COLUMN workflow_sub_type int NOT NULL DEFAULT 0",
 			"create table if not exists _vt.resharding_journal.*",
 			"create table if not exists _vt.copy_state.*",
-			"alter table _vt.copy_state.*",
 		}
 		for _, ddl := range ddls {
 			dbClient.ExpectRequestRE(ddl, &sqltypes.Result{}, nil)
@@ -541,9 +539,10 @@ func TestCreateDBAndTable(t *testing.T) {
 		),
 		fmt.Sprintf(`1|Running|keyspace:"%s" shard:"0" key_range:{end:"\x80"}`, env.KeyspaceName),
 	), nil)
+	dbClient.ExpectRequest(changeMasterToPrimary, testDMLResponse, nil)
 	dbClient.ExpectRequestRE("update _vt.vreplication set message='Picked source tablet.*", testDMLResponse, nil)
 	dbClient.ExpectRequest("update _vt.vreplication set state='Running', message='' where id=1", testDMLResponse, nil)
-	dbClient.ExpectRequest("select pos, stop_pos, max_tps, max_replication_lag, state, workflow_type, workflow, workflow_sub_type from _vt.vreplication where id=1", testSettingsResponse, nil)
+	dbClient.ExpectRequest("select pos, stop_pos, max_tps, max_replication_lag, state from _vt.vreplication where id=1", testSettingsResponse, nil)
 	dbClient.ExpectRequest("begin", nil, nil)
 	dbClient.ExpectRequest("insert into t values(1)", testDMLResponse, nil)
 	dbClient.ExpectRequestRE("update _vt.vreplication set pos='MariaDB/0-1-1235', time_updated=.*", testDMLResponse, nil)
@@ -559,7 +558,7 @@ func TestCreateDBAndTable(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantqr := &sqltypes.Result{InsertID: 1}
-	if !qr.Equal(wantqr) {
+	if !reflect.DeepEqual(qr, wantqr) {
 		t.Errorf("Exec: %v, want %v", qr, wantqr)
 	}
 	dbClient.Wait()

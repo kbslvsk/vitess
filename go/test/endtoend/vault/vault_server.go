@@ -43,8 +43,8 @@ const (
 	vaultSetupScript    = "vault-setup.sh"
 )
 
-// Server : Basic parameters for the running the Vault server
-type Server struct {
+// VaultServer : Basic parameters for the running the Vault server
+type VaultServer struct {
 	address  string
 	port1    int
 	port2    int
@@ -56,7 +56,7 @@ type Server struct {
 }
 
 // Start the Vault server in dev mode
-func (vs *Server) start() error {
+func (vs *VaultServer) start() error {
 	// Download and unpack vault binary
 	vs.execPath = path.Join(os.Getenv("EXTRA_BIN"), vaultExecutableName)
 	fileStat, err := os.Stat(vs.execPath)
@@ -126,7 +126,7 @@ func (vs *Server) start() error {
 	return nil
 }
 
-func (vs *Server) stop() error {
+func (vs *VaultServer) stop() error {
 	if vs.proc == nil || vs.exit == nil {
 		return nil
 	}

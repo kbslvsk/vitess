@@ -278,44 +278,15 @@ func TestPlannedReparenter_ReparentShard(t *testing.T) {
 			},
 		},
 		{
-			name: "already locked shard",
+			name: "cannot lock shard",
 			ts:   memorytopo.NewServer("zone1"),
-			tmc: &testutil.TabletManagerClient{
-				PrimaryPositionResults: map[string]struct {
-					Position string
-					Error    error
-				}{
-					"zone1-0000000100": {
-						Position: "position1",
-						Error:    nil,
-					},
-				},
-				PopulateReparentJournalResults: map[string]error{
-					"zone1-0000000100": nil,
-				},
-				SetReplicationSourceResults: map[string]error{
-					"zone1-0000000200": nil,
-				},
-				SetReadWriteResults: map[string]error{
-					"zone1-0000000100": nil,
-				},
-			},
+			tmc:  nil,
 			tablets: []*topodatapb.Tablet{
 				{
 					Alias: &topodatapb.TabletAlias{
 						Cell: "zone1",
 						Uid:  100,
 					},
-					Type:     topodatapb.TabletType_PRIMARY,
-					Keyspace: "testkeyspace",
-					Shard:    "-",
-				},
-				{
-					Alias: &topodatapb.TabletAlias{
-						Cell: "zone1",
-						Uid:  200,
-					},
-					Type:     topodatapb.TabletType_REPLICA,
 					Keyspace: "testkeyspace",
 					Shard:    "-",
 				},
@@ -324,33 +295,10 @@ func TestPlannedReparenter_ReparentShard(t *testing.T) {
 
 			keyspace: "testkeyspace",
 			shard:    "-",
-			opts: PlannedReparentOptions{
-				NewPrimaryAlias: &topodatapb.TabletAlias{
-					Cell: "zone1",
-					Uid:  100,
-				},
-			},
+			opts:     PlannedReparentOptions{},
 
-			shouldErr: false,
-			expectedEvent: &events.Reparent{
-				ShardInfo: *topo.NewShardInfo("testkeyspace", "-", &topodatapb.Shard{
-					PrimaryAlias: &topodatapb.TabletAlias{
-						Cell: "zone1",
-						Uid:  100,
-					},
-					KeyRange:         &topodatapb.KeyRange{},
-					IsPrimaryServing: true,
-				}, nil),
-				NewPrimary: &topodatapb.Tablet{
-					Alias: &topodatapb.TabletAlias{
-						Cell: "zone1",
-						Uid:  100,
-					},
-					Type:     topodatapb.TabletType_PRIMARY,
-					Keyspace: "testkeyspace",
-					Shard:    "-",
-				},
-			},
+			expectedEvent: nil,
+			shouldErr:     true,
 		},
 		{
 			// The simplest setup required to make an overall ReparentShard call
@@ -635,7 +583,6 @@ func TestPlannedReparenter_preflightChecks(t *testing.T) {
 					Cell: "zone1",
 					Uid:  500,
 				},
-				durability: &durabilityNone{},
 			},
 			expectedIsNoop: false,
 			expectedEvent: &events.Reparent{
@@ -663,7 +610,6 @@ func TestPlannedReparenter_preflightChecks(t *testing.T) {
 					Cell: "zone1",
 					Uid:  100,
 				},
-				durability: &durabilityNone{},
 			},
 			shouldErr: false,
 		},
@@ -829,81 +775,6 @@ func TestPlannedReparenter_preflightChecks(t *testing.T) {
 			},
 			shouldErr: false,
 		},
-		{
-			name: "primary elect can't make forward progress",
-			tmc: &testutil.TabletManagerClient{
-				ReplicationStatusResults: map[string]struct {
-					Position *replicationdatapb.Status
-					Error    error
-				}{
-					"zone1-0000000100": { // most advanced position
-						Position: &replicationdatapb.Status{
-							Position: "MySQL56/3E11FA47-71CA-11E1-9E33-C80AA9429562:1-10",
-						},
-					},
-					"zone1-0000000101": {
-						Position: &replicationdatapb.Status{
-							Position: "MySQL56/3E11FA47-71CA-11E1-9E33-C80AA9429562:1-5",
-						},
-					},
-				},
-			},
-			ev: &events.Reparent{
-				ShardInfo: *topo.NewShardInfo("testkeyspace", "-", &topodatapb.Shard{
-					PrimaryAlias: &topodatapb.TabletAlias{
-						Cell: "zone1",
-						Uid:  500,
-					},
-				}, nil),
-			},
-			tabletMap: map[string]*topo.TabletInfo{
-				"zone1-0000000100": {
-					Tablet: &topodatapb.Tablet{
-						Alias: &topodatapb.TabletAlias{
-							Cell: "zone1",
-							Uid:  100,
-						},
-						Type: topodatapb.TabletType_REPLICA,
-					},
-				},
-				"zone1-0000000101": {
-					Tablet: &topodatapb.Tablet{
-						Alias: &topodatapb.TabletAlias{
-							Cell: "zone1",
-							Uid:  101,
-						},
-						Type: topodatapb.TabletType_REPLICA,
-					},
-				},
-				"zone1-0000000500": {
-					Tablet: &topodatapb.Tablet{
-						Alias: &topodatapb.TabletAlias{
-							Cell: "zone1",
-							Uid:  500,
-						},
-						Type: topodatapb.TabletType_PRIMARY,
-					},
-				},
-			},
-			opts: &PlannedReparentOptions{
-				// Avoid the current primary.
-				AvoidPrimaryAlias: &topodatapb.TabletAlias{
-					Cell: "zone1",
-					Uid:  500,
-				},
-				durability: &durabilityCrossCell{},
-			},
-			expectedIsNoop: true,
-			expectedEvent: &events.Reparent{
-				ShardInfo: *topo.NewShardInfo("testkeyspace", "-", &topodatapb.Shard{
-					PrimaryAlias: &topodatapb.TabletAlias{
-						Cell: "zone1",
-						Uid:  500,
-					},
-				}, nil),
-			},
-			shouldErr: true,
-		},
 	}
 
 	ctx := context.Background()
@@ -926,11 +797,6 @@ func TestPlannedReparenter_preflightChecks(t *testing.T) {
 			}()
 
 			pr := NewPlannedReparenter(tt.ts, tt.tmc, logger)
-			if tt.opts.durability == nil {
-				durability, err := GetDurabilityPolicy("none")
-				require.NoError(t, err)
-				tt.opts.durability = durability
-			}
 			isNoop, err := pr.preflightChecks(ctx, tt.ev, tt.keyspace, tt.shard, tt.tabletMap, tt.opts)
 			if tt.shouldErr {
 				assert.Error(t, err)
@@ -1723,10 +1589,6 @@ func TestPlannedReparenter_performGracefulPromotion(t *testing.T) {
 				ctx = _ctx
 			}
 
-			durability, err := GetDurabilityPolicy("none")
-			require.NoError(t, err)
-			tt.opts.durability = durability
-
 			pos, err := pr.performGracefulPromotion(
 				ctx,
 				tt.ev,
@@ -1876,12 +1738,10 @@ func TestPlannedReparenter_performInitialPromotion(t *testing.T) {
 				ctx = _ctx
 			}
 
-			durability, err := GetDurabilityPolicy("none")
-			require.NoError(t, err)
 			pos, err := pr.performInitialPromotion(
 				ctx,
 				tt.primaryElect,
-				PlannedReparentOptions{durability: durability},
+				PlannedReparentOptions{},
 			)
 
 			if tt.shouldErr {
@@ -2593,9 +2453,7 @@ func TestPlannedReparenter_performPotentialPromotion(t *testing.T) {
 				ctx = _ctx
 			}
 
-			durability, err := GetDurabilityPolicy("none")
-			require.NoError(t, err)
-			rp, err := pr.performPotentialPromotion(ctx, tt.keyspace, tt.shard, tt.primaryElect, tt.tabletMap, PlannedReparentOptions{durability: durability})
+			rp, err := pr.performPotentialPromotion(ctx, tt.keyspace, tt.shard, tt.primaryElect, tt.tabletMap)
 			if tt.shouldErr {
 				assert.Error(t, err)
 
@@ -3332,7 +3190,6 @@ func TestPlannedReparenter_reparentTablets(t *testing.T) {
 		name string
 		tmc  tmclient.TabletManagerClient
 
-		durability              string
 		ev                      *events.Reparent
 		reparentJournalPosition string
 		tabletMap               map[string]*topo.TabletInfo
@@ -3341,8 +3198,7 @@ func TestPlannedReparenter_reparentTablets(t *testing.T) {
 		shouldErr bool
 	}{
 		{
-			name:       "success - durability = none",
-			durability: "none",
+			name: "success",
 			tmc: &testutil.TabletManagerClient{
 				PopulateReparentJournalResults: map[string]error{
 					"zone1-0000000100": nil,
@@ -3351,11 +3207,6 @@ func TestPlannedReparenter_reparentTablets(t *testing.T) {
 					"zone1-0000000200": nil,
 					"zone1-0000000201": nil,
 					"zone1-0000000202": nil,
-				},
-				SetReplicationSourceSemiSync: map[string]bool{
-					"zone1-0000000200": false,
-					"zone1-0000000201": false,
-					"zone1-0000000202": false,
 				},
 			},
 			ev: &events.Reparent{
@@ -3402,73 +3253,6 @@ func TestPlannedReparenter_reparentTablets(t *testing.T) {
 							Uid:  202,
 						},
 						Type: topodatapb.TabletType_REPLICA,
-					},
-				},
-			},
-			shouldErr: false,
-		},
-		{
-			name:       "success - durability = semi_sync",
-			durability: "semi_sync",
-			tmc: &testutil.TabletManagerClient{
-				PopulateReparentJournalResults: map[string]error{
-					"zone1-0000000100": nil,
-				},
-				SetReplicationSourceResults: map[string]error{
-					"zone1-0000000200": nil,
-					"zone1-0000000201": nil,
-					"zone1-0000000202": nil,
-				},
-				SetReplicationSourceSemiSync: map[string]bool{
-					"zone1-0000000200": true,
-					"zone1-0000000201": true,
-					"zone1-0000000202": false,
-				},
-			},
-			ev: &events.Reparent{
-				NewPrimary: &topodatapb.Tablet{
-					Alias: &topodatapb.TabletAlias{
-						Cell: "zone1",
-						Uid:  100,
-					},
-					Type: topodatapb.TabletType_PRIMARY,
-				},
-			},
-			tabletMap: map[string]*topo.TabletInfo{
-				"zone1-0000000100": {
-					Tablet: &topodatapb.Tablet{
-						Alias: &topodatapb.TabletAlias{
-							Cell: "zone1",
-							Uid:  100,
-						},
-						Type: topodatapb.TabletType_PRIMARY,
-					},
-				},
-				"zone1-0000000200": {
-					Tablet: &topodatapb.Tablet{
-						Alias: &topodatapb.TabletAlias{
-							Cell: "zone1",
-							Uid:  200,
-						},
-						Type: topodatapb.TabletType_REPLICA,
-					},
-				},
-				"zone1-0000000201": {
-					Tablet: &topodatapb.Tablet{
-						Alias: &topodatapb.TabletAlias{
-							Cell: "zone1",
-							Uid:  201,
-						},
-						Type: topodatapb.TabletType_REPLICA,
-					},
-				},
-				"zone1-0000000202": {
-					Tablet: &topodatapb.Tablet{
-						Alias: &topodatapb.TabletAlias{
-							Cell: "zone1",
-							Uid:  202,
-						},
-						Type: topodatapb.TabletType_RDONLY,
 					},
 				},
 			},
@@ -3742,14 +3526,7 @@ func TestPlannedReparenter_reparentTablets(t *testing.T) {
 			t.Parallel()
 
 			pr := NewPlannedReparenter(nil, tt.tmc, logger)
-			durabilityPolicy := "none"
-			if tt.durability != "" {
-				durabilityPolicy = tt.durability
-			}
-			durability, err := GetDurabilityPolicy(durabilityPolicy)
-			require.NoError(t, err)
-			tt.opts.durability = durability
-			err = pr.reparentTablets(ctx, tt.ev, tt.reparentJournalPosition, tt.tabletMap, tt.opts)
+			err := pr.reparentTablets(ctx, tt.ev, tt.reparentJournalPosition, tt.tabletMap, tt.opts)
 			if tt.shouldErr {
 				assert.Error(t, err)
 

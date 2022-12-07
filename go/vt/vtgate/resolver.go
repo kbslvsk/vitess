@@ -19,8 +19,6 @@ package vtgate
 import (
 	"context"
 
-	"vitess.io/vitess/go/vt/vtgate/logstats"
-
 	"vitess.io/vitess/go/sqltypes"
 	"vitess.io/vitess/go/vt/key"
 	querypb "vitess.io/vitess/go/vt/proto/query"
@@ -67,7 +65,7 @@ func (res *Resolver) Execute(
 	destination key.Destination,
 	session *SafeSession,
 	options *querypb.ExecuteOptions,
-	logStats *logstats.LogStats,
+	logStats *LogStats,
 	canAutocommit bool,
 	ignoreMaxMemoryRows bool,
 ) (*sqltypes.Result, error) {

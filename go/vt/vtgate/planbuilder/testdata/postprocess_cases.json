@@ -30,10 +30,7 @@
         "FieldQuery": "select `user`.col1 from `user` where 1 != 1",
         "Query": "select `user`.col1 from `user` where col2 = 2",
         "Table": "`user`"
-      },
-      "TablesUsed": [
-        "user.user"
-      ]
+      }
     }
   },
   {
@@ -51,7 +48,7 @@
       "Instructions": {
         "OperatorType": "Join",
         "Variant": "Join",
-        "JoinColumnIndexes": "L:0,R:0",
+        "JoinColumnIndexes": "-1,1",
         "TableName": "`user`_user_extra",
         "Inputs": [
           {
@@ -85,7 +82,7 @@
       "Instructions": {
         "OperatorType": "Join",
         "Variant": "Join",
-        "JoinColumnIndexes": "L:0,R:0",
+        "JoinColumnIndexes": "-1,1",
         "TableName": "`user`_user_extra",
         "Inputs": [
           {
@@ -111,11 +108,7 @@
             "Table": "user_extra"
           }
         ]
-      },
-      "TablesUsed": [
-        "user.user",
-        "user.user_extra"
-      ]
+      }
     }
   },
   {
@@ -127,7 +120,7 @@
       "Instructions": {
         "OperatorType": "Join",
         "Variant": "Join",
-        "JoinColumnIndexes": "L:0,L:1,R:0",
+        "JoinColumnIndexes": "-1,-2,1",
         "TableName": "`user`_user_extra",
         "Inputs": [
           {
@@ -161,7 +154,7 @@
       "Instructions": {
         "OperatorType": "Join",
         "Variant": "Join",
-        "JoinColumnIndexes": "L:0,L:1,R:0",
+        "JoinColumnIndexes": "-1,-2,1",
         "TableName": "`user`_user_extra",
         "Inputs": [
           {
@@ -187,11 +180,7 @@
             "Table": "user_extra"
           }
         ]
-      },
-      "TablesUsed": [
-        "user.user",
-        "user.user_extra"
-      ]
+      }
     }
   },
   {
@@ -275,16 +264,13 @@
             "Vindex": "user_index"
           }
         ]
-      },
-      "TablesUsed": [
-        "user.user"
-      ]
+      }
     }
   },
   {
     "comment": "ORDER BY, reference col from local table.",
     "query": "select col from user where id = 5 order by aa",
-    "v3-plan": {
+    "plan": {
       "QueryType": "SELECT",
       "Original": "select col from user where id = 5 order by aa",
       "Instructions": {
@@ -302,28 +288,6 @@
         ],
         "Vindex": "user_index"
       }
-    },
-    "gen4-plan": {
-      "QueryType": "SELECT",
-      "Original": "select col from user where id = 5 order by aa",
-      "Instructions": {
-        "OperatorType": "Route",
-        "Variant": "EqualUnique",
-        "Keyspace": {
-          "Name": "user",
-          "Sharded": true
-        },
-        "FieldQuery": "select col from `user` where 1 != 1",
-        "Query": "select col from `user` where id = 5 order by aa asc",
-        "Table": "`user`",
-        "Values": [
-          "INT64(5)"
-        ],
-        "Vindex": "user_index"
-      },
-      "TablesUsed": [
-        "user.user"
-      ]
     }
   },
   {
@@ -365,16 +329,13 @@
           "INT64(1)"
         ],
         "Vindex": "user_index"
-      },
-      "TablesUsed": [
-        "user.user"
-      ]
+      }
     }
   },
   {
     "comment": "ORDER BY on scatter",
     "query": "select col from user order by col",
-    "v3-plan": {
+    "plan": {
       "QueryType": "SELECT",
       "Original": "select col from user order by col",
       "Instructions": {
@@ -389,25 +350,6 @@
         "Query": "select col from `user` order by col asc",
         "Table": "`user`"
       }
-    },
-    "gen4-plan": {
-      "QueryType": "SELECT",
-      "Original": "select col from user order by col",
-      "Instructions": {
-        "OperatorType": "Route",
-        "Variant": "Scatter",
-        "Keyspace": {
-          "Name": "user",
-          "Sharded": true
-        },
-        "FieldQuery": "select col from `user` where 1 != 1",
-        "OrderBy": "0 ASC",
-        "Query": "select col from `user` order by col asc",
-        "Table": "`user`"
-      },
-      "TablesUsed": [
-        "user.user"
-      ]
     }
   },
   {
@@ -437,7 +379,7 @@
   {
     "comment": "ORDER BY works for select * from authoritative table",
     "query": "select * from authoritative order by user_id",
-    "v3-plan": {
+    "plan": {
       "QueryType": "SELECT",
       "Original": "select * from authoritative order by user_id",
       "Instructions": {
@@ -453,26 +395,6 @@
         "ResultColumns": 3,
         "Table": "authoritative"
       }
-    },
-    "gen4-plan": {
-      "QueryType": "SELECT",
-      "Original": "select * from authoritative order by user_id",
-      "Instructions": {
-        "OperatorType": "Route",
-        "Variant": "Scatter",
-        "Keyspace": {
-          "Name": "user",
-          "Sharded": true
-        },
-        "FieldQuery": "select user_id, col1, col2, weight_string(user_id) from authoritative where 1 != 1",
-        "OrderBy": "(0|3) ASC",
-        "Query": "select user_id, col1, col2, weight_string(user_id) from authoritative order by user_id asc",
-        "ResultColumns": 3,
-        "Table": "authoritative"
-      },
-      "TablesUsed": [
-        "user.authoritative"
-      ]
     }
   },
   {
@@ -505,14 +427,12 @@
           "Name": "user",
           "Sharded": true
         },
-        "FieldQuery": "select user_id, col1, col2 from authoritative where 1 != 1",
-        "OrderBy": "1 ASC COLLATE latin1_swedish_ci",
-        "Query": "select user_id, col1, col2 from authoritative order by col1 asc",
+        "FieldQuery": "select user_id, col1, col2, weight_string(col1) from authoritative where 1 != 1",
+        "OrderBy": "(1|3) ASC COLLATE latin1_swedish_ci",
+        "Query": "select user_id, col1, col2, weight_string(col1) from authoritative order by col1 asc",
+        "ResultColumns": 3,
         "Table": "authoritative"
-      },
-      "TablesUsed": [
-        "user.authoritative"
-      ]
+      }
     }
   },
   {
@@ -545,15 +465,12 @@
           "Name": "user",
           "Sharded": true
         },
-        "FieldQuery": "select a, textcol1, b, weight_string(a), weight_string(b) from `user` where 1 != 1",
-        "OrderBy": "(0|3) ASC, 1 ASC COLLATE latin1_swedish_ci, (2|4) ASC",
-        "Query": "select a, textcol1, b, weight_string(a), weight_string(b) from `user` order by a asc, textcol1 asc, b asc",
+        "FieldQuery": "select a, textcol1, b, weight_string(a), weight_string(textcol1), weight_string(b) from `user` where 1 != 1",
+        "OrderBy": "(0|3) ASC, (1|4) ASC COLLATE latin1_swedish_ci, (2|5) ASC",
+        "Query": "select a, textcol1, b, weight_string(a), weight_string(textcol1), weight_string(b) from `user` order by a asc, textcol1 asc, b asc",
         "ResultColumns": 3,
         "Table": "`user`"
-      },
-      "TablesUsed": [
-        "user.user"
-      ]
+      }
     }
   },
   {
@@ -586,15 +503,12 @@
           "Name": "user",
           "Sharded": true
         },
-        "FieldQuery": "select a, `user`.textcol1, b, weight_string(a), weight_string(b) from `user` where 1 != 1",
-        "OrderBy": "(0|3) ASC, 1 ASC COLLATE latin1_swedish_ci, (2|4) ASC",
-        "Query": "select a, `user`.textcol1, b, weight_string(a), weight_string(b) from `user` order by a asc, textcol1 asc, b asc",
+        "FieldQuery": "select a, `user`.textcol1, b, weight_string(a), weight_string(textcol1), weight_string(b) from `user` where 1 != 1",
+        "OrderBy": "(0|3) ASC, (1|4) ASC COLLATE latin1_swedish_ci, (2|5) ASC",
+        "Query": "select a, `user`.textcol1, b, weight_string(a), weight_string(textcol1), weight_string(b) from `user` order by a asc, textcol1 asc, b asc",
         "ResultColumns": 3,
         "Table": "`user`"
-      },
-      "TablesUsed": [
-        "user.user"
-      ]
+      }
     }
   },
   {
@@ -627,15 +541,12 @@
           "Name": "user",
           "Sharded": true
         },
-        "FieldQuery": "select a, textcol1, b, textcol2, weight_string(a), weight_string(b) from `user` where 1 != 1",
-        "OrderBy": "(0|4) ASC, 1 ASC COLLATE latin1_swedish_ci, (2|5) ASC, 3 ASC COLLATE latin1_swedish_ci",
-        "Query": "select a, textcol1, b, textcol2, weight_string(a), weight_string(b) from `user` order by a asc, textcol1 asc, b asc, textcol2 asc",
+        "FieldQuery": "select a, textcol1, b, textcol2, weight_string(a), weight_string(textcol1), weight_string(b), weight_string(textcol2) from `user` where 1 != 1",
+        "OrderBy": "(0|4) ASC, (1|5) ASC COLLATE latin1_swedish_ci, (2|6) ASC, (3|7) ASC COLLATE latin1_swedish_ci",
+        "Query": "select a, textcol1, b, textcol2, weight_string(a), weight_string(textcol1), weight_string(b), weight_string(textcol2) from `user` order by a asc, textcol1 asc, b asc, textcol2 asc",
         "ResultColumns": 4,
         "Table": "`user`"
-      },
-      "TablesUsed": [
-        "user.user"
-      ]
+      }
     }
   },
   {
@@ -678,16 +589,13 @@
         "Query": "select id as foo, weight_string(id) from music order by foo asc",
         "ResultColumns": 1,
         "Table": "music"
-      },
-      "TablesUsed": [
-        "user.music"
-      ]
+      }
     }
   },
   {
     "comment": "ORDER BY NULL",
     "query": "select col from user order by null",
-    "v3-plan": {
+    "plan": {
       "QueryType": "SELECT",
       "Original": "select col from user order by null",
       "Instructions": {
@@ -701,30 +609,12 @@
         "Query": "select col from `user` order by null",
         "Table": "`user`"
       }
-    },
-    "gen4-plan": {
-      "QueryType": "SELECT",
-      "Original": "select col from user order by null",
-      "Instructions": {
-        "OperatorType": "Route",
-        "Variant": "Scatter",
-        "Keyspace": {
-          "Name": "user",
-          "Sharded": true
-        },
-        "FieldQuery": "select col from `user` where 1 != 1",
-        "Query": "select col from `user` order by null",
-        "Table": "`user`"
-      },
-      "TablesUsed": [
-        "user.user"
-      ]
     }
   },
   {
     "comment": "ORDER BY after pull-out subquery",
     "query": "select col from user where col in (select col2 from user) order by col",
-    "v3-plan": {
+    "plan": {
       "QueryType": "SELECT",
       "Original": "select col from user where col in (select col2 from user) order by col",
       "Instructions": {
@@ -760,46 +650,6 @@
           }
         ]
       }
-    },
-    "gen4-plan": {
-      "QueryType": "SELECT",
-      "Original": "select col from user where col in (select col2 from user) order by col",
-      "Instructions": {
-        "OperatorType": "Subquery",
-        "Variant": "PulloutIn",
-        "PulloutVars": [
-          "__sq_has_values1",
-          "__sq1"
-        ],
-        "Inputs": [
-          {
-            "OperatorType": "Route",
-            "Variant": "Scatter",
-            "Keyspace": {
-              "Name": "user",
-              "Sharded": true
-            },
-            "FieldQuery": "select col2 from `user` where 1 != 1",
-            "Query": "select col2 from `user`",
-            "Table": "`user`"
-          },
-          {
-            "OperatorType": "Route",
-            "Variant": "Scatter",
-            "Keyspace": {
-              "Name": "user",
-              "Sharded": true
-            },
-            "FieldQuery": "select col from `user` where 1 != 1",
-            "OrderBy": "0 ASC",
-            "Query": "select col from `user` where :__sq_has_values1 = 1 and col in ::__sq1 order by col asc",
-            "Table": "`user`"
-          }
-        ]
-      },
-      "TablesUsed": [
-        "user.user"
-      ]
     }
   },
   {
@@ -811,7 +661,7 @@
       "Instructions": {
         "OperatorType": "Join",
         "Variant": "Join",
-        "JoinColumnIndexes": "L:0,L:1,R:0",
+        "JoinColumnIndexes": "-1,-2,1",
         "JoinVars": {
           "user_id": 2
         },
@@ -856,7 +706,7 @@
       "Instructions": {
         "OperatorType": "Join",
         "Variant": "Join",
-        "JoinColumnIndexes": "L:1,L:2,R:0",
+        "JoinColumnIndexes": "-2,-3,1",
         "JoinVars": {
           "user_id": 0
         },
@@ -870,7 +720,7 @@
               "Sharded": true
             },
             "FieldQuery": "select `user`.id, `user`.col1 as a, `user`.col2 from `user` where 1 != 1",
-            "Query": "select `user`.id, `user`.col1 as a, `user`.col2 from `user` where `user`.id = 1",
+            "Query": "select `user`.id, `user`.col1 as a, `user`.col2 from `user` where `user`.id = 1 order by null",
             "Table": "`user`",
             "Values": [
               "INT64(1)"
@@ -885,7 +735,7 @@
               "Sharded": true
             },
             "FieldQuery": "select music.col3 from music where 1 != 1",
-            "Query": "select music.col3 from music where music.id = :user_id",
+            "Query": "select music.col3 from music where music.id = :user_id order by null",
             "Table": "music",
             "Values": [
               ":user_id"
@@ -893,11 +743,7 @@
             "Vindex": "music_user_map"
           }
         ]
-      },
-      "TablesUsed": [
-        "user.music",
-        "user.user"
-      ]
+      }
     }
   },
   {
@@ -909,7 +755,7 @@
       "Instructions": {
         "OperatorType": "Join",
         "Variant": "Join",
-        "JoinColumnIndexes": "L:0,L:1,R:0",
+        "JoinColumnIndexes": "-1,-2,1",
         "JoinVars": {
           "user_id": 2
         },
@@ -954,7 +800,7 @@
       "Instructions": {
         "OperatorType": "Join",
         "Variant": "Join",
-        "JoinColumnIndexes": "L:1,L:2,R:0",
+        "JoinColumnIndexes": "-2,-3,1",
         "JoinVars": {
           "user_id": 0
         },
@@ -992,11 +838,7 @@
             "Vindex": "music_user_map"
           }
         ]
-      },
-      "TablesUsed": [
-        "user.music",
-        "user.user"
-      ]
+      }
     }
   },
   {
@@ -1008,7 +850,7 @@
       "Instructions": {
         "OperatorType": "Join",
         "Variant": "Join",
-        "JoinColumnIndexes": "L:0,L:1,R:0",
+        "JoinColumnIndexes": "-1,-2,1",
         "JoinVars": {
           "user_id": 2
         },
@@ -1053,7 +895,7 @@
       "Instructions": {
         "OperatorType": "Join",
         "Variant": "Join",
-        "JoinColumnIndexes": "L:1,L:2,R:0",
+        "JoinColumnIndexes": "-2,-3,1",
         "JoinVars": {
           "user_id": 0
         },
@@ -1091,17 +933,13 @@
             "Vindex": "music_user_map"
           }
         ]
-      },
-      "TablesUsed": [
-        "user.music",
-        "user.user"
-      ]
+      }
     }
   },
   {
     "comment": "ORDER BY NULL after pull-out subquery",
     "query": "select col from user where col in (select col2 from user) order by null",
-    "v3-plan": {
+    "plan": {
       "QueryType": "SELECT",
       "Original": "select col from user where col in (select col2 from user) order by null",
       "Instructions": {
@@ -1136,51 +974,12 @@
           }
         ]
       }
-    },
-    "gen4-plan": {
-      "QueryType": "SELECT",
-      "Original": "select col from user where col in (select col2 from user) order by null",
-      "Instructions": {
-        "OperatorType": "Subquery",
-        "Variant": "PulloutIn",
-        "PulloutVars": [
-          "__sq_has_values1",
-          "__sq1"
-        ],
-        "Inputs": [
-          {
-            "OperatorType": "Route",
-            "Variant": "Scatter",
-            "Keyspace": {
-              "Name": "user",
-              "Sharded": true
-            },
-            "FieldQuery": "select col2 from `user` where 1 != 1",
-            "Query": "select col2 from `user`",
-            "Table": "`user`"
-          },
-          {
-            "OperatorType": "Route",
-            "Variant": "Scatter",
-            "Keyspace": {
-              "Name": "user",
-              "Sharded": true
-            },
-            "FieldQuery": "select col from `user` where 1 != 1",
-            "Query": "select col from `user` where :__sq_has_values1 = 1 and col in ::__sq1",
-            "Table": "`user`"
-          }
-        ]
-      },
-      "TablesUsed": [
-        "user.user"
-      ]
     }
   },
   {
     "comment": "ORDER BY RAND()",
     "query": "select col from user order by RAND()",
-    "v3-plan": {
+    "plan": {
       "QueryType": "SELECT",
       "Original": "select col from user order by RAND()",
       "Instructions": {
@@ -1194,24 +993,6 @@
         "Query": "select col from `user` order by RAND()",
         "Table": "`user`"
       }
-    },
-    "gen4-plan": {
-      "QueryType": "SELECT",
-      "Original": "select col from user order by RAND()",
-      "Instructions": {
-        "OperatorType": "Route",
-        "Variant": "Scatter",
-        "Keyspace": {
-          "Name": "user",
-          "Sharded": true
-        },
-        "FieldQuery": "select col from `user` where 1 != 1",
-        "Query": "select col from `user` order by RAND()",
-        "Table": "`user`"
-      },
-      "TablesUsed": [
-        "user.user"
-      ]
     }
   },
   {
@@ -1223,7 +1004,7 @@
       "Instructions": {
         "OperatorType": "Join",
         "Variant": "Join",
-        "JoinColumnIndexes": "L:0,L:1,R:0",
+        "JoinColumnIndexes": "-1,-2,1",
         "JoinVars": {
           "user_id": 2
         },
@@ -1268,7 +1049,7 @@
       "Instructions": {
         "OperatorType": "Join",
         "Variant": "Join",
-        "JoinColumnIndexes": "L:1,L:2,R:0",
+        "JoinColumnIndexes": "-2,-3,1",
         "JoinVars": {
           "user_id": 0
         },
@@ -1305,17 +1086,13 @@
             "Vindex": "music_user_map"
           }
         ]
-      },
-      "TablesUsed": [
-        "user.music",
-        "user.user"
-      ]
+      }
     }
   },
   {
     "comment": "ORDER BY RAND() after pull-out subquery",
     "query": "select col from user where col in (select col2 from user) order by rand()",
-    "v3-plan": {
+    "plan": {
       "QueryType": "SELECT",
       "Original": "select col from user where col in (select col2 from user) order by rand()",
       "Instructions": {
@@ -1350,51 +1127,12 @@
           }
         ]
       }
-    },
-    "gen4-plan": {
-      "QueryType": "SELECT",
-      "Original": "select col from user where col in (select col2 from user) order by rand()",
-      "Instructions": {
-        "OperatorType": "Subquery",
-        "Variant": "PulloutIn",
-        "PulloutVars": [
-          "__sq_has_values1",
-          "__sq1"
-        ],
-        "Inputs": [
-          {
-            "OperatorType": "Route",
-            "Variant": "Scatter",
-            "Keyspace": {
-              "Name": "user",
-              "Sharded": true
-            },
-            "FieldQuery": "select col2 from `user` where 1 != 1",
-            "Query": "select col2 from `user`",
-            "Table": "`user`"
-          },
-          {
-            "OperatorType": "Route",
-            "Variant": "Scatter",
-            "Keyspace": {
-              "Name": "user",
-              "Sharded": true
-            },
-            "FieldQuery": "select col from `user` where 1 != 1",
-            "Query": "select col from `user` where :__sq_has_values1 = 1 and col in ::__sq1 order by rand()",
-            "Table": "`user`"
-          }
-        ]
-      },
-      "TablesUsed": [
-        "user.user"
-      ]
     }
   },
   {
     "comment": "Order by, '*' expression",
     "query": "select * from user where id = 5 order by col",
-    "v3-plan": {
+    "plan": {
       "QueryType": "SELECT",
       "Original": "select * from user where id = 5 order by col",
       "Instructions": {
@@ -1412,34 +1150,12 @@
         ],
         "Vindex": "user_index"
       }
-    },
-    "gen4-plan": {
-      "QueryType": "SELECT",
-      "Original": "select * from user where id = 5 order by col",
-      "Instructions": {
-        "OperatorType": "Route",
-        "Variant": "EqualUnique",
-        "Keyspace": {
-          "Name": "user",
-          "Sharded": true
-        },
-        "FieldQuery": "select * from `user` where 1 != 1",
-        "Query": "select * from `user` where id = 5 order by col asc",
-        "Table": "`user`",
-        "Values": [
-          "INT64(5)"
-        ],
-        "Vindex": "user_index"
-      },
-      "TablesUsed": [
-        "user.user"
-      ]
     }
   },
   {
     "comment": "Order by, qualified '*' expression",
     "query": "select user.* from user where id = 5 order by user.col",
-    "v3-plan": {
+    "plan": {
       "QueryType": "SELECT",
       "Original": "select user.* from user where id = 5 order by user.col",
       "Instructions": {
@@ -1457,34 +1173,12 @@
         ],
         "Vindex": "user_index"
       }
-    },
-    "gen4-plan": {
-      "QueryType": "SELECT",
-      "Original": "select user.* from user where id = 5 order by user.col",
-      "Instructions": {
-        "OperatorType": "Route",
-        "Variant": "EqualUnique",
-        "Keyspace": {
-          "Name": "user",
-          "Sharded": true
-        },
-        "FieldQuery": "select `user`.* from `user` where 1 != 1",
-        "Query": "select `user`.* from `user` where id = 5 order by `user`.col asc",
-        "Table": "`user`",
-        "Values": [
-          "INT64(5)"
-        ],
-        "Vindex": "user_index"
-      },
-      "TablesUsed": [
-        "user.user"
-      ]
     }
   },
   {
     "comment": "Order by, '*' expression with qualified reference",
     "query": "select * from user where id = 5 order by user.col",
-    "v3-plan": {
+    "plan": {
       "QueryType": "SELECT",
       "Original": "select * from user where id = 5 order by user.col",
       "Instructions": {
@@ -1502,28 +1196,6 @@
         ],
         "Vindex": "user_index"
       }
-    },
-    "gen4-plan": {
-      "QueryType": "SELECT",
-      "Original": "select * from user where id = 5 order by user.col",
-      "Instructions": {
-        "OperatorType": "Route",
-        "Variant": "EqualUnique",
-        "Keyspace": {
-          "Name": "user",
-          "Sharded": true
-        },
-        "FieldQuery": "select * from `user` where 1 != 1",
-        "Query": "select * from `user` where id = 5 order by `user`.col asc",
-        "Table": "`user`",
-        "Values": [
-          "INT64(5)"
-        ],
-        "Vindex": "user_index"
-      },
-      "TablesUsed": [
-        "user.user"
-      ]
     }
   },
   {
@@ -1535,7 +1207,7 @@
       "Instructions": {
         "OperatorType": "Join",
         "Variant": "Join",
-        "JoinColumnIndexes": "L:0,R:0",
+        "JoinColumnIndexes": "-1,1",
         "JoinVars": {
           "u_col": 1
         },
@@ -1572,7 +1244,7 @@
       "Instructions": {
         "OperatorType": "Join",
         "Variant": "Join",
-        "JoinColumnIndexes": "L:1,R:0",
+        "JoinColumnIndexes": "-2,1",
         "JoinVars": {
           "u_col": 0
         },
@@ -1601,11 +1273,7 @@
             "Table": "user_extra"
           }
         ]
-      },
-      "TablesUsed": [
-        "user.user",
-        "user.user_extra"
-      ]
+      }
     }
   },
   {
@@ -1625,10 +1293,7 @@
         "FieldQuery": "select u.id from `user` as u where 1 != 1",
         "Query": "select u.id from `user` as u where u.id in (select col2 from `user` where `user`.id = u.id order by u.col asc)",
         "Table": "`user`"
-      },
-      "TablesUsed": [
-        "user.user"
-      ]
+      }
     }
   },
   {
@@ -1649,7 +1314,7 @@
   {
     "comment": "Order by, '*' expression with qualified reference and using collate",
     "query": "select * from user where id = 5 order by user.col collate utf8_general_ci",
-    "v3-plan": {
+    "plan": {
       "QueryType": "SELECT",
       "Original": "select * from user where id = 5 order by user.col collate utf8_general_ci",
       "Instructions": {
@@ -1667,34 +1332,12 @@
         ],
         "Vindex": "user_index"
       }
-    },
-    "gen4-plan": {
-      "QueryType": "SELECT",
-      "Original": "select * from user where id = 5 order by user.col collate utf8_general_ci",
-      "Instructions": {
-        "OperatorType": "Route",
-        "Variant": "EqualUnique",
-        "Keyspace": {
-          "Name": "user",
-          "Sharded": true
-        },
-        "FieldQuery": "select * from `user` where 1 != 1",
-        "Query": "select * from `user` where id = 5 order by `user`.col collate utf8_general_ci asc",
-        "Table": "`user`",
-        "Values": [
-          "INT64(5)"
-        ],
-        "Vindex": "user_index"
-      },
-      "TablesUsed": [
-        "user.user"
-      ]
     }
   },
   {
     "comment": "Order by with math functions",
     "query": "select * from user where id = 5 order by -col1",
-    "v3-plan": {
+    "plan": {
       "QueryType": "SELECT",
       "Original": "select * from user where id = 5 order by -col1",
       "Instructions": {
@@ -1712,34 +1355,12 @@
         ],
         "Vindex": "user_index"
       }
-    },
-    "gen4-plan": {
-      "QueryType": "SELECT",
-      "Original": "select * from user where id = 5 order by -col1",
-      "Instructions": {
-        "OperatorType": "Route",
-        "Variant": "EqualUnique",
-        "Keyspace": {
-          "Name": "user",
-          "Sharded": true
-        },
-        "FieldQuery": "select * from `user` where 1 != 1",
-        "Query": "select * from `user` where id = 5 order by -col1 asc",
-        "Table": "`user`",
-        "Values": [
-          "INT64(5)"
-        ],
-        "Vindex": "user_index"
-      },
-      "TablesUsed": [
-        "user.user"
-      ]
     }
   },
   {
     "comment": "Order by with string operations",
     "query": "select * from user where id = 5 order by concat(col,col1) collate utf8_general_ci desc",
-    "v3-plan": {
+    "plan": {
       "QueryType": "SELECT",
       "Original": "select * from user where id = 5 order by concat(col,col1) collate utf8_general_ci desc",
       "Instructions": {
@@ -1757,34 +1378,12 @@
         ],
         "Vindex": "user_index"
       }
-    },
-    "gen4-plan": {
-      "QueryType": "SELECT",
-      "Original": "select * from user where id = 5 order by concat(col,col1) collate utf8_general_ci desc",
-      "Instructions": {
-        "OperatorType": "Route",
-        "Variant": "EqualUnique",
-        "Keyspace": {
-          "Name": "user",
-          "Sharded": true
-        },
-        "FieldQuery": "select * from `user` where 1 != 1",
-        "Query": "select * from `user` where id = 5 order by concat(col, col1) collate utf8_general_ci desc",
-        "Table": "`user`",
-        "Values": [
-          "INT64(5)"
-        ],
-        "Vindex": "user_index"
-      },
-      "TablesUsed": [
-        "user.user"
-      ]
     }
   },
   {
     "comment": "Order by with math operations",
     "query": "select * from user where id = 5 order by id+col collate utf8_general_ci desc",
-    "v3-plan": {
+    "plan": {
       "QueryType": "SELECT",
       "Original": "select * from user where id = 5 order by id+col collate utf8_general_ci desc",
       "Instructions": {
@@ -1802,28 +1401,6 @@
         ],
         "Vindex": "user_index"
       }
-    },
-    "gen4-plan": {
-      "QueryType": "SELECT",
-      "Original": "select * from user where id = 5 order by id+col collate utf8_general_ci desc",
-      "Instructions": {
-        "OperatorType": "Route",
-        "Variant": "EqualUnique",
-        "Keyspace": {
-          "Name": "user",
-          "Sharded": true
-        },
-        "FieldQuery": "select * from `user` where 1 != 1",
-        "Query": "select * from `user` where id = 5 order by id + col collate utf8_general_ci desc",
-        "Table": "`user`",
-        "Values": [
-          "INT64(5)"
-        ],
-        "Vindex": "user_index"
-      },
-      "TablesUsed": [
-        "user.user"
-      ]
     }
   },
   {
@@ -1865,17 +1442,13 @@
           "INT64(5)"
         ],
         "Vindex": "user_index"
-      },
-      "TablesUsed": [
-        "user.user",
-        "user.user_extra"
-      ]
+      }
     }
   },
   {
     "comment": "routing rules: order by gets pushed for routes",
     "query": "select col from route1 where id = 1 order by col",
-    "v3-plan": {
+    "plan": {
       "QueryType": "SELECT",
       "Original": "select col from route1 where id = 1 order by col",
       "Instructions": {
@@ -1893,34 +1466,12 @@
         ],
         "Vindex": "user_index"
       }
-    },
-    "gen4-plan": {
-      "QueryType": "SELECT",
-      "Original": "select col from route1 where id = 1 order by col",
-      "Instructions": {
-        "OperatorType": "Route",
-        "Variant": "EqualUnique",
-        "Keyspace": {
-          "Name": "user",
-          "Sharded": true
-        },
-        "FieldQuery": "select col from `user` as route1 where 1 != 1",
-        "Query": "select col from `user` as route1 where id = 1 order by col asc",
-        "Table": "`user`",
-        "Values": [
-          "INT64(1)"
-        ],
-        "Vindex": "user_index"
-      },
-      "TablesUsed": [
-        "user.user"
-      ]
     }
   },
   {
     "comment": "LIMIT",
     "query": "select col1 from user where id = 1 limit 1",
-    "v3-plan": {
+    "plan": {
       "QueryType": "SELECT",
       "Original": "select col1 from user where id = 1 limit 1",
       "Instructions": {
@@ -1938,34 +1489,12 @@
         ],
         "Vindex": "user_index"
       }
-    },
-    "gen4-plan": {
-      "QueryType": "SELECT",
-      "Original": "select col1 from user where id = 1 limit 1",
-      "Instructions": {
-        "OperatorType": "Route",
-        "Variant": "EqualUnique",
-        "Keyspace": {
-          "Name": "user",
-          "Sharded": true
-        },
-        "FieldQuery": "select col1 from `user` where 1 != 1",
-        "Query": "select col1 from `user` where id = 1 limit 1",
-        "Table": "`user`",
-        "Values": [
-          "INT64(1)"
-        ],
-        "Vindex": "user_index"
-      },
-      "TablesUsed": [
-        "user.user"
-      ]
     }
   },
   {
     "comment": "limit for joins. Can't push down the limit because result\n# counts get multiplied by join operations.",
     "query": "select user.col from user join user_extra limit 1",
-    "v3-plan": {
+    "plan": {
       "QueryType": "SELECT",
       "Original": "select user.col from user join user_extra limit 1",
       "Instructions": {
@@ -1975,7 +1504,7 @@
           {
             "OperatorType": "Join",
             "Variant": "Join",
-            "JoinColumnIndexes": "L:0",
+            "JoinColumnIndexes": "-1",
             "TableName": "`user`_user_extra",
             "Inputs": [
               {
@@ -2004,56 +1533,12 @@
           }
         ]
       }
-    },
-    "gen4-plan": {
-      "QueryType": "SELECT",
-      "Original": "select user.col from user join user_extra limit 1",
-      "Instructions": {
-        "OperatorType": "Limit",
-        "Count": "INT64(1)",
-        "Inputs": [
-          {
-            "OperatorType": "Join",
-            "Variant": "Join",
-            "JoinColumnIndexes": "L:0",
-            "TableName": "`user`_user_extra",
-            "Inputs": [
-              {
-                "OperatorType": "Route",
-                "Variant": "Scatter",
-                "Keyspace": {
-                  "Name": "user",
-                  "Sharded": true
-                },
-                "FieldQuery": "select `user`.col from `user` where 1 != 1",
-                "Query": "select `user`.col from `user`",
-                "Table": "`user`"
-              },
-              {
-                "OperatorType": "Route",
-                "Variant": "Scatter",
-                "Keyspace": {
-                  "Name": "user",
-                  "Sharded": true
-                },
-                "FieldQuery": "select 1 from user_extra where 1 != 1",
-                "Query": "select 1 from user_extra",
-                "Table": "user_extra"
-              }
-            ]
-          }
-        ]
-      },
-      "TablesUsed": [
-        "user.user",
-        "user.user_extra"
-      ]
     }
   },
   {
     "comment": "limit for scatter",
     "query": "select col from user limit 1",
-    "v3-plan": {
+    "plan": {
       "QueryType": "SELECT",
       "Original": "select col from user limit 1",
       "Instructions": {
@@ -2073,36 +1558,12 @@
           }
         ]
       }
-    },
-    "gen4-plan": {
-      "QueryType": "SELECT",
-      "Original": "select col from user limit 1",
-      "Instructions": {
-        "OperatorType": "Limit",
-        "Count": "INT64(1)",
-        "Inputs": [
-          {
-            "OperatorType": "Route",
-            "Variant": "Scatter",
-            "Keyspace": {
-              "Name": "user",
-              "Sharded": true
-            },
-            "FieldQuery": "select col from `user` where 1 != 1",
-            "Query": "select col from `user` limit :__upper_limit",
-            "Table": "`user`"
-          }
-        ]
-      },
-      "TablesUsed": [
-        "user.user"
-      ]
     }
   },
   {
     "comment": "limit for scatter with bind var",
     "query": "select col from user limit :a",
-    "v3-plan": {
+    "plan": {
       "QueryType": "SELECT",
       "Original": "select col from user limit :a",
       "Instructions": {
@@ -2122,36 +1583,12 @@
           }
         ]
       }
-    },
-    "gen4-plan": {
-      "QueryType": "SELECT",
-      "Original": "select col from user limit :a",
-      "Instructions": {
-        "OperatorType": "Limit",
-        "Count": ":a",
-        "Inputs": [
-          {
-            "OperatorType": "Route",
-            "Variant": "Scatter",
-            "Keyspace": {
-              "Name": "user",
-              "Sharded": true
-            },
-            "FieldQuery": "select col from `user` where 1 != 1",
-            "Query": "select col from `user` limit :__upper_limit",
-            "Table": "`user`"
-          }
-        ]
-      },
-      "TablesUsed": [
-        "user.user"
-      ]
     }
   },
   {
     "comment": "cross-shard expression in parenthesis with limit",
     "query": "select * from user where (id1 = 4 AND name1 ='abc') limit 5",
-    "v3-plan": {
+    "plan": {
       "QueryType": "SELECT",
       "Original": "select * from user where (id1 = 4 AND name1 ='abc') limit 5",
       "Instructions": {
@@ -2171,36 +1608,12 @@
           }
         ]
       }
-    },
-    "gen4-plan": {
-      "QueryType": "SELECT",
-      "Original": "select * from user where (id1 = 4 AND name1 ='abc') limit 5",
-      "Instructions": {
-        "OperatorType": "Limit",
-        "Count": "INT64(5)",
-        "Inputs": [
-          {
-            "OperatorType": "Route",
-            "Variant": "Scatter",
-            "Keyspace": {
-              "Name": "user",
-              "Sharded": true
-            },
-            "FieldQuery": "select * from `user` where 1 != 1",
-            "Query": "select * from `user` where id1 = 4 and name1 = 'abc' limit :__upper_limit",
-            "Table": "`user`"
-          }
-        ]
-      },
-      "TablesUsed": [
-        "user.user"
-      ]
     }
   },
   {
     "comment": "scatter limit after pullout subquery",
     "query": "select col from user where col in (select col1 from user) limit 1",
-    "v3-plan": {
+    "plan": {
       "QueryType": "SELECT",
       "Original": "select col from user where col in (select col1 from user) limit 1",
       "Instructions": {
@@ -2241,57 +1654,12 @@
           }
         ]
       }
-    },
-    "gen4-plan": {
-      "QueryType": "SELECT",
-      "Original": "select col from user where col in (select col1 from user) limit 1",
-      "Instructions": {
-        "OperatorType": "Limit",
-        "Count": "INT64(1)",
-        "Inputs": [
-          {
-            "OperatorType": "Subquery",
-            "Variant": "PulloutIn",
-            "PulloutVars": [
-              "__sq_has_values1",
-              "__sq1"
-            ],
-            "Inputs": [
-              {
-                "OperatorType": "Route",
-                "Variant": "Scatter",
-                "Keyspace": {
-                  "Name": "user",
-                  "Sharded": true
-                },
-                "FieldQuery": "select col1 from `user` where 1 != 1",
-                "Query": "select col1 from `user`",
-                "Table": "`user`"
-              },
-              {
-                "OperatorType": "Route",
-                "Variant": "Scatter",
-                "Keyspace": {
-                  "Name": "user",
-                  "Sharded": true
-                },
-                "FieldQuery": "select col from `user` where 1 != 1",
-                "Query": "select col from `user` where :__sq_has_values1 = 1 and col in ::__sq1 limit :__upper_limit",
-                "Table": "`user`"
-              }
-            ]
-          }
-        ]
-      },
-      "TablesUsed": [
-        "user.user"
-      ]
     }
   },
   {
     "comment": "limit on reference table",
     "query": "select col from ref limit 1",
-    "v3-plan": {
+    "plan": {
       "QueryType": "SELECT",
       "Original": "select col from ref limit 1",
       "Instructions": {
@@ -2305,30 +1673,12 @@
         "Query": "select col from ref limit 1",
         "Table": "ref"
       }
-    },
-    "gen4-plan": {
-      "QueryType": "SELECT",
-      "Original": "select col from ref limit 1",
-      "Instructions": {
-        "OperatorType": "Route",
-        "Variant": "Reference",
-        "Keyspace": {
-          "Name": "user",
-          "Sharded": true
-        },
-        "FieldQuery": "select col from ref where 1 != 1",
-        "Query": "select col from ref limit 1",
-        "Table": "ref"
-      },
-      "TablesUsed": [
-        "user.ref"
-      ]
     }
   },
   {
     "comment": "arithmetic limit",
     "query": "select id from user limit 1+1",
-    "v3-plan": {
+    "plan": {
       "QueryType": "SELECT",
       "Original": "select id from user limit 1+1",
       "Instructions": {
@@ -2348,36 +1698,12 @@
           }
         ]
       }
-    },
-    "gen4-plan": {
-      "QueryType": "SELECT",
-      "Original": "select id from user limit 1+1",
-      "Instructions": {
-        "OperatorType": "Limit",
-        "Count": "INT64(2)",
-        "Inputs": [
-          {
-            "OperatorType": "Route",
-            "Variant": "Scatter",
-            "Keyspace": {
-              "Name": "user",
-              "Sharded": true
-            },
-            "FieldQuery": "select id from `user` where 1 != 1",
-            "Query": "select id from `user` limit :__upper_limit",
-            "Table": "`user`"
-          }
-        ]
-      },
-      "TablesUsed": [
-        "user.user"
-      ]
     }
   },
   {
     "comment": "order by column alias",
     "query": "select id as foo from music order by foo",
-    "v3-plan": {
+    "plan": {
       "QueryType": "SELECT",
       "Original": "select id as foo from music order by foo",
       "Instructions": {
@@ -2393,32 +1719,12 @@
         "ResultColumns": 1,
         "Table": "music"
       }
-    },
-    "gen4-plan": {
-      "QueryType": "SELECT",
-      "Original": "select id as foo from music order by foo",
-      "Instructions": {
-        "OperatorType": "Route",
-        "Variant": "Scatter",
-        "Keyspace": {
-          "Name": "user",
-          "Sharded": true
-        },
-        "FieldQuery": "select id as foo, weight_string(id) from music where 1 != 1",
-        "OrderBy": "(0|1) ASC",
-        "Query": "select id as foo, weight_string(id) from music order by foo asc",
-        "ResultColumns": 1,
-        "Table": "music"
-      },
-      "TablesUsed": [
-        "user.music"
-      ]
     }
   },
   {
     "comment": "column alias for a table column in order by",
     "query": "select id as foo, id2 as id from music order by id",
-    "v3-plan": {
+    "plan": {
       "QueryType": "SELECT",
       "Original": "select id as foo, id2 as id from music order by id",
       "Instructions": {
@@ -2434,26 +1740,6 @@
         "ResultColumns": 2,
         "Table": "music"
       }
-    },
-    "gen4-plan": {
-      "QueryType": "SELECT",
-      "Original": "select id as foo, id2 as id from music order by id",
-      "Instructions": {
-        "OperatorType": "Route",
-        "Variant": "Scatter",
-        "Keyspace": {
-          "Name": "user",
-          "Sharded": true
-        },
-        "FieldQuery": "select id as foo, id2 as id, weight_string(id2) from music where 1 != 1",
-        "OrderBy": "(1|2) ASC",
-        "Query": "select id as foo, id2 as id, weight_string(id2) from music order by id asc",
-        "ResultColumns": 2,
-        "Table": "music"
-      },
-      "TablesUsed": [
-        "user.music"
-      ]
     }
   },
   {
@@ -2465,7 +1751,7 @@
       "Instructions": {
         "OperatorType": "Join",
         "Variant": "Join",
-        "JoinColumnIndexes": "L:0",
+        "JoinColumnIndexes": "-1",
         "TableName": "`user`_music",
         "Inputs": [
           {
@@ -2501,7 +1787,7 @@
       "Instructions": {
         "OperatorType": "Join",
         "Variant": "Join",
-        "JoinColumnIndexes": "L:0",
+        "JoinColumnIndexes": "-1",
         "TableName": "`user`_music",
         "Inputs": [
           {
@@ -2528,11 +1814,7 @@
             "Table": "music"
           }
         ]
-      },
-      "TablesUsed": [
-        "user.music",
-        "user.user"
-      ]
+      }
     }
   },
   {
@@ -2543,8 +1825,8 @@
       "Original": "select count(id), num from user",
       "Instructions": {
         "OperatorType": "Aggregate",
-        "Variant": "Scalar",
-        "Aggregates": "sum_count(0) AS count",
+        "Variant": "Ordered",
+        "Aggregates": "count(0)",
         "Inputs": [
           {
             "OperatorType": "Route",
@@ -2560,31 +1842,7 @@
         ]
       }
     },
-    "gen4-plan": {
-      "QueryType": "SELECT",
-      "Original": "select count(id), num from user",
-      "Instructions": {
-        "OperatorType": "Aggregate",
-        "Variant": "Scalar",
-        "Aggregates": "sum_count(0) AS count(id), random(1) AS num",
-        "Inputs": [
-          {
-            "OperatorType": "Route",
-            "Variant": "Scatter",
-            "Keyspace": {
-              "Name": "user",
-              "Sharded": true
-            },
-            "FieldQuery": "select count(id), num from `user` where 1 != 1",
-            "Query": "select count(id), num from `user`",
-            "Table": "`user`"
-          }
-        ]
-      },
-      "TablesUsed": [
-        "user.user"
-      ]
-    }
+    "gen4-plan": "In aggregated query without GROUP BY, expression of SELECT list contains nonaggregated column 'num'; this is incompatible with sql_mode=only_full_group_by"
   },
   {
     "comment": "aggregation and non-aggregations column with order by",
@@ -2600,8 +1858,8 @@
         "Inputs": [
           {
             "OperatorType": "Aggregate",
-            "Variant": "Scalar",
-            "Aggregates": "sum_count(0) AS count",
+            "Variant": "Ordered",
+            "Aggregates": "count(0)",
             "ResultColumns": 3,
             "Inputs": [
               {
@@ -2620,33 +1878,7 @@
         ]
       }
     },
-    "gen4-plan": {
-      "QueryType": "SELECT",
-      "Original": "select count(id), num from user order by 2",
-      "Instructions": {
-        "OperatorType": "Aggregate",
-        "Variant": "Scalar",
-        "Aggregates": "sum_count(0) AS count(id), random(1) AS num",
-        "ResultColumns": 2,
-        "Inputs": [
-          {
-            "OperatorType": "Route",
-            "Variant": "Scatter",
-            "Keyspace": {
-              "Name": "user",
-              "Sharded": true
-            },
-            "FieldQuery": "select count(id), num, weight_string(num) from `user` where 1 != 1",
-            "OrderBy": "(1|2) ASC",
-            "Query": "select count(id), num, weight_string(num) from `user` order by num asc",
-            "Table": "`user`"
-          }
-        ]
-      },
-      "TablesUsed": [
-        "user.user"
-      ]
-    }
+    "gen4-plan": "In aggregated query without GROUP BY, expression of SELECT list contains nonaggregated column 'num'; this is incompatible with sql_mode=only_full_group_by"
   },
   {
     "comment": "aggregation and non-aggregations column with group by",
@@ -2657,7 +1889,7 @@
       "Instructions": {
         "OperatorType": "Aggregate",
         "Variant": "Ordered",
-        "Aggregates": "sum_count(0) AS count",
+        "Aggregates": "count(0)",
         "GroupBy": "1",
         "Inputs": [
           {
@@ -2682,7 +1914,7 @@
       "Instructions": {
         "OperatorType": "Aggregate",
         "Variant": "Ordered",
-        "Aggregates": "sum_count(0) AS count(id)",
+        "Aggregates": "count(0) AS count(id)",
         "GroupBy": "(1|2)",
         "ResultColumns": 2,
         "Inputs": [
@@ -2699,10 +1931,7 @@
             "Table": "`user`"
           }
         ]
-      },
-      "TablesUsed": [
-        "user.user"
-      ]
+      }
     }
   },
   {
@@ -2719,7 +1948,7 @@
           {
             "OperatorType": "Aggregate",
             "Variant": "Ordered",
-            "Aggregates": "sum_count(0) AS count",
+            "Aggregates": "count(0)",
             "GroupBy": "1",
             "Inputs": [
               {
@@ -2752,7 +1981,7 @@
           {
             "OperatorType": "Aggregate",
             "Variant": "Ordered",
-            "Aggregates": "sum_count(0) AS count(id)",
+            "Aggregates": "count(0) AS count(id)",
             "GroupBy": "(1|2)",
             "Inputs": [
               {
@@ -2770,10 +1999,7 @@
             ]
           }
         ]
-      },
-      "TablesUsed": [
-        "user.user"
-      ]
+      }
     }
   },
   {
@@ -2786,7 +2012,7 @@
       "Instructions": {
         "OperatorType": "Join",
         "Variant": "Join",
-        "JoinColumnIndexes": "L:0,L:0",
+        "JoinColumnIndexes": "-1,-1",
         "TableName": "`user`_music",
         "Inputs": [
           {
@@ -2813,11 +2039,7 @@
             "Table": "music"
           }
         ]
-      },
-      "TablesUsed": [
-        "user.music",
-        "user.user"
-      ]
+      }
     }
   },
   {
@@ -2839,44 +2061,14 @@
         "Query": "select id, id, weight_string(id) from `user` order by id asc",
         "ResultColumns": 2,
         "Table": "`user`"
-      },
-      "TablesUsed": [
-        "user.user"
-      ]
+      }
     }
   },
   {
     "comment": "Scatter order by and aggregation: order by column must reference column from select list",
     "query": "select col, count(*) from user group by col order by c1",
     "v3-plan": "unsupported: memory sort: order by must reference a column in the select list: c1 asc",
-    "gen4-plan": {
-      "QueryType": "SELECT",
-      "Original": "select col, count(*) from user group by col order by c1",
-      "Instructions": {
-        "OperatorType": "Aggregate",
-        "Variant": "Ordered",
-        "Aggregates": "sum_count_star(1) AS count(*), random(2) AS c1",
-        "GroupBy": "0",
-        "ResultColumns": 2,
-        "Inputs": [
-          {
-            "OperatorType": "Route",
-            "Variant": "Scatter",
-            "Keyspace": {
-              "Name": "user",
-              "Sharded": true
-            },
-            "FieldQuery": "select col, count(*), c1, weight_string(c1) from `user` where 1 != 1 group by col",
-            "OrderBy": "(2|3) ASC, 0 ASC",
-            "Query": "select col, count(*), c1, weight_string(c1) from `user` group by col order by c1 asc, col asc",
-            "Table": "`user`"
-          }
-        ]
-      },
-      "TablesUsed": [
-        "user.user"
-      ]
-    }
+    "gen4-plan": "Expression of SELECT list is not in GROUP BY clause and contains nonaggregated column 'c1' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by"
   },
   {
     "comment": "Distinct with cross shard query",
@@ -2890,7 +2082,7 @@
           {
             "OperatorType": "Join",
             "Variant": "Join",
-            "JoinColumnIndexes": "L:0",
+            "JoinColumnIndexes": "-1",
             "TableName": "`user`_user_extra",
             "Inputs": [
               {
@@ -2932,7 +2124,7 @@
           {
             "OperatorType": "Join",
             "Variant": "Join",
-            "JoinColumnIndexes": "L:0,L:1",
+            "JoinColumnIndexes": "-1,-2",
             "TableName": "`user`_user_extra",
             "Inputs": [
               {
@@ -2961,11 +2153,7 @@
             ]
           }
         ]
-      },
-      "TablesUsed": [
-        "user.user",
-        "user.user_extra"
-      ]
+      }
     }
   },
   {
@@ -3012,15 +2200,12 @@
               "Sharded": true
             },
             "FieldQuery": "select a as c, a, weight_string(a) from `user` where 1 != 1",
-            "OrderBy": "(0|2) ASC, (0|2) ASC",
+            "OrderBy": "(0|2) ASC, (1|2) ASC",
             "Query": "select distinct a as c, a, weight_string(a) from `user` order by c asc, a asc",
             "Table": "`user`"
           }
         ]
-      },
-      "TablesUsed": [
-        "user.user"
-      ]
+      }
     }
   },
   {
@@ -3049,10 +2234,7 @@
             "Table": "`user`"
           }
         ]
-      },
-      "TablesUsed": [
-        "user.user"
-      ]
+      }
     }
   },
   {
@@ -3072,10 +2254,7 @@
         "FieldQuery": "select id from unsharded where 1 != 1",
         "Query": "select id from unsharded order by (select id from unsharded) asc",
         "Table": "unsharded"
-      },
-      "TablesUsed": [
-        "main.unsharded"
-      ]
+      }
     }
   },
   {
@@ -3087,12 +2266,12 @@
       "Original": "select count(*) a from user having a = 0x01",
       "Instructions": {
         "OperatorType": "Filter",
-        "Predicate": ":0 = 0x01",
+        "Predicate": "a = 0x01",
         "Inputs": [
           {
             "OperatorType": "Aggregate",
-            "Variant": "Scalar",
-            "Aggregates": "sum_count_star(0) AS a",
+            "Variant": "Ordered",
+            "Aggregates": "count(0) AS a",
             "Inputs": [
               {
                 "OperatorType": "Route",
@@ -3108,10 +2287,7 @@
             ]
           }
         ]
-      },
-      "TablesUsed": [
-        "user.user"
-      ]
+      }
     }
   }
 ]

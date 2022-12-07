@@ -25,26 +25,10 @@ import (
 // it by implementing BinlogEvent. Some methods are pulled in from binlogEvent.
 type filePosBinlogEvent struct {
 	binlogEvent
-	semiSyncAckRequested bool
-}
-
-// newFilePosBinlogEventWithSemiSyncInfo creates a BinlogEvent from given byte array
-func newFilePosBinlogEventWithSemiSyncInfo(buf []byte, semiSyncAckRequested bool) *filePosBinlogEvent {
-	return &filePosBinlogEvent{binlogEvent: binlogEvent(buf), semiSyncAckRequested: semiSyncAckRequested}
-}
-
-// newFilePosBinlogEvent creates a BinlogEvent from given byte array
-func newFilePosBinlogEvent(buf []byte) *filePosBinlogEvent {
-	return &filePosBinlogEvent{binlogEvent: binlogEvent(buf)}
 }
 
 func (*filePosBinlogEvent) GTID(BinlogFormat) (GTID, bool, error) {
 	return nil, false, nil
-}
-
-// IsSemiSyncAckRequested implements BinlogEvent.IsSemiSyncAckRequested().
-func (ev *filePosBinlogEvent) IsSemiSyncAckRequested() bool {
-	return ev.semiSyncAckRequested
 }
 
 func (*filePosBinlogEvent) IsGTID() bool {
@@ -67,7 +51,7 @@ func (ev *filePosBinlogEvent) StripChecksum(f BinlogFormat) (BinlogEvent, []byte
 		length := len(data)
 		checksum := data[length-4:]
 		data = data[:length-4]
-		return newFilePosBinlogEvent(data), checksum, nil
+		return &filePosBinlogEvent{binlogEvent: binlogEvent(data)}, checksum, nil
 	}
 }
 
@@ -84,10 +68,9 @@ func (ev *filePosBinlogEvent) nextPosition(f BinlogFormat) int {
 // rotate implements BinlogEvent.Rotate().
 //
 // Expected format (L = total length of event data):
-//
-//	# bytes  field
-//	8        position
-//	8:L      file
+//   # bytes  field
+//   8        position
+//   8:L      file
 func (ev *filePosBinlogEvent) rotate(f BinlogFormat) (int, string) {
 	data := ev.Bytes()[f.HeaderLength:]
 	pos := binary.LittleEndian.Uint64(data[0:8])
@@ -126,19 +109,11 @@ func (ev filePosQueryEvent) StripChecksum(f BinlogFormat) (BinlogEvent, []byte, 
 	return ev, nil, nil
 }
 
-func (ev filePosQueryEvent) Bytes() []byte {
-	return []byte{}
-}
-
 //----------------------------------------------------------------------------
 
 // filePosFakeEvent is the base class for fake events.
 type filePosFakeEvent struct {
 	timestamp uint32
-}
-
-func (ev filePosFakeEvent) NextPosition() uint32 {
-	return 0
 }
 
 func (ev filePosFakeEvent) IsValid() bool {
@@ -154,14 +129,6 @@ func (ev filePosFakeEvent) IsQuery() bool {
 }
 
 func (ev filePosFakeEvent) IsXID() bool {
-	return false
-}
-
-func (ev filePosFakeEvent) IsStop() bool {
-	return false
-}
-
-func (ev filePosFakeEvent) IsSemiSyncAckRequested() bool {
 	return false
 }
 
@@ -241,20 +208,12 @@ func (ev filePosFakeEvent) Rows(BinlogFormat, *TableMap) (Rows, error) {
 	return Rows{}, nil
 }
 
-func (ev filePosFakeEvent) NextLogFile(BinlogFormat) (string, uint64, error) {
-	return "", 0, nil
-}
-
 func (ev filePosFakeEvent) IsPseudo() bool {
 	return false
 }
 
 func (ev filePosFakeEvent) IsCompressed() bool {
 	return false
-}
-
-func (ev filePosFakeEvent) Bytes() []byte {
-	return []byte{}
 }
 
 //----------------------------------------------------------------------------

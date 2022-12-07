@@ -20,9 +20,6 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-
 	"vitess.io/vitess/go/vt/vttablet/tabletserver/schema"
 
 	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
@@ -67,14 +64,20 @@ create table t2 (
 		NumShards:       2,
 	}
 
-	vte, err := Init(testVSchema, testSchema, "", opts)
-	require.NoError(t, err)
-	defer vte.Stop()
+	defer Stop()
+
+	err := Init(testVSchema, testSchema, "", opts)
+
+	if err != nil {
+		t.Error(err)
+	}
 
 	sql := "SELECT * FROM t1 INNER JOIN t2 ON t1.id = t2.id"
 
-	_, err = vte.Run(sql)
-	require.NoError(t, err)
+	_, err = Run(sql)
+	if err != nil {
+		t.Error(err)
+	}
 }
 
 func TestParseSchema(t *testing.T) {
@@ -119,12 +122,11 @@ create table test_partitioned (
 	if err != nil {
 		t.Fatalf("parseSchema: %v", err)
 	}
-	vte := initTest(ModeMulti, defaultTestOpts(), &testopts{}, t)
-
-	tabletEnv, _ := newTabletEnvironment(ddls, defaultTestOpts())
-	vte.setGlobalTabletEnv(tabletEnv)
-
-	tablet := vte.newTablet(defaultTestOpts(), &topodatapb.Tablet{
+	{
+		tabletEnv, _ := newTabletEnvironment(ddls, defaultTestOpts())
+		setGlobalTabletEnv(tabletEnv)
+	}
+	tablet := newTablet(defaultTestOpts(), &topodatapb.Tablet{
 		Keyspace: "test_keyspace",
 		Shard:    "-80",
 		Alias:    &topodatapb.TabletAlias{},
@@ -133,11 +135,15 @@ create table test_partitioned (
 	tables := se.GetSchema()
 
 	t1 := tables["t1"]
-	require.NotNil(t, t1, "table t1 wasn't parsed properly")
+	if t1 == nil {
+		t.Fatalf("table t1 wasn't parsed properly")
+	}
 
 	wantCols := `[{"name":"id","type":778},{"name":"val","type":6165}]`
 	got, _ := json.Marshal(t1.Fields)
-	assert.Equal(t, wantCols, string(got))
+	if wantCols != string(got) {
+		t.Errorf("expected %s got %s", wantCols, string(got))
+	}
 
 	if !t1.HasPrimary() || len(t1.PKColumns) != 1 || t1.PKColumns[0] != 0 {
 		t.Errorf("expected HasPrimary && t1.PKColumns == [0] got %v", t1.PKColumns)
@@ -148,35 +154,51 @@ create table test_partitioned (
 	}
 
 	t2 := tables["t2"]
-	require.NotNil(t, t2, "table t2 wasn't parsed properly")
+	if t2 == nil {
+		t.Fatalf("table t2 wasn't parsed properly")
+	}
 
 	wantCols = `[{"name":"val","type":6163}]`
 	got, _ = json.Marshal(t2.Fields)
-	assert.Equal(t, wantCols, string(got))
+	if wantCols != string(got) {
+		t.Errorf("expected %s got %s", wantCols, string(got))
+	}
 
 	if t2.HasPrimary() || len(t2.PKColumns) != 0 {
 		t.Errorf("expected !HasPrimary && t2.PKColumns == [] got %v", t2.PKColumns)
 	}
 
 	t5 := tables["t5"]
-	require.NotNil(t, t5, "table t5 wasn't parsed properly")
+	if t5 == nil {
+		t.Fatalf("table t5 wasn't parsed properly")
+	}
 	got, _ = json.Marshal(t5.Fields)
-	assert.Equal(t, wantCols, string(got))
+	if wantCols != string(got) {
+		t.Errorf("expected %s got %s", wantCols, string(got))
+	}
 
 	if t5.HasPrimary() || len(t5.PKColumns) != 0 {
 		t.Errorf("expected !HasPrimary && t5.PKColumns == [] got %v", t5.PKColumns)
 	}
 
 	seq := tables["t1_seq"]
-	require.NotNil(t, seq)
-	assert.Equal(t, schema.Sequence, seq.Type)
+	if seq.Type != schema.Sequence {
+		t.Errorf("expected t1_seq to be a sequence table but is type %v", seq.Type)
+	}
 }
 
 func TestErrParseSchema(t *testing.T) {
-	testSchema := `create table t1 like t2`
+	testSchema := `
+create table t1 like t2;
+`
+	expected := "check your schema, table[t2] doesn't exist"
 	ddl, err := parseSchema(testSchema, &Options{StrictDDL: true})
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("parseSchema: %v", err)
+	}
 
 	_, err = newTabletEnvironment(ddl, defaultTestOpts())
-	require.Error(t, err, "check your schema, table[t2] doesn't exist")
+	if err.Error() != expected {
+		t.Errorf("want: %s, got %s", expected, err.Error())
+	}
 }

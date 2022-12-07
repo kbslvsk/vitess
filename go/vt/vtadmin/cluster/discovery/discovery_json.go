@@ -19,34 +19,36 @@ package discovery
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand"
 
-	"vitess.io/vitess/go/trace"
+	"github.com/spf13/pflag"
 
+	"vitess.io/vitess/go/trace"
 	vtadminpb "vitess.io/vitess/go/vt/proto/vtadmin"
 )
 
 // JSONDiscovery implements the Discovery interface for "discovering"
-// Vitess components hardcoded in a json object.
+// Vitess components hardcoded in a JSON string.
 //
-// StaticFileDiscovery and DynamicDiscovery inherit from JSONDiscovery because
-// they both read the same JSON object. They only differ in where the JSON object is stored.
-//
-// As an example, here's a minimal JSON file for a single Vitess cluster running locally
+// As an example, here's a minimal JSON object for a single Vitess cluster running locally
 // (such as the one described in https://vitess.io/docs/get-started/local-docker):
 //
-//	{
-//		"vtgates": [
-//			{
-//				"host": {
-//					"hostname": "127.0.0.1:15991"
-//				}
-//			}
-//		]
-//	}
+// 		{
+// 			"vtgates": [
+// 				{
+// 					"host": {
+// 						"hostname": "127.0.0.1:15991"
+// 					}
+// 				}
+// 			]
+// 		}
 //
 // For more examples of various static file configurations, see the unit tests.
+// Discovery JSON is very similar to static file discovery, but removes the need for a static file in memory.
+// This allows for dynamic cluster discovery after initial vtadmin deploy without a topo.
+
 type JSONDiscovery struct {
 	cluster *vtadminpb.Cluster
 	config  *JSONClusterConfig
@@ -77,6 +79,29 @@ type JSONVTGateConfig struct {
 type JSONVtctldConfig struct {
 	Host *vtadminpb.Vtctld `json:"host"`
 	Tags []string          `json:"tags"`
+}
+
+// NewJSON returns a JSONDiscovery for the given cluster.
+func NewJSON(cluster *vtadminpb.Cluster, flags *pflag.FlagSet, args []string) (Discovery, error) {
+	disco := &JSONDiscovery{
+		cluster: cluster,
+	}
+
+	json := flags.String("discovery", "", "the json config object")
+	if err := flags.Parse(args); err != nil {
+		return nil, err
+	}
+
+	if json == nil || *json == "" {
+		return nil, errors.New("must pass service discovery JSON config object")
+	}
+
+	bytes := []byte(*json)
+	if err := disco.parseConfig(bytes); err != nil {
+		return nil, err
+	}
+
+	return disco, nil
 }
 
 func (d *JSONDiscovery) parseConfig(bytes []byte) error {
@@ -145,24 +170,6 @@ func (d *JSONDiscovery) DiscoverVTGateAddr(ctx context.Context, tags []string) (
 	}
 
 	return gate.Hostname, nil
-}
-
-// DiscoverVTGateAddrs is part of the Discovery interface.
-func (d *JSONDiscovery) DiscoverVTGateAddrs(ctx context.Context, tags []string) ([]string, error) {
-	span, ctx := trace.NewSpan(ctx, "JSONDiscovery.DiscoverVTGateAddrs")
-	defer span.Finish()
-
-	gates, err := d.discoverVTGates(ctx, tags)
-	if err != nil {
-		return nil, err
-	}
-
-	addrs := make([]string, len(gates))
-	for i, gate := range gates {
-		addrs[i] = gate.Hostname
-	}
-
-	return addrs, nil
 }
 
 // DiscoverVTGates is part of the Discovery interface.
@@ -245,24 +252,6 @@ func (d *JSONDiscovery) DiscoverVtctldAddr(ctx context.Context, tags []string) (
 	}
 
 	return vtctld.Hostname, nil
-}
-
-// DiscoverVtctldAddrs is part of the Discovery interface.
-func (d *JSONDiscovery) DiscoverVtctldAddrs(ctx context.Context, tags []string) ([]string, error) {
-	span, ctx := trace.NewSpan(ctx, "JSONDiscovery.DiscoverVtctldAddrs")
-	defer span.Finish()
-
-	vtctlds, err := d.discoverVtctlds(ctx, tags)
-	if err != nil {
-		return nil, err
-	}
-
-	addrs := make([]string, len(vtctlds))
-	for i, vtctld := range vtctlds {
-		addrs[i] = vtctld.Hostname
-	}
-
-	return addrs, nil
 }
 
 // DiscoverVtctlds is part of the Discovery interface.

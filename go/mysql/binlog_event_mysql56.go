@@ -28,22 +28,11 @@ import (
 // binlogEvent.
 type mysql56BinlogEvent struct {
 	binlogEvent
-	semiSyncAckRequested bool
-}
-
-// NewMysql56BinlogEventWithSemiSyncInfo creates a BinlogEvent from given byte array
-func NewMysql56BinlogEventWithSemiSyncInfo(buf []byte, semiSyncAckRequested bool) BinlogEvent {
-	return mysql56BinlogEvent{binlogEvent: binlogEvent(buf), semiSyncAckRequested: semiSyncAckRequested}
 }
 
 // NewMysql56BinlogEvent creates a BinlogEvent from given byte array
 func NewMysql56BinlogEvent(buf []byte) BinlogEvent {
 	return mysql56BinlogEvent{binlogEvent: binlogEvent(buf)}
-}
-
-// IsSemiSyncAckRequested implements BinlogEvent.IsSemiSyncAckRequested().
-func (ev mysql56BinlogEvent) IsSemiSyncAckRequested() bool {
-	return ev.semiSyncAckRequested
 }
 
 // IsGTID implements BinlogEvent.IsGTID().
@@ -54,11 +43,10 @@ func (ev mysql56BinlogEvent) IsGTID() bool {
 // GTID implements BinlogEvent.GTID().
 //
 // Expected format:
-//
-//	# bytes   field
-//	1         flags
-//	16        SID (server UUID)
-//	8         GNO (sequence number, signed int)
+//   # bytes   field
+//   1         flags
+//   16        SID (server UUID)
+//   8         GNO (sequence number, signed int)
 func (ev mysql56BinlogEvent) GTID(f BinlogFormat) (GTID, bool, error) {
 	data := ev.Bytes()[f.HeaderLength:]
 	var sid SID

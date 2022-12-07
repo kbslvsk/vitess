@@ -19,9 +19,6 @@ package mysql
 import (
 	"strings"
 	"testing"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestParseMysql56GTID(t *testing.T) {
@@ -32,9 +29,12 @@ func TestParseMysql56GTID(t *testing.T) {
 	}
 
 	got, err := parseMysql56GTID(input)
-	require.NoError(t, err, "unexpected error: %v", err)
-	assert.Equal(t, want, got, "parseMysql56GTID(%#v) = %#v, want %#v", input, got, want)
-
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != want {
+		t.Errorf("parseMysql56GTID(%#v) = %#v, want %#v", input, got, want)
+	}
 }
 
 func TestParseMysql56GTIDInvalid(t *testing.T) {
@@ -48,8 +48,9 @@ func TestParseMysql56GTIDInvalid(t *testing.T) {
 
 	for _, input := range table {
 		_, err := parseMysql56GTID(input)
-		assert.Error(t, err, "parseMysql56GTID(%#v): expected error, got none", input)
-
+		if err == nil {
+			t.Errorf("parseMysql56GTID(%#v): expected error, got none", input)
+		}
 	}
 }
 
@@ -67,9 +68,12 @@ func TestParseSID(t *testing.T) {
 	want := SID{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
 
 	got, err := ParseSID(input)
-	require.NoError(t, err, "unexpected error: %v", err)
-	assert.Equal(t, want, got, "ParseSID(%#v) = %#v, want %#v", input, got, want)
-
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != want {
+		t.Errorf("ParseSID(%#v) = %#v, want %#v", input, got, want)
+	}
 }
 
 func TestParseSIDInvalid(t *testing.T) {
@@ -82,8 +86,9 @@ func TestParseSIDInvalid(t *testing.T) {
 
 	for _, input := range table {
 		_, err := ParseSID(input)
-		assert.Error(t, err, "ParseSID(%#v): expected error, got none", input)
-
+		if err == nil {
+			t.Errorf("ParseSID(%#v): expected error, got none", input)
+		}
 	}
 }
 
@@ -107,7 +112,7 @@ func TestMysql56GTIDFlavor(t *testing.T) {
 
 func TestMysql56SequenceDomain(t *testing.T) {
 	input := Mysql56GTID{}
-	if got, want := input.SequenceDomain(), any(nil); got != want {
+	if got, want := input.SequenceDomain(), interface{}(nil); got != want {
 		t.Errorf("%#v.SequenceDomain() = %#v, want %#v", input, got, want)
 	}
 }
@@ -116,7 +121,7 @@ func TestMysql56SourceServer(t *testing.T) {
 	input := Mysql56GTID{
 		Server: SID{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15},
 	}
-	want := any(SID{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15})
+	want := interface{}(SID{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15})
 	if got := input.SourceServer(); got != want {
 		t.Errorf("%#v.SourceServer() = %#v, want %#v", input, got, want)
 	}
@@ -127,7 +132,7 @@ func TestMysql56SequenceNumber(t *testing.T) {
 		Server:   SID{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15},
 		Sequence: 5432,
 	}
-	want := any(int64(5432))
+	want := interface{}(int64(5432))
 	if got := input.SequenceNumber(); got != want {
 		t.Errorf("%#v.SequenceNumber() = %#v, want %#v", input, got, want)
 	}

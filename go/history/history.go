@@ -27,29 +27,29 @@ import (
 type Deduplicable interface {
 	// IsDuplicate returns true if other is considered to be a
 	// duplicate of the calling instance.
-	IsDuplicate(any) bool
+	IsDuplicate(interface{}) bool
 }
 
 // History is a data structure that allows you to keep some number of
 // records.
 type History struct {
 	mu        sync.Mutex
-	records   []any
-	lastAdded any
-	latest    any
+	records   []interface{}
+	lastAdded interface{}
+	latest    interface{}
 	next      int
 	length    int
 }
 
 // New returns a History with the specified maximum length.
 func New(length int) *History {
-	return &History{records: make([]any, length)}
+	return &History{records: make([]interface{}, length)}
 }
 
 // Add a new record in a threadsafe manner. If record implements
 // Deduplicable, and IsDuplicate returns true when called on the last
 // previously added record, it will not be added.
-func (history *History) Add(record any) {
+func (history *History) Add(record interface{}) {
 	history.mu.Lock()
 	defer history.mu.Unlock()
 
@@ -73,11 +73,11 @@ func (history *History) Add(record any) {
 
 // Records returns the kept records in reverse chronological order in a
 // threadsafe manner.
-func (history *History) Records() []any {
+func (history *History) Records() []interface{} {
 	history.mu.Lock()
 	defer history.mu.Unlock()
 
-	records := make([]any, 0, history.length)
+	records := make([]interface{}, 0, history.length)
 	records = append(records, history.records[history.next:history.length]...)
 	records = append(records, history.records[:history.next]...)
 
@@ -91,7 +91,7 @@ func (history *History) Records() []any {
 
 // Latest returns the record most recently passed to Add(),
 // regardless of whether it was actually added or dropped as a duplicate.
-func (history *History) Latest() any {
+func (history *History) Latest() interface{} {
 	history.mu.Lock()
 	defer history.mu.Unlock()
 	return history.latest

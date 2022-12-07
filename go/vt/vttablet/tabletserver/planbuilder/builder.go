@@ -31,10 +31,11 @@ import (
 
 func analyzeSelect(sel *sqlparser.Select, tables map[string]*schema.Table) (plan *Plan, err error) {
 	plan = &Plan{
-		PlanID:    PlanSelect,
-		FullQuery: GenerateLimitQuery(sel),
+		PlanID:     PlanSelect,
+		Table:      lookupTable(sel.From, tables),
+		FieldQuery: GenerateFieldQuery(sel),
+		FullQuery:  GenerateLimitQuery(sel),
 	}
-	plan.Table, plan.AllTables = lookupTables(sel.From, tables)
 
 	if sel.Where != nil {
 		comp, ok := sel.Where.Expr.(*sqlparser.ComparisonExpr)
@@ -50,17 +51,13 @@ func analyzeSelect(sel *sqlparser.Select, tables map[string]*schema.Table) (plan
 			return nil, vterrors.Errorf(vtrpcpb.Code_INVALID_ARGUMENT, "%s is not a sequence", sqlparser.ToString(sel.From))
 		}
 		plan.PlanID = PlanNextval
-		v, err := evalengine.Translate(nextVal.Expr, semantics.EmptySemTable())
+		v, err := evalengine.Convert(nextVal.Expr, semantics.EmptySemTable())
 		if err != nil {
 			return nil, err
 		}
 		plan.NextCount = v
+		plan.FieldQuery = nil
 		plan.FullQuery = nil
-	}
-
-	if hasLockFunc(sel) {
-		plan.PlanID = PlanSelectLockFunc
-		plan.NeedsReservedConn = true
 	}
 	return plan, nil
 }
@@ -69,8 +66,8 @@ func analyzeSelect(sel *sqlparser.Select, tables map[string]*schema.Table) (plan
 func analyzeUpdate(upd *sqlparser.Update, tables map[string]*schema.Table) (plan *Plan, err error) {
 	plan = &Plan{
 		PlanID: PlanUpdate,
+		Table:  lookupTable(upd.TableExprs, tables),
 	}
-	plan.Table, plan.AllTables = lookupTables(upd.TableExprs, tables)
 
 	// Store the WHERE clause as string for the hot row protection (txserializer).
 	if upd.Where != nil {
@@ -99,8 +96,8 @@ func analyzeUpdate(upd *sqlparser.Update, tables map[string]*schema.Table) (plan
 func analyzeDelete(del *sqlparser.Delete, tables map[string]*schema.Table) (plan *Plan, err error) {
 	plan = &Plan{
 		PlanID: PlanDelete,
+		Table:  lookupTable(del.TableExprs, tables),
 	}
-	plan.Table, plan.AllTables = lookupTables(del.TableExprs, tables)
 
 	if del.Where != nil {
 		buf := sqlparser.NewTrackedBuffer(nil)
@@ -146,7 +143,7 @@ func analyzeShow(show *sqlparser.Show, dbName string) (plan *Plan, err error) {
 		}, nil
 	case *sqlparser.ShowCreate:
 		if showInternal.Command == sqlparser.CreateDb && !sqlparser.SystemSchema(showInternal.Op.Name.String()) {
-			showInternal.Op.Name = sqlparser.NewIdentifierCS(dbName)
+			showInternal.Op.Name = sqlparser.NewTableIdent(dbName)
 		}
 		return &Plan{
 			PlanID:    PlanShow,
@@ -174,26 +171,16 @@ func showTableRewrite(show *sqlparser.ShowBasic, dbName string) {
 
 func analyzeSet(set *sqlparser.Set) (plan *Plan) {
 	return &Plan{
-		PlanID:            PlanSet,
-		FullQuery:         GenerateFullQuery(set),
-		NeedsReservedConn: true,
+		PlanID:    PlanSet,
+		FullQuery: GenerateFullQuery(set),
 	}
 }
 
-func lookupTables(tableExprs sqlparser.TableExprs, tables map[string]*schema.Table) (singleTable *schema.Table, allTables []*schema.Table) {
-	for _, tableExpr := range tableExprs {
-		if t := lookupSingleTable(tableExpr, tables); t != nil {
-			allTables = append(allTables, t)
-		}
+func lookupTable(tableExprs sqlparser.TableExprs, tables map[string]*schema.Table) *schema.Table {
+	if len(tableExprs) > 1 {
+		return nil
 	}
-	if len(allTables) == 1 {
-		singleTable = allTables[0]
-	}
-	return singleTable, allTables
-}
-
-func lookupSingleTable(tableExpr sqlparser.TableExpr, tables map[string]*schema.Table) *schema.Table {
-	aliased, ok := tableExpr.(*sqlparser.AliasedTableExpr)
+	aliased, ok := tableExprs[0].(*sqlparser.AliasedTableExpr)
 	if !ok {
 		return nil
 	}
@@ -202,16 +189,4 @@ func lookupSingleTable(tableExpr sqlparser.TableExpr, tables map[string]*schema.
 		return nil
 	}
 	return tables[tableName.String()]
-}
-
-func analyzeDDL(stmt sqlparser.DDLStatement, tables map[string]*schema.Table) *Plan {
-	// DDLs and some other statements below don't get fully parsed.
-	// We have to use the original query at the time of execution.
-	// We are in the process of changing this
-	var fullQuery *sqlparser.ParsedQuery
-	// If the query is fully parsed, then use the ast and store the fullQuery
-	if stmt.IsFullyParsed() {
-		fullQuery = GenerateFullQuery(stmt)
-	}
-	return &Plan{PlanID: PlanDDL, FullQuery: fullQuery, FullStmt: stmt, NeedsReservedConn: stmt.IsTemporary()}
 }

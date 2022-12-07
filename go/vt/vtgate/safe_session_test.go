@@ -57,10 +57,13 @@ func TestPrequeries(t *testing.T) {
 		},
 	})
 
-	want := []string{"set @@s1 = 'apa', @@s2 = 42"}
+	q1 := "set @@s1 = 'apa'"
+	q2 := "set @@s2 = 42"
+	want := []string{q1, q2}
+	wantReversed := []string{q2, q1}
 	preQueries := session.SetPreQueries()
 
-	if !reflect.DeepEqual(want, preQueries) {
+	if !reflect.DeepEqual(want, preQueries) && !reflect.DeepEqual(wantReversed, preQueries) {
 		t.Errorf("got %v but wanted %v", preQueries, want)
 	}
 }

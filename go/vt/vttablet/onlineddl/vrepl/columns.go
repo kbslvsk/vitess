@@ -143,8 +143,7 @@ func isExpandedColumn(sourceColumn *Column, targetColumn *Column) (bool, string)
 		if targetColumn.Charset == "utf8mb4" {
 			return true, "expand character set to utf8mb4"
 		}
-		if strings.HasPrefix(targetColumn.Charset, "utf8") && !strings.HasPrefix(sourceColumn.Charset, "utf8") {
-			// not utf to utf
+		if targetColumn.Charset == "utf8" && sourceColumn.Charset != "utf8mb4" {
 			return true, "expand character set to utf8"
 		}
 	}

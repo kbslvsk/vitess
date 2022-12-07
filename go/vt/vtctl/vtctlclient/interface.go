@@ -18,32 +18,18 @@ limitations under the License.
 package vtctlclient
 
 import (
-	"context"
+	"flag"
 	"fmt"
 	"time"
 
-	"github.com/spf13/pflag"
+	"context"
 
 	"vitess.io/vitess/go/vt/log"
 	"vitess.io/vitess/go/vt/logutil"
-	"vitess.io/vitess/go/vt/servenv"
 )
 
 // vtctlClientProtocol specifics which RPC client implementation should be used.
-var vtctlClientProtocol = "grpc"
-
-func RegisterFlags(fs *pflag.FlagSet) {
-	fs.StringVar(&vtctlClientProtocol, "vtctl_client_protocol", vtctlClientProtocol, "Protocol to use to talk to the vtctl server.")
-}
-
-func init() {
-	for _, cmd := range []string{
-		"vtctlclient",
-		"vttestserver",
-	} {
-		servenv.OnParseFor(cmd, RegisterFlags)
-	}
-}
+var vtctlClientProtocol = flag.String("vtctl_client_protocol", "grpc", "the protocol to use to talk to the vtctl server")
 
 // VtctlClient defines the interface used to send remote vtctl commands
 type VtctlClient interface {
@@ -81,9 +67,9 @@ func UnregisterFactoryForTest(name string) {
 
 // New allows a user of the client library to get its implementation.
 func New(addr string) (VtctlClient, error) {
-	factory, ok := factories[vtctlClientProtocol]
+	factory, ok := factories[*vtctlClientProtocol]
 	if !ok {
-		return nil, fmt.Errorf("unknown vtctl client protocol: %v", vtctlClientProtocol)
+		return nil, fmt.Errorf("unknown vtctl client protocol: %v", *vtctlClientProtocol)
 	}
 	return factory(addr)
 }

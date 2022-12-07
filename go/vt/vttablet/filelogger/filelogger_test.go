@@ -29,7 +29,11 @@ import (
 
 // TestFileLog sends a stream of five query records to the plugin, and verifies that they are logged.
 func TestFileLog(t *testing.T) {
-	dir := t.TempDir()
+	dir, err := os.MkdirTemp("", "filelogger_test")
+	if err != nil {
+		t.Fatalf("error getting tempdir: %v", err)
+	}
+	defer os.RemoveAll(dir)
 
 	logPath := path.Join(dir, "test.log")
 	logger, err := Init(logPath)
@@ -75,12 +79,16 @@ func TestFileLog(t *testing.T) {
 
 // TestFileLog sends a stream of five query records to the plugin, and verifies that they are logged.
 func TestFileLogRedacted(t *testing.T) {
-	streamlog.SetRedactDebugUIQueries(true)
+	*streamlog.RedactDebugUIQueries = true
 	defer func() {
-		streamlog.SetRedactDebugUIQueries(false)
+		*streamlog.RedactDebugUIQueries = false
 	}()
 
-	dir := t.TempDir()
+	dir, err := os.MkdirTemp("", "filelogger_test")
+	if err != nil {
+		t.Fatalf("error getting tempdir: %v", err)
+	}
+	defer os.RemoveAll(dir)
 
 	logPath := path.Join(dir, "test.log")
 	logger, err := Init(logPath)

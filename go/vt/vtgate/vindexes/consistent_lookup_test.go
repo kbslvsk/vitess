@@ -17,7 +17,6 @@ limitations under the License.
 package vindexes
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"reflect"
@@ -29,21 +28,18 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"vitess.io/vitess/go/mysql"
 	"vitess.io/vitess/go/sqltypes"
 	"vitess.io/vitess/go/vt/key"
 	querypb "vitess.io/vitess/go/vt/proto/query"
 	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 	vtgatepb "vitess.io/vitess/go/vt/proto/vtgate"
-	vtrpcpb "vitess.io/vitess/go/vt/proto/vtrpc"
 	"vitess.io/vitess/go/vt/sqlparser"
-	"vitess.io/vitess/go/vt/vterrors"
 )
 
 func TestConsistentLookupInit(t *testing.T) {
 	lookup := createConsistentLookup(t, "consistent_lookup", true)
-	cols := []sqlparser.IdentifierCI{
-		sqlparser.NewIdentifierCI("fc"),
+	cols := []sqlparser.ColIdent{
+		sqlparser.NewColIdent("fc"),
 	}
 	err := lookup.(WantOwnerInfo).SetOwnerInfo("ks", "t1", cols)
 	want := "does not match"
@@ -76,7 +72,7 @@ func TestConsistentLookupMap(t *testing.T) {
 	vc := &loggingVCursor{}
 	vc.AddResult(makeTestResultLookup([]int{2, 2}), nil)
 
-	got, err := lookup.Map(context.Background(), vc, []sqltypes.Value{sqltypes.NewInt64(1), sqltypes.NewInt64(2)})
+	got, err := lookup.Map(vc, []sqltypes.Value{sqltypes.NewInt64(1), sqltypes.NewInt64(2)})
 	require.NoError(t, err)
 	want := []key.Destination{
 		key.DestinationKeyspaceIDs([][]byte{
@@ -97,7 +93,7 @@ func TestConsistentLookupMap(t *testing.T) {
 
 	// Test query fail.
 	vc.AddResult(nil, fmt.Errorf("execute failed"))
-	_, err = lookup.Map(context.Background(), vc, []sqltypes.Value{sqltypes.NewInt64(1)})
+	_, err = lookup.Map(vc, []sqltypes.Value{sqltypes.NewInt64(1)})
 	wantErr := "lookup.Map: execute failed"
 	if err == nil || err.Error() != wantErr {
 		t.Errorf("lookup(query fail) err: %v, want %s", err, wantErr)
@@ -107,7 +103,7 @@ func TestConsistentLookupMap(t *testing.T) {
 func TestConsistentLookupMapWriteOnly(t *testing.T) {
 	lookup := createConsistentLookup(t, "consistent_lookup", true)
 
-	got, err := lookup.Map(context.Background(), nil, []sqltypes.Value{sqltypes.NewInt64(1), sqltypes.NewInt64(2)})
+	got, err := lookup.Map(nil, []sqltypes.Value{sqltypes.NewInt64(1), sqltypes.NewInt64(2)})
 	require.NoError(t, err)
 	want := []key.Destination{
 		key.DestinationKeyRange{
@@ -127,7 +123,7 @@ func TestConsistentLookupUniqueMap(t *testing.T) {
 	vc := &loggingVCursor{}
 	vc.AddResult(makeTestResultLookup([]int{0, 1}), nil)
 
-	got, err := lookup.Map(context.Background(), vc, []sqltypes.Value{sqltypes.NewInt64(1), sqltypes.NewInt64(2)})
+	got, err := lookup.Map(vc, []sqltypes.Value{sqltypes.NewInt64(1), sqltypes.NewInt64(2)})
 	require.NoError(t, err)
 	want := []key.Destination{
 		key.DestinationNone{},
@@ -142,7 +138,7 @@ func TestConsistentLookupUniqueMap(t *testing.T) {
 
 	// More than one result is invalid
 	vc.AddResult(makeTestResultLookup([]int{2}), nil)
-	_, err = lookup.Map(context.Background(), vc, []sqltypes.Value{sqltypes.NewInt64(1)})
+	_, err = lookup.Map(vc, []sqltypes.Value{sqltypes.NewInt64(1)})
 	wanterr := "Lookup.Map: unexpected multiple results from vindex t: INT64(1)"
 	if err == nil || err.Error() != wanterr {
 		t.Errorf("lookup(query fail) err: %v, want %s", err, wanterr)
@@ -152,7 +148,7 @@ func TestConsistentLookupUniqueMap(t *testing.T) {
 func TestConsistentLookupUniqueMapWriteOnly(t *testing.T) {
 	lookup := createConsistentLookup(t, "consistent_lookup_unique", true)
 
-	got, err := lookup.Map(context.Background(), nil, []sqltypes.Value{sqltypes.NewInt64(1), sqltypes.NewInt64(2)})
+	got, err := lookup.Map(nil, []sqltypes.Value{sqltypes.NewInt64(1), sqltypes.NewInt64(2)})
 	require.NoError(t, err)
 	want := []key.Destination{
 		key.DestinationKeyRange{
@@ -172,7 +168,7 @@ func TestConsistentLookupMapAbsent(t *testing.T) {
 	vc := &loggingVCursor{}
 	vc.AddResult(makeTestResultLookup([]int{0, 0}), nil)
 
-	got, err := lookup.Map(context.Background(), vc, []sqltypes.Value{sqltypes.NewInt64(1), sqltypes.NewInt64(2)})
+	got, err := lookup.Map(vc, []sqltypes.Value{sqltypes.NewInt64(1), sqltypes.NewInt64(2)})
 	require.NoError(t, err)
 	want := []key.Destination{
 		key.DestinationNone{},
@@ -192,7 +188,7 @@ func TestConsistentLookupVerify(t *testing.T) {
 	vc.AddResult(makeTestResult(1), nil)
 	vc.AddResult(makeTestResult(1), nil)
 
-	_, err := lookup.Verify(context.Background(), vc, []sqltypes.Value{sqltypes.NewInt64(1), sqltypes.NewInt64(2)}, [][]byte{[]byte("test1"), []byte("test2")})
+	_, err := lookup.Verify(vc, []sqltypes.Value{sqltypes.NewInt64(1), sqltypes.NewInt64(2)}, [][]byte{[]byte("test1"), []byte("test2")})
 	require.NoError(t, err)
 	vc.verifyLog(t, []string{
 		"ExecutePre select fromc1 from t where fromc1 = :fromc1 and toc = :toc [{fromc1 1} {toc test1}] false",
@@ -201,7 +197,7 @@ func TestConsistentLookupVerify(t *testing.T) {
 
 	// Test query fail.
 	vc.AddResult(nil, fmt.Errorf("execute failed"))
-	_, err = lookup.Verify(context.Background(), vc, []sqltypes.Value{sqltypes.NewInt64(1)}, [][]byte{[]byte("\x16k@\xb4J\xbaK\xd6")})
+	_, err = lookup.Verify(vc, []sqltypes.Value{sqltypes.NewInt64(1)}, [][]byte{[]byte("\x16k@\xb4J\xbaK\xd6")})
 	want := "lookup.Verify: execute failed"
 	if err == nil || err.Error() != want {
 		t.Errorf("lookup(query fail) err: %v, want %s", err, want)
@@ -209,7 +205,7 @@ func TestConsistentLookupVerify(t *testing.T) {
 
 	// Test write_only.
 	lookup = createConsistentLookup(t, "consistent_lookup", true)
-	got, err := lookup.Verify(context.Background(), nil, []sqltypes.Value{sqltypes.NewInt64(1), sqltypes.NewInt64(2)}, [][]byte{[]byte(""), []byte("")})
+	got, err := lookup.Verify(nil, []sqltypes.Value{sqltypes.NewInt64(1), sqltypes.NewInt64(2)}, [][]byte{[]byte(""), []byte("")})
 	require.NoError(t, err)
 	wantBools := []bool{true, true}
 	if !reflect.DeepEqual(got, wantBools) {
@@ -222,13 +218,16 @@ func TestConsistentLookupCreateSimple(t *testing.T) {
 	vc := &loggingVCursor{}
 	vc.AddResult(&sqltypes.Result{}, nil)
 
-	if err := lookup.(Lookup).Create(context.Background(), vc, [][]sqltypes.Value{{
-		sqltypes.NewInt64(1),
-		sqltypes.NewInt64(2),
-	}, {
-		sqltypes.NewInt64(3),
-		sqltypes.NewInt64(4),
-	}}, [][]byte{[]byte("test1"), []byte("test2")}, false); err != nil {
+	if err := lookup.(Lookup).Create(vc,
+		[][]sqltypes.Value{{
+			sqltypes.NewInt64(1),
+			sqltypes.NewInt64(2),
+		}, {
+			sqltypes.NewInt64(3),
+			sqltypes.NewInt64(4),
+		}},
+		[][]byte{[]byte("test1"), []byte("test2")},
+		false /* ignoreMode */); err != nil {
 		t.Error(err)
 	}
 	vc.verifyLog(t, []string{
@@ -239,14 +238,17 @@ func TestConsistentLookupCreateSimple(t *testing.T) {
 func TestConsistentLookupCreateThenRecreate(t *testing.T) {
 	lookup := createConsistentLookup(t, "consistent_lookup", false)
 	vc := &loggingVCursor{}
-	vc.AddResult(nil, mysql.NewSQLError(mysql.ERDupEntry, mysql.SSConstraintViolation, "Duplicate entry"))
+	vc.AddResult(nil, errors.New("Duplicate entry"))
 	vc.AddResult(&sqltypes.Result{}, nil)
 	vc.AddResult(&sqltypes.Result{}, nil)
 
-	if err := lookup.(Lookup).Create(context.Background(), vc, [][]sqltypes.Value{{
-		sqltypes.NewInt64(1),
-		sqltypes.NewInt64(2),
-	}}, [][]byte{[]byte("test1")}, false); err != nil {
+	if err := lookup.(Lookup).Create(vc,
+		[][]sqltypes.Value{{
+			sqltypes.NewInt64(1),
+			sqltypes.NewInt64(2),
+		}},
+		[][]byte{[]byte("test1")},
+		false /* ignoreMode */); err != nil {
 		t.Error(err)
 	}
 	vc.verifyLog(t, []string{
@@ -259,15 +261,18 @@ func TestConsistentLookupCreateThenRecreate(t *testing.T) {
 func TestConsistentLookupCreateThenUpdate(t *testing.T) {
 	lookup := createConsistentLookup(t, "consistent_lookup", false)
 	vc := &loggingVCursor{}
-	vc.AddResult(nil, vterrors.New(vtrpcpb.Code_ALREADY_EXISTS, "(errno 1062) (sqlstate 23000) Duplicate entry"))
+	vc.AddResult(nil, errors.New("Duplicate entry"))
 	vc.AddResult(makeTestResult(1), nil)
 	vc.AddResult(&sqltypes.Result{}, nil)
 	vc.AddResult(&sqltypes.Result{}, nil)
 
-	if err := lookup.(Lookup).Create(context.Background(), vc, [][]sqltypes.Value{{
-		sqltypes.NewInt64(1),
-		sqltypes.NewInt64(2),
-	}}, [][]byte{[]byte("test1")}, false); err != nil {
+	if err := lookup.(Lookup).Create(vc,
+		[][]sqltypes.Value{{
+			sqltypes.NewInt64(1),
+			sqltypes.NewInt64(2),
+		}},
+		[][]byte{[]byte("test1")},
+		false /* ignoreMode */); err != nil {
 		t.Error(err)
 	}
 	vc.verifyLog(t, []string{
@@ -281,15 +286,18 @@ func TestConsistentLookupCreateThenUpdate(t *testing.T) {
 func TestConsistentLookupCreateThenSkipUpdate(t *testing.T) {
 	lookup := createConsistentLookup(t, "consistent_lookup", false)
 	vc := &loggingVCursor{}
-	vc.AddResult(nil, vterrors.New(vtrpcpb.Code_ALREADY_EXISTS, "(errno 1062) (sqlstate 23000) Duplicate entry"))
+	vc.AddResult(nil, errors.New("Duplicate entry"))
 	vc.AddResult(makeTestResult(1), nil)
 	vc.AddResult(&sqltypes.Result{}, nil)
 	vc.AddResult(&sqltypes.Result{}, nil)
 
-	if err := lookup.(Lookup).Create(context.Background(), vc, [][]sqltypes.Value{{
-		sqltypes.NewInt64(1),
-		sqltypes.NewInt64(2),
-	}}, [][]byte{[]byte("1")}, false); err != nil {
+	if err := lookup.(Lookup).Create(vc,
+		[][]sqltypes.Value{{
+			sqltypes.NewInt64(1),
+			sqltypes.NewInt64(2),
+		}},
+		[][]byte{[]byte("1")},
+		false /* ignoreMode */); err != nil {
 		t.Error(err)
 	}
 	vc.verifyLog(t, []string{
@@ -302,15 +310,18 @@ func TestConsistentLookupCreateThenSkipUpdate(t *testing.T) {
 func TestConsistentLookupCreateThenDupkey(t *testing.T) {
 	lookup := createConsistentLookup(t, "consistent_lookup", false)
 	vc := &loggingVCursor{}
-	vc.AddResult(nil, vterrors.New(vtrpcpb.Code_ALREADY_EXISTS, "(errno 1062) (sqlstate 23000) Duplicate entry, pass mysql error as it is"))
+	vc.AddResult(nil, errors.New("Duplicate entry, pass mysql error as it is"))
 	vc.AddResult(makeTestResult(1), nil)
 	vc.AddResult(makeTestResult(1), nil)
 	vc.AddResult(&sqltypes.Result{}, nil)
 
-	err := lookup.(Lookup).Create(context.Background(), vc, [][]sqltypes.Value{{
-		sqltypes.NewInt64(1),
-		sqltypes.NewInt64(2),
-	}}, [][]byte{[]byte("test1")}, false)
+	err := lookup.(Lookup).Create(vc,
+		[][]sqltypes.Value{{
+			sqltypes.NewInt64(1),
+			sqltypes.NewInt64(2),
+		}},
+		[][]byte{[]byte("test1")},
+		false /* ignoreMode */)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "Duplicate entry, pass mysql error as it is")
 	vc.verifyLog(t, []string{
@@ -325,10 +336,13 @@ func TestConsistentLookupCreateNonDupError(t *testing.T) {
 	vc := &loggingVCursor{}
 	vc.AddResult(nil, errors.New("general error"))
 
-	err := lookup.(Lookup).Create(context.Background(), vc, [][]sqltypes.Value{{
-		sqltypes.NewInt64(1),
-		sqltypes.NewInt64(2),
-	}}, [][]byte{[]byte("test1")}, false)
+	err := lookup.(Lookup).Create(vc,
+		[][]sqltypes.Value{{
+			sqltypes.NewInt64(1),
+			sqltypes.NewInt64(2),
+		}},
+		[][]byte{[]byte("test1")},
+		false /* ignoreMode */)
 	want := "general error"
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Errorf("lookup(query fail) err: %v, must contain %s", err, want)
@@ -341,13 +355,16 @@ func TestConsistentLookupCreateNonDupError(t *testing.T) {
 func TestConsistentLookupCreateThenBadRows(t *testing.T) {
 	lookup := createConsistentLookup(t, "consistent_lookup", false)
 	vc := &loggingVCursor{}
-	vc.AddResult(nil, vterrors.New(vtrpcpb.Code_ALREADY_EXISTS, "(errno 1062) (sqlstate 23000) Duplicate entry"))
+	vc.AddResult(nil, errors.New("Duplicate entry"))
 	vc.AddResult(makeTestResult(2), nil)
 
-	err := lookup.(Lookup).Create(context.Background(), vc, [][]sqltypes.Value{{
-		sqltypes.NewInt64(1),
-		sqltypes.NewInt64(2),
-	}}, [][]byte{[]byte("test1")}, false)
+	err := lookup.(Lookup).Create(vc,
+		[][]sqltypes.Value{{
+			sqltypes.NewInt64(1),
+			sqltypes.NewInt64(2),
+		}},
+		[][]byte{[]byte("test1")},
+		false /* ignoreMode */)
 	want := "unexpected rows"
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Errorf("lookup(query fail) err: %v, must contain %s", err, want)
@@ -363,10 +380,12 @@ func TestConsistentLookupDelete(t *testing.T) {
 	vc := &loggingVCursor{}
 	vc.AddResult(&sqltypes.Result{}, nil)
 
-	if err := lookup.(Lookup).Delete(context.Background(), vc, [][]sqltypes.Value{{
-		sqltypes.NewInt64(1),
-		sqltypes.NewInt64(2),
-	}}, []byte("test")); err != nil {
+	if err := lookup.(Lookup).Delete(vc,
+		[][]sqltypes.Value{{
+			sqltypes.NewInt64(1),
+			sqltypes.NewInt64(2),
+		}},
+		[]byte("test")); err != nil {
 		t.Error(err)
 	}
 	vc.verifyLog(t, []string{
@@ -380,13 +399,16 @@ func TestConsistentLookupUpdate(t *testing.T) {
 	vc.AddResult(&sqltypes.Result{}, nil)
 	vc.AddResult(&sqltypes.Result{}, nil)
 
-	if err := lookup.(Lookup).Update(context.Background(), vc, []sqltypes.Value{
-		sqltypes.NewInt64(1),
-		sqltypes.NewInt64(2),
-	}, []byte("test"), []sqltypes.Value{
-		sqltypes.NewInt64(3),
-		sqltypes.NewInt64(4),
-	}); err != nil {
+	if err := lookup.(Lookup).Update(vc,
+		[]sqltypes.Value{
+			sqltypes.NewInt64(1),
+			sqltypes.NewInt64(2),
+		},
+		[]byte("test"),
+		[]sqltypes.Value{
+			sqltypes.NewInt64(3),
+			sqltypes.NewInt64(4),
+		}); err != nil {
 		t.Error(err)
 	}
 	vc.verifyLog(t, []string{
@@ -401,13 +423,16 @@ func TestConsistentLookupNoUpdate(t *testing.T) {
 	vc.AddResult(&sqltypes.Result{}, nil)
 	vc.AddResult(&sqltypes.Result{}, nil)
 
-	if err := lookup.(Lookup).Update(context.Background(), vc, []sqltypes.Value{
-		sqltypes.NewInt64(1),
-		sqltypes.NewInt64(2),
-	}, []byte("test"), []sqltypes.Value{
-		sqltypes.NewInt64(1),
-		sqltypes.NewInt64(2),
-	}); err != nil {
+	if err := lookup.(Lookup).Update(vc,
+		[]sqltypes.Value{
+			sqltypes.NewInt64(1),
+			sqltypes.NewInt64(2),
+		},
+		[]byte("test"),
+		[]sqltypes.Value{
+			sqltypes.NewInt64(1),
+			sqltypes.NewInt64(2),
+		}); err != nil {
 		t.Error(err)
 	}
 	vc.verifyLog(t, []string{})
@@ -436,7 +461,7 @@ func TestConsistentLookupUpdateBecauseUncomparableTypes(t *testing.T) {
 			literal, err := sqltypes.NewValue(val.typ, []byte(val.val))
 			require.NoError(t, err)
 
-			err = lookup.(Lookup).Update(context.Background(), vc, []sqltypes.Value{literal, literal}, []byte("test"), []sqltypes.Value{literal, literal})
+			err = lookup.(Lookup).Update(vc, []sqltypes.Value{literal, literal}, []byte("test"), []sqltypes.Value{literal, literal})
 			require.NoError(t, err)
 			require.NotEmpty(t, vc.log)
 			vc.log = nil
@@ -459,9 +484,9 @@ func createConsistentLookup(t *testing.T, name string, writeOnly bool) SingleCol
 	if err != nil {
 		t.Fatal(err)
 	}
-	cols := []sqlparser.IdentifierCI{
-		sqlparser.NewIdentifierCI("fc1"),
-		sqlparser.NewIdentifierCI("fc2"),
+	cols := []sqlparser.ColIdent{
+		sqlparser.NewColIdent("fc1"),
+		sqlparser.NewColIdent("fc2"),
 	}
 	if err := l.(WantOwnerInfo).SetOwnerInfo("ks", "dot.t1", cols); err != nil {
 		t.Fatal(err)
@@ -496,7 +521,7 @@ func (vc *loggingVCursor) AddResult(qr *sqltypes.Result, err error) {
 	vc.errors = append(vc.errors, err)
 }
 
-func (vc *loggingVCursor) Execute(ctx context.Context, method string, query string, bindvars map[string]*querypb.BindVariable, rollbackOnError bool, co vtgatepb.CommitOrder) (*sqltypes.Result, error) {
+func (vc *loggingVCursor) Execute(method string, query string, bindvars map[string]*querypb.BindVariable, rollbackOnError bool, co vtgatepb.CommitOrder) (*sqltypes.Result, error) {
 	name := "Unknown"
 	switch co {
 	case vtgatepb.CommitOrder_NORMAL:
@@ -511,7 +536,7 @@ func (vc *loggingVCursor) Execute(ctx context.Context, method string, query stri
 	return vc.execute(name, query, bindvars, rollbackOnError)
 }
 
-func (vc *loggingVCursor) ExecuteKeyspaceID(ctx context.Context, keyspace string, ksid []byte, query string, bindVars map[string]*querypb.BindVariable, rollbackOnError, autocommit bool) (*sqltypes.Result, error) {
+func (vc *loggingVCursor) ExecuteKeyspaceID(keyspace string, ksid []byte, query string, bindVars map[string]*querypb.BindVariable, rollbackOnError, autocommit bool) (*sqltypes.Result, error) {
 	return vc.execute("ExecuteKeyspaceID", query, bindVars, rollbackOnError)
 }
 

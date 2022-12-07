@@ -20,16 +20,14 @@ package main
 import (
 	"bytes"
 	"context"
+	"flag"
 	"os"
-	"time"
 
-	"github.com/spf13/pflag"
-
-	"vitess.io/vitess/go/acl"
 	"vitess.io/vitess/go/vt/binlog"
 	"vitess.io/vitess/go/vt/dbconfigs"
 	"vitess.io/vitess/go/vt/log"
 	"vitess.io/vitess/go/vt/mysqlctl"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 	"vitess.io/vitess/go/vt/servenv"
 	"vitess.io/vitess/go/vt/tableacl"
 	"vitess.io/vitess/go/vt/tableacl/simpleacl"
@@ -37,43 +35,26 @@ import (
 	"vitess.io/vitess/go/vt/topo/topoproto"
 	"vitess.io/vitess/go/vt/vttablet/onlineddl"
 	"vitess.io/vitess/go/vt/vttablet/tabletmanager"
-	"vitess.io/vitess/go/vt/vttablet/tabletmanager/vdiff"
 	"vitess.io/vitess/go/vt/vttablet/tabletmanager/vreplication"
 	"vitess.io/vitess/go/vt/vttablet/tabletserver"
 	"vitess.io/vitess/go/vt/vttablet/tabletserver/tabletenv"
 	"vitess.io/vitess/go/yaml2"
-	"vitess.io/vitess/resources"
 
-	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
+	rice "github.com/GeertJohan/go.rice"
 )
 
 var (
-	enforceTableACLConfig        bool
-	tableACLConfig               string
-	tableACLConfigReloadInterval time.Duration
-	tabletPath                   string
-	tabletConfig                 string
+	enforceTableACLConfig        = flag.Bool("enforce-tableacl-config", false, "if this flag is true, vttablet will fail to start if a valid tableacl config does not exist")
+	tableACLConfig               = flag.String("table-acl-config", "", "path to table access checker config file; send SIGHUP to reload this file")
+	tableACLConfigReloadInterval = flag.Duration("table-acl-config-reload-interval", 0, "Ticker to reload ACLs. Duration flag, format e.g.: 30s. Default: do not reload")
+	tabletPath                   = flag.String("tablet-path", "", "tablet alias")
+	tabletConfig                 = flag.String("tablet_config", "", "YAML file config for tablet")
 
 	tm *tabletmanager.TabletManager
 )
 
-func registerFlags(fs *pflag.FlagSet) {
-	fs.BoolVar(&enforceTableACLConfig, "enforce-tableacl-config", enforceTableACLConfig, "if this flag is true, vttablet will fail to start if a valid tableacl config does not exist")
-	fs.StringVar(&tableACLConfig, "table-acl-config", tableACLConfig, "path to table access checker config file; send SIGHUP to reload this file")
-	fs.DurationVar(&tableACLConfigReloadInterval, "table-acl-config-reload-interval", tableACLConfigReloadInterval, "Ticker to reload ACLs. Duration flag, format e.g.: 30s. Default: do not reload")
-	fs.StringVar(&tabletPath, "tablet-path", tabletPath, "tablet alias")
-	fs.StringVar(&tabletConfig, "tablet_config", tabletConfig, "YAML file config for tablet")
-
-	acl.RegisterFlags(fs)
-}
-
 func init() {
 	servenv.RegisterDefaultFlags()
-	servenv.RegisterFlags()
-	servenv.RegisterGRPCServerFlags()
-	servenv.RegisterGRPCServerAuthFlags()
-	servenv.RegisterServiceMapFlag()
-	servenv.OnParseFor("vttablet", registerFlags)
 }
 
 func main() {
@@ -83,12 +64,12 @@ func main() {
 	servenv.ParseFlags("vttablet")
 	servenv.Init()
 
-	if tabletPath == "" {
-		log.Exit("--tablet-path required")
+	if *tabletPath == "" {
+		log.Exit("-tablet-path required")
 	}
-	tabletAlias, err := topoproto.ParseTabletAlias(tabletPath)
+	tabletAlias, err := topoproto.ParseTabletAlias(*tabletPath)
 	if err != nil {
-		log.Exitf("failed to parse --tablet-path: %v", err)
+		log.Exitf("failed to parse -tablet-path: %v", err)
 	}
 
 	// config and mycnf initializations are intertwined.
@@ -106,12 +87,12 @@ func main() {
 
 	// Initialize and start tm.
 	gRPCPort := int32(0)
-	if servenv.GRPCPort() != 0 {
-		gRPCPort = int32(servenv.GRPCPort())
+	if servenv.GRPCPort != nil {
+		gRPCPort = int32(*servenv.GRPCPort)
 	}
-	tablet, err := tabletmanager.BuildTabletFromInput(tabletAlias, int32(servenv.Port()), gRPCPort, mysqld.GetVersionString(), config.DB)
+	tablet, err := tabletmanager.BuildTabletFromInput(tabletAlias, int32(*servenv.Port), gRPCPort, mysqld.GetVersionString(), config.DB)
 	if err != nil {
-		log.Exitf("failed to parse --tablet-path: %v", err)
+		log.Exitf("failed to parse -tablet-path: %v", err)
 	}
 	tm = &tabletmanager.TabletManager{
 		BatchCtx:            context.Background(),
@@ -122,11 +103,10 @@ func main() {
 		QueryServiceControl: qsc,
 		UpdateStream:        binlog.NewUpdateStream(ts, tablet.Keyspace, tabletAlias.Cell, qsc.SchemaEngine()),
 		VREngine:            vreplication.NewEngine(config, ts, tabletAlias.Cell, mysqld, qsc.LagThrottler()),
-		VDiffEngine:         vdiff.NewEngine(config, ts, tablet),
 		MetadataManager:     &mysqlctl.MetadataManager{},
 	}
 	if err := tm.Start(tablet, config.Healthcheck.IntervalSeconds.Get()); err != nil {
-		log.Exitf("failed to parse --tablet-path or initialize DB credentials: %v", err)
+		log.Exitf("failed to parse -tablet-path or initialize DB credentials: %v", err)
 	}
 	servenv.OnClose(func() {
 		// Close the tm so that our topo entry gets pruned properly and any
@@ -148,17 +128,17 @@ func initConfig(tabletAlias *topodatapb.TabletAlias) (*tabletenv.TabletConfig, *
 		log.Exitf("invalid config: %v", err)
 	}
 
-	if tabletConfig != "" {
-		bytes, err := os.ReadFile(tabletConfig)
+	if *tabletConfig != "" {
+		bytes, err := os.ReadFile(*tabletConfig)
 		if err != nil {
-			log.Exitf("error reading config file %s: %v", tabletConfig, err)
+			log.Exitf("error reading config file %s: %v", *tabletConfig, err)
 		}
 		if err := yaml2.Unmarshal(bytes, config); err != nil {
 			log.Exitf("error parsing config file %s: %v", bytes, err)
 		}
 	}
 	gotBytes, _ := yaml2.Marshal(config)
-	log.Infof("Loaded config file %s successfully:\n%s", tabletConfig, gotBytes)
+	log.Infof("Loaded config file %s successfully:\n%s", *tabletConfig, gotBytes)
 
 	var mycnf *mysqlctl.Mycnf
 	var socketFile string
@@ -187,14 +167,24 @@ func initConfig(tabletAlias *topodatapb.TabletAlias) (*tabletenv.TabletConfig, *
 }
 
 // extractOnlineDDL extracts the gh-ost binary from this executable. gh-ost is appended
-// to vttablet executable by `make build` with a go:embed
+// to vttablet executable by `make build` and via ricebox
 func extractOnlineDDL() error {
 	if binaryFileName, isOverride := onlineddl.GhostBinaryFileName(); !isOverride {
-		if err := os.WriteFile(binaryFileName, resources.GhostBinary, 0755); err != nil {
+		riceBox, err := rice.FindBox("../../../resources/bin")
+		if err != nil {
+			return err
+		}
+
+		// there is no path override for gh-ost. We're expected to auto-extract gh-ost.
+		ghostBinary, err := riceBox.Bytes("gh-ost")
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(binaryFileName, ghostBinary, 0755); err != nil {
 			// One possibility of failure is that gh-ost is up and running. In that case,
 			// let's pause and check if the running gh-ost is exact same binary as the one we wish to extract.
 			foundBytes, _ := os.ReadFile(binaryFileName)
-			if bytes.Equal(resources.GhostBinary, foundBytes) {
+			if bytes.Equal(ghostBinary, foundBytes) {
 				// OK, it's the same binary, there is no need to extract the file anyway
 				return nil
 			}
@@ -206,10 +196,10 @@ func extractOnlineDDL() error {
 }
 
 func createTabletServer(config *tabletenv.TabletConfig, ts *topo.Server, tabletAlias *topodatapb.TabletAlias) *tabletserver.TabletServer {
-	if tableACLConfig != "" {
+	if *tableACLConfig != "" {
 		// To override default simpleacl, other ACL plugins must set themselves to be default ACL factory
 		tableacl.Register("simpleacl", &simpleacl.Factory{})
-	} else if enforceTableACLConfig {
+	} else if *enforceTableACLConfig {
 		log.Exit("table acl config has to be specified with table-acl-config flag because enforce-tableacl-config is set.")
 	}
 	// creates and registers the query service
@@ -219,6 +209,6 @@ func createTabletServer(config *tabletenv.TabletConfig, ts *topo.Server, tabletA
 		addStatusParts(qsc)
 	})
 	servenv.OnClose(qsc.StopService)
-	qsc.InitACL(tableACLConfig, enforceTableACLConfig, tableACLConfigReloadInterval)
+	qsc.InitACL(*tableACLConfig, *enforceTableACLConfig, *tableACLConfigReloadInterval)
 	return qsc
 }

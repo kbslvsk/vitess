@@ -59,7 +59,7 @@ create table customer(cid int, name varbinary(128), meta json default null, typ 
 	defer vc.TearDown(t)
 
 	defaultCell = vc.Cells[defaultCellName]
-	vc.AddKeyspace(t, []*Cell{defaultCell}, sourceKs, "0", initialStressVSchema, initialStressSchema, 0, 0, 100, nil)
+	vc.AddKeyspace(t, []*Cell{defaultCell}, sourceKs, "0", initialStressVSchema, initialStressSchema, 0, 0, 100)
 	vtgate = defaultCell.Vtgates[0]
 	require.NotNil(t, vtgate)
 
@@ -79,11 +79,11 @@ create table customer(cid int, name varbinary(128), meta json default null, typ 
 		}
 	})
 
-	waitForRowCount(t, vtgateConn, "stress_src:0", "largebin", insertCount)
+	validateCount(t, vtgateConn, "stress_src:0", "largebin", insertCount)
 
 	t.Logf("creating new keysepace '%s'", targetKs)
-	vc.AddKeyspace(t, []*Cell{defaultCell}, targetKs, "0", initialStressVSchema, initialStressSchema, 0, 0, 200, nil)
-	waitForRowCount(t, vtgateConn, "stress_tgt:0", "largebin", 0)
+	vc.AddKeyspace(t, []*Cell{defaultCell}, targetKs, "0", initialStressVSchema, initialStressSchema, 0, 0, 200)
+	validateCount(t, vtgateConn, "stress_tgt:0", "largebin", 0)
 
 	t.Logf("moving 'largebin' table...")
 	moveStart := time.Now()
@@ -96,7 +96,7 @@ create table customer(cid int, name varbinary(128), meta json default null, typ 
 		}
 	}
 
-	moveTablesAction(t, "Create", defaultCell.Name, "stress_workflow", sourceKs, targetKs, "largebin")
+	moveTables(t, defaultCell.Name, "stress_workflow", sourceKs, targetKs, "largebin")
 
 	keyspaceTgt := defaultCell.Keyspaces[targetKs]
 	for _, shard := range keyspaceTgt.Shards {
@@ -115,5 +115,5 @@ create table customer(cid int, name varbinary(128), meta json default null, typ 
 	}
 
 	t.Logf("finished catching up after MoveTables (%v)", time.Since(moveStart))
-	waitForRowCount(t, vtgateConn, "stress_tgt:0", "largebin", insertCount)
+	validateCount(t, vtgateConn, "stress_tgt:0", "largebin", insertCount)
 }

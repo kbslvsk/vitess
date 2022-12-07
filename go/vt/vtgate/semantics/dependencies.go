@@ -28,7 +28,7 @@ type (
 	dependencies interface {
 		empty() bool
 		get() (dependency, error)
-		merge(other dependencies, allowMulti bool) dependencies
+		merge(dependencies) (dependencies, error)
 	}
 	dependency struct {
 		direct    TableSet
@@ -38,7 +38,6 @@ type (
 	nothing struct{}
 	certain struct {
 		dependency
-		err error
 	}
 	uncertain struct {
 		dependency
@@ -85,18 +84,20 @@ func (u *uncertain) get() (dependency, error) {
 	return u.dependency, nil
 }
 
-func (u *uncertain) merge(d dependencies, _ bool) dependencies {
+func (u *uncertain) merge(d dependencies) (dependencies, error) {
 	switch d := d.(type) {
+	case *nothing:
+		return u, nil
 	case *uncertain:
-		if d.recursive != u.recursive {
-			u.fail = true
+		if d.recursive == u.recursive {
+			return u, nil
 		}
-		return u
+		u.fail = true
+		return u, nil
 	case *certain:
-		return d
-	default:
-		return u
+		return d, nil
 	}
+	return nil, ambigousErr
 }
 
 func (c *certain) empty() bool {
@@ -104,25 +105,20 @@ func (c *certain) empty() bool {
 }
 
 func (c *certain) get() (dependency, error) {
-	return c.dependency, c.err
+	return c.dependency, nil
 }
 
-func (c *certain) merge(d dependencies, allowMulti bool) dependencies {
+func (c *certain) merge(d dependencies) (dependencies, error) {
 	switch d := d.(type) {
+	case *nothing, *uncertain:
+		return c, nil
 	case *certain:
 		if d.recursive == c.recursive {
-			return c
+			return c, nil
 		}
-		c.direct = c.direct.Merge(d.direct)
-		c.recursive = c.recursive.Merge(d.recursive)
-		if !allowMulti {
-			c.err = ambigousErr
-		}
-
-		return c
 	}
 
-	return c
+	return nil, ambigousErr
 }
 
 func (n *nothing) empty() bool {
@@ -133,6 +129,6 @@ func (n *nothing) get() (dependency, error) {
 	return dependency{}, nil
 }
 
-func (n *nothing) merge(d dependencies, _ bool) dependencies {
-	return d
+func (n *nothing) merge(d dependencies) (dependencies, error) {
+	return d, nil
 }

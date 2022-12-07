@@ -30,11 +30,13 @@ import (
 	"vitess.io/vitess/go/vt/binlog/binlogplayer"
 	"vitess.io/vitess/go/vt/concurrency"
 	"vitess.io/vitess/go/vt/key"
+	"vitess.io/vitess/go/vt/log"
 	"vitess.io/vitess/go/vt/logutil"
 	"vitess.io/vitess/go/vt/schema"
 	"vitess.io/vitess/go/vt/sqlparser"
 	"vitess.io/vitess/go/vt/topo"
 	"vitess.io/vitess/go/vt/vterrors"
+	"vitess.io/vitess/go/vt/vtgate/evalengine"
 	"vitess.io/vitess/go/vt/vtgate/vindexes"
 	"vitess.io/vitess/go/vt/vttablet/tabletmanager/vreplication"
 
@@ -199,10 +201,13 @@ func (sm *StreamMigrator) StopStreams(ctx context.Context) ([]string, error) {
 /* tablet streams */
 
 func (sm *StreamMigrator) readTabletStreams(ctx context.Context, ti *topo.TabletInfo, constraint string) ([]*VReplicationStream, error) {
-	query := fmt.Sprintf("select id, workflow, source, pos, workflow_type, workflow_sub_type from _vt.vreplication where db_name=%s and workflow != %s",
-		encodeString(ti.DbName()), encodeString(sm.ts.ReverseWorkflowName()))
-	if constraint != "" {
-		query += fmt.Sprintf(" and %s", constraint)
+	var query string
+
+	switch constraint {
+	case "":
+		query = fmt.Sprintf("select id, workflow, source, pos from _vt.vreplication where db_name=%s and workflow != %s", encodeString(ti.DbName()), encodeString(sm.ts.ReverseWorkflowName()))
+	default:
+		query = fmt.Sprintf("select id, workflow, source, pos from _vt.vreplication where db_name=%s and workflow != %s and %s", encodeString(ti.DbName()), encodeString(sm.ts.ReverseWorkflowName()), constraint)
 	}
 
 	p3qr, err := sm.ts.TabletManagerClient().VReplicationExec(ctx, ti.Tablet, query)
@@ -213,33 +218,22 @@ func (sm *StreamMigrator) readTabletStreams(ctx context.Context, ti *topo.Tablet
 	qr := sqltypes.Proto3ToResult(p3qr)
 	tabletStreams := make([]*VReplicationStream, 0, len(qr.Rows))
 
-	for _, row := range qr.Named().Rows {
-		id, err := row["id"].ToInt64()
+	for _, row := range qr.Rows {
+		id, err := evalengine.ToInt64(row[0])
 		if err != nil {
 			return nil, err
 		}
 
-		workflowName := row["workflow"].ToString()
+		workflowName := row[1].ToString()
 		switch workflowName {
 		case "":
-			return nil, fmt.Errorf("VReplication streams must have named workflows for migration: shard: %s:%s, stream: %d",
-				ti.Keyspace, ti.Shard, id)
+			return nil, fmt.Errorf("VReplication streams must have named workflows for migration: shard: %s:%s, stream: %d", ti.Keyspace, ti.Shard, id)
 		case sm.ts.WorkflowName():
-			return nil, fmt.Errorf("VReplication stream has the same workflow name as the resharding workflow: shard: %s:%s, stream: %d",
-				ti.Keyspace, ti.Shard, id)
-		}
-
-		workflowType, err := row["workflow_type"].ToInt64()
-		if err != nil {
-			return nil, err
-		}
-		workflowSubType, err := row["workflow_sub_type"].ToInt64()
-		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("VReplication stream has the same workflow name as the resharding workflow: shard: %s:%s, stream: %d", ti.Keyspace, ti.Shard, id)
 		}
 
 		var bls binlogdatapb.BinlogSource
-		rowBytes, err := row["source"].ToBytes()
+		rowBytes, err := row[2].ToBytes()
 		if err != nil {
 			return nil, err
 		}
@@ -257,18 +251,16 @@ func (sm *StreamMigrator) readTabletStreams(ctx context.Context, ti *topo.Tablet
 			continue
 		}
 
-		pos, err := mysql.DecodePosition(row["pos"].ToString())
+		pos, err := mysql.DecodePosition(row[3].ToString())
 		if err != nil {
 			return nil, err
 		}
 
 		tabletStreams = append(tabletStreams, &VReplicationStream{
-			ID:              uint32(id),
-			Workflow:        workflowName,
-			BinlogSource:    &bls,
-			Position:        pos,
-			WorkflowType:    binlogdatapb.VReplicationWorkflowType(workflowType),
-			WorkflowSubType: binlogdatapb.VReplicationWorkflowSubType(workflowSubType),
+			ID:           uint32(id),
+			Workflow:     workflowName,
+			BinlogSource: &bls,
+			Position:     pos,
 		})
 	}
 	return tabletStreams, nil
@@ -315,7 +307,7 @@ func (sm *StreamMigrator) readSourceStreams(ctx context.Context, cancelMigrate b
 			return nil
 		}
 
-		query := fmt.Sprintf("select distinct vrepl_id from _vt.copy_state where vrepl_id in %s", VReplicationStreams(tabletStreams).Values())
+		query := fmt.Sprintf("select vrepl_id from _vt.copy_state where vrepl_id in %s", VReplicationStreams(tabletStreams).Values())
 		p3qr, err := sm.ts.TabletManagerClient().VReplicationExec(ctx, source.GetPrimary().Tablet, query)
 		switch {
 		case err != nil:
@@ -573,8 +565,7 @@ func (sm *StreamMigrator) createTargetStreams(ctx context.Context, tmpl []*VRepl
 				rule.Filter = buf.String()
 			}
 
-			ig.AddRow(vrs.Workflow, vrs.BinlogSource, mysql.EncodePosition(vrs.Position), "", "",
-				int64(vrs.WorkflowType), int64(vrs.WorkflowSubType))
+			ig.AddRow(vrs.Workflow, vrs.BinlogSource, mysql.EncodePosition(vrs.Position), "", "")
 		}
 
 		_, err := sm.ts.VReplicationExec(ctx, target.GetPrimary().GetAlias(), ig.String())
@@ -642,11 +633,13 @@ func (sm *StreamMigrator) templatize(ctx context.Context, tabletStreams []*VRepl
 // This can then be used by go's template package to substitute other keyrange values.
 func (sm *StreamMigrator) templatizeRule(ctx context.Context, rule *binlogdatapb.Rule) (StreamType, error) {
 	vtable, ok := sm.ts.SourceKeyspaceSchema().Tables[rule.Match]
-	if !ok && !schema.IsInternalOperationTableName(rule.Match) {
-		return StreamTypeUnknown, fmt.Errorf("table %v not found in vschema", rule.Match)
+	if !ok {
+		if !schema.IsInternalOperationTableName(rule.Match) {
+			return StreamTypeUnknown, fmt.Errorf("table %v not found in vschema", rule.Match)
+		}
 	}
 
-	if vtable != nil && vtable.Type == vindexes.TypeReference {
+	if vtable.Type == vindexes.TypeReference {
 		return StreamTypeReference, nil
 	}
 
@@ -722,7 +715,7 @@ func (sm *StreamMigrator) templatizeKeyRange(ctx context.Context, rule *binlogda
 	// There was no in_keyrange expression. Create a new one.
 	vtable := sm.ts.SourceKeyspaceSchema().Tables[rule.Match]
 	inkr := &sqlparser.FuncExpr{
-		Name: sqlparser.NewIdentifierCI("in_keyrange"),
+		Name: sqlparser.NewColIdent("in_keyrange"),
 		Exprs: sqlparser.SelectExprs{
 			&sqlparser.AliasedExpr{Expr: &sqlparser.ColName{Name: vtable.ColumnVindexes[0].Columns[0]}},
 			&sqlparser.AliasedExpr{Expr: sqlparser.NewStrLiteral(vtable.ColumnVindexes[0].Type)},
@@ -765,11 +758,15 @@ func (sm *StreamMigrator) blsIsReference(bls *binlogdatapb.BinlogSource) (bool, 
 
 func (sm *StreamMigrator) identifyRuleType(rule *binlogdatapb.Rule) (StreamType, error) {
 	vtable, ok := sm.ts.SourceKeyspaceSchema().Tables[rule.Match]
-	if !ok && !schema.IsInternalOperationTableName(rule.Match) {
-		return 0, fmt.Errorf("table %v not found in vschema", rule.Match)
+	if !ok {
+		if schema.IsInternalOperationTableName(rule.Match) {
+			log.Infof("found internal table %s, ignoring in rule identification", rule.Match)
+		} else {
+			return 0, fmt.Errorf("table %v not found in vschema", rule.Match)
+		}
 	}
 
-	if vtable != nil && vtable.Type == vindexes.TypeReference {
+	if vtable.Type == vindexes.TypeReference {
 		return StreamTypeReference, nil
 	}
 

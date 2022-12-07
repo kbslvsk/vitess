@@ -24,9 +24,5 @@ interface Props {
 }
 
 export const TabContainer: FunctionComponent<Props> = ({ children, className, size = 'medium' }) => {
-    return (
-        <div className={cx(style.tabContainer, style[size], className)} role="tablist">
-            {children}
-        </div>
-    );
+    return <div className={cx(style.tabContainer, style[size], className)}>{children}</div>;
 };

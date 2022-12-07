@@ -36,12 +36,11 @@ import (
 // It's not thread safe, but you can create multiple clients that point to the
 // same server.
 type QueryClient struct {
-	ctx                 context.Context
-	target              *querypb.Target
-	server              *tabletserver.TabletServer
-	transactionID       int64
-	reservedID          int64
-	sessionStateChanges string
+	ctx           context.Context
+	target        *querypb.Target
+	server        *tabletserver.TabletServer
+	transactionID int64
+	reservedID    int64
 }
 
 // NewClient creates a new client for Server.
@@ -90,12 +89,11 @@ func (client *QueryClient) Begin(clientFoundRows bool) error {
 	if clientFoundRows {
 		options = &querypb.ExecuteOptions{ClientFoundRows: clientFoundRows}
 	}
-	state, err := client.server.Begin(client.ctx, client.target, options)
+	transactionID, _, err := client.server.Begin(client.ctx, client.target, options)
 	if err != nil {
 		return err
 	}
-	client.transactionID = state.TransactionID
-	client.sessionStateChanges = state.SessionStateChanges
+	client.transactionID = transactionID
 	return nil
 }
 
@@ -184,7 +182,7 @@ func (client *QueryClient) BeginExecute(query string, bindvars map[string]*query
 	if client.transactionID != 0 {
 		return nil, errors.New("already in transaction")
 	}
-	state, qr, err := client.server.BeginExecute(
+	qr, transactionID, _, err := client.server.BeginExecute(
 		client.ctx,
 		client.target,
 		preQueries,
@@ -193,8 +191,7 @@ func (client *QueryClient) BeginExecute(query string, bindvars map[string]*query
 		client.reservedID,
 		&querypb.ExecuteOptions{IncludedFields: querypb.ExecuteOptions_ALL},
 	)
-	client.transactionID = state.TransactionID
-	client.sessionStateChanges = state.SessionStateChanges
+	client.transactionID = transactionID
 	if err != nil {
 		return nil, err
 	}
@@ -245,7 +242,7 @@ func (client *QueryClient) StreamExecuteWithOptions(query string, bindvars map[s
 // StreamBeginExecuteWithOptions starts a tx and executes a query using 'options', returning the results .
 func (client *QueryClient) StreamBeginExecuteWithOptions(query string, preQueries []string, bindvars map[string]*querypb.BindVariable, options *querypb.ExecuteOptions) (*sqltypes.Result, error) {
 	result := &sqltypes.Result{}
-	state, err := client.server.BeginStreamExecute(
+	txID, _, err := client.server.BeginStreamExecute(
 		client.ctx,
 		client.target,
 		preQueries,
@@ -261,8 +258,7 @@ func (client *QueryClient) StreamBeginExecuteWithOptions(query string, preQuerie
 			return nil
 		},
 	)
-	client.transactionID = state.TransactionID
-	client.sessionStateChanges = state.SessionStateChanges
+	client.transactionID = txID
 	if err != nil {
 		return nil, err
 	}
@@ -296,33 +292,12 @@ func (client *QueryClient) ReserveExecute(query string, preQueries []string, bin
 	if client.reservedID != 0 {
 		return nil, errors.New("already reserved a connection")
 	}
-	state, qr, err := client.server.ReserveExecute(client.ctx, client.target, preQueries, query, bindvars, client.transactionID, &querypb.ExecuteOptions{IncludedFields: querypb.ExecuteOptions_ALL})
-	client.reservedID = state.ReservedID
+	qr, reservedID, _, err := client.server.ReserveExecute(client.ctx, client.target, preQueries, query, bindvars, client.transactionID, &querypb.ExecuteOptions{IncludedFields: querypb.ExecuteOptions_ALL})
+	client.reservedID = reservedID
 	if err != nil {
 		return nil, err
 	}
 	return qr, nil
-}
-
-// ReserveStreamExecute performs a ReserveStreamExecute.
-func (client *QueryClient) ReserveStreamExecute(query string, preQueries []string, bindvars map[string]*querypb.BindVariable) (*sqltypes.Result, error) {
-	if client.reservedID != 0 {
-		return nil, errors.New("already reserved a connection")
-	}
-	result := &sqltypes.Result{}
-	state, err := client.server.ReserveStreamExecute(client.ctx, client.target, preQueries, query, bindvars, client.transactionID, &querypb.ExecuteOptions{IncludedFields: querypb.ExecuteOptions_ALL},
-		func(res *sqltypes.Result) error {
-			if result.Fields == nil {
-				result.Fields = res.Fields
-			}
-			result.Rows = append(result.Rows, res.Rows...)
-			return nil
-		})
-	client.reservedID = state.ReservedID
-	if err != nil {
-		return nil, err
-	}
-	return result, nil
 }
 
 // ReserveBeginExecute performs a ReserveBeginExecute.
@@ -333,40 +308,13 @@ func (client *QueryClient) ReserveBeginExecute(query string, preQueries []string
 	if client.transactionID != 0 {
 		return nil, errors.New("already in transaction")
 	}
-	state, qr, err := client.server.ReserveBeginExecute(client.ctx, client.target, preQueries, postBeginQueries, query, bindvars, &querypb.ExecuteOptions{IncludedFields: querypb.ExecuteOptions_ALL})
-	client.transactionID = state.TransactionID
-	client.reservedID = state.ReservedID
-	client.sessionStateChanges = state.SessionStateChanges
+	qr, transactionID, reservedID, _, err := client.server.ReserveBeginExecute(client.ctx, client.target, preQueries, postBeginQueries, query, bindvars, &querypb.ExecuteOptions{IncludedFields: querypb.ExecuteOptions_ALL})
+	client.transactionID = transactionID
+	client.reservedID = reservedID
 	if err != nil {
 		return nil, err
 	}
 	return qr, nil
-}
-
-// ReserveBeginStreamExecute performs a ReserveBeginStreamExecute.
-func (client *QueryClient) ReserveBeginStreamExecute(query string, preQueries []string, postBeginQueries []string, bindvars map[string]*querypb.BindVariable) (*sqltypes.Result, error) {
-	if client.reservedID != 0 {
-		return nil, errors.New("already reserved a connection")
-	}
-	if client.transactionID != 0 {
-		return nil, errors.New("already in transaction")
-	}
-	result := &sqltypes.Result{}
-	state, err := client.server.ReserveBeginStreamExecute(client.ctx, client.target, preQueries, postBeginQueries, query, bindvars, &querypb.ExecuteOptions{IncludedFields: querypb.ExecuteOptions_ALL},
-		func(res *sqltypes.Result) error {
-			if result.Fields == nil {
-				result.Fields = res.Fields
-			}
-			result.Rows = append(result.Rows, res.Rows...)
-			return nil
-		})
-	client.transactionID = state.TransactionID
-	client.reservedID = state.ReservedID
-	client.sessionStateChanges = state.SessionStateChanges
-	if err != nil {
-		return nil, err
-	}
-	return result, nil
 }
 
 // Release performs a Release.

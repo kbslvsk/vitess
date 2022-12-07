@@ -51,8 +51,8 @@ func SimplifyStatement(
 	}
 
 	// now let's try to simplify * expressions
-	if success := simplifyStarExpr(sqlparser.CloneSelectStatement(in), test); success != nil {
-		return SimplifyStatement(success, currentDB, si, testF)
+	if simplifyStarExpr(sqlparser.CloneSelectStatement(in), test) {
+		return SimplifyStatement(in, currentDB, si, testF)
 	}
 
 	// we try to remove select expressions next
@@ -176,7 +176,7 @@ func getTables(in sqlparser.SelectStatement, currentDB string, si semantics.Sche
 	return semTable.Tables, nil
 }
 
-func simplifyStarExpr(in sqlparser.SelectStatement, test func(sqlparser.SelectStatement) bool) sqlparser.SelectStatement {
+func simplifyStarExpr(in sqlparser.SelectStatement, test func(sqlparser.SelectStatement) bool) bool {
 	simplified := false
 	sqlparser.Rewrite(in, func(cursor *sqlparser.Cursor) bool {
 		se, ok := cursor.Node().(*sqlparser.StarExpr)
@@ -195,10 +195,7 @@ func simplifyStarExpr(in sqlparser.SelectStatement, test func(sqlparser.SelectSt
 
 		return true
 	}, nil)
-	if simplified {
-		return in
-	}
-	return nil
+	return simplified
 }
 
 // removeTable removes the table with the given index from the select statement, which includes the FROM clause
@@ -219,14 +216,14 @@ func removeTable(clone sqlparser.SelectStatement, searchedTS semantics.TableSet,
 			lft, ok := node.LeftExpr.(*sqlparser.AliasedTableExpr)
 			if ok {
 				ts := semTable.TableSetFor(lft)
-				if searchedTS == ts {
+				if searchedTS.Equals(ts) {
 					cursor.Replace(node.RightExpr)
 				}
 			}
 			rgt, ok := node.RightExpr.(*sqlparser.AliasedTableExpr)
 			if ok {
 				ts := semTable.TableSetFor(rgt)
-				if searchedTS == ts {
+				if searchedTS.Equals(ts) {
 					cursor.Replace(node.LeftExpr)
 				}
 			}
@@ -242,7 +239,7 @@ func removeTable(clone sqlparser.SelectStatement, searchedTS semantics.TableSet,
 				lft, ok := tbl.(*sqlparser.AliasedTableExpr)
 				if ok {
 					ts := semTable.TableSetFor(lft)
-					if searchedTS == ts {
+					if searchedTS.Equals(ts) {
 						node.From = append(node.From[:i], node.From[i+1:]...)
 						return true
 					}

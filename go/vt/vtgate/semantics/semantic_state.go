@@ -18,7 +18,6 @@ package semantics
 
 import (
 	"vitess.io/vitess/go/mysql/collations"
-	"vitess.io/vitess/go/sqltypes"
 	"vitess.io/vitess/go/vt/key"
 	querypb "vitess.io/vitess/go/vt/proto/query"
 	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
@@ -74,8 +73,6 @@ type (
 
 		// NotSingleRouteErr stores any errors that have to be generated if the query cannot be planned as a single route.
 		NotSingleRouteErr error
-		// NotUnshardedErr stores any errors that have to be generated if the query is not unsharded.
-		NotUnshardedErr error
 
 		// Recursive contains the dependencies from the expression to the actual tables
 		// in the query (i.e. not including derived tables). If an expression is a column on a derived table,
@@ -88,8 +85,8 @@ type (
 
 		ExprTypes   map[sqlparser.Expr]Type
 		selectScope map[*sqlparser.Select]*scope
-		Comments    *sqlparser.ParsedComments
-		SubqueryMap map[sqlparser.Statement][]*sqlparser.ExtractedSubquery
+		Comments    sqlparser.Comments
+		SubqueryMap map[*sqlparser.Select][]*sqlparser.ExtractedSubquery
 		SubqueryRef map[*sqlparser.Subquery]*sqlparser.ExtractedSubquery
 
 		// ColumnEqualities is used to enable transitive closures
@@ -101,9 +98,6 @@ type (
 		Collation collations.ID
 
 		Warning string
-
-		// ExpandedColumns is a map of all the added columns for a given table.
-		ExpandedColumns map[sqlparser.TableName][]*sqlparser.ColName
 	}
 
 	columnName struct {
@@ -145,7 +139,7 @@ func (st *SemTable) TableSetFor(t *sqlparser.AliasedTableExpr) TableSet {
 			return SingleTableSet(idx)
 		}
 	}
-	return EmptyTableSet()
+	return TableSet{}
 }
 
 // ReplaceTableSetFor replaces the given single TabletSet with the new *sqlparser.AliasedTableExpr
@@ -249,15 +243,6 @@ func (st *SemTable) CollationForExpr(e sqlparser.Expr) collations.ID {
 	return collations.Unknown
 }
 
-// NeedsWeightString returns true if the given expression needs weight_string to do safe comparisons
-func (st *SemTable) NeedsWeightString(e sqlparser.Expr) bool {
-	typ, found := st.ExprTypes[e]
-	if !found {
-		return true
-	}
-	return typ.Collation == collations.Unknown && !sqltypes.IsNumber(typ.Type)
-}
-
 func (st *SemTable) DefaultCollation() collations.ID {
 	return st.Collation
 }
@@ -290,12 +275,12 @@ func (d ExprDependencies) dependencies(expr sqlparser.Expr) (deps TableSet) {
 		if extracted, ok := expr.(*sqlparser.ExtractedSubquery); ok {
 			if extracted.OtherSide != nil {
 				set := d.dependencies(extracted.OtherSide)
-				deps = deps.Merge(set)
+				deps.MergeInPlace(set)
 			}
 			return false, nil
 		}
 		set, found := d[expr]
-		deps = deps.Merge(set)
+		deps.MergeInPlace(set)
 
 		// if we found a cached value, there is no need to continue down to visit children
 		return !found, nil
@@ -304,12 +289,13 @@ func (d ExprDependencies) dependencies(expr sqlparser.Expr) (deps TableSet) {
 	return deps
 }
 
-// RewriteDerivedTableExpression rewrites all the ColName instances in the supplied expression with
+// RewriteDerivedExpression rewrites all the ColName instances in the supplied expression with
 // the expressions behind the column definition of the derived table
 // SELECT foo FROM (SELECT id+42 as foo FROM user) as t
 // We need `foo` to be translated to `id+42` on the inside of the derived table
-func RewriteDerivedTableExpression(expr sqlparser.Expr, vt TableInfo) (sqlparser.Expr, error) {
-	newExpr := sqlparser.Rewrite(sqlparser.CloneExpr(expr), func(cursor *sqlparser.Cursor) bool {
+func RewriteDerivedExpression(expr sqlparser.Expr, vt TableInfo) (sqlparser.Expr, error) {
+	newExpr := sqlparser.CloneExpr(expr)
+	sqlparser.Rewrite(newExpr, func(cursor *sqlparser.Cursor) bool {
 		switch node := cursor.Node().(type) {
 		case *sqlparser.ColName:
 			exp, err := vt.getExprFor(node.Name.String())
@@ -325,8 +311,7 @@ func RewriteDerivedTableExpression(expr sqlparser.Expr, vt TableInfo) (sqlparser
 		}
 		return true
 	}, nil)
-
-	return newExpr.(sqlparser.Expr), nil
+	return newExpr, nil
 }
 
 // FindSubqueryReference goes over the sub queries and searches for it by value equality instead of reference equality
@@ -359,22 +344,20 @@ func (st *SemTable) CopyExprInfo(src, dest sqlparser.Expr) {
 	}
 }
 
-var _ evalengine.TranslationLookup = (*SemTable)(nil)
+var _ evalengine.ConverterLookup = (*SemTable)(nil)
 
 var columnNotSupportedErr = vterrors.Errorf(vtrpcpb.Code_UNIMPLEMENTED, "column access not supported here")
 
-// ColumnLookup implements the TranslationLookup interface
+// ColumnLookup implements the ConverterLookup interface
 func (st *SemTable) ColumnLookup(col *sqlparser.ColName) (int, error) {
 	return 0, columnNotSupportedErr
 }
 
 // SingleUnshardedKeyspace returns the single keyspace if all tables in the query are in the same, unsharded keyspace
-func (st *SemTable) SingleUnshardedKeyspace() (*vindexes.Keyspace, []*vindexes.Table) {
+func (st *SemTable) SingleUnshardedKeyspace() *vindexes.Keyspace {
 	var ks *vindexes.Keyspace
-	var tables []*vindexes.Table
 	for _, table := range st.Tables {
 		vindexTable := table.GetVindexTable()
-
 		if vindexTable == nil || vindexTable.Type != "" {
 			_, isDT := table.getExpr().Expr.(*sqlparser.DerivedTable)
 			if isDT {
@@ -382,47 +365,27 @@ func (st *SemTable) SingleUnshardedKeyspace() (*vindexes.Keyspace, []*vindexes.T
 				// we check the real tables inside the derived table as well for same unsharded keyspace.
 				continue
 			}
-			return nil, nil
+			return nil
 		}
 		name, ok := table.getExpr().Expr.(sqlparser.TableName)
 		if !ok {
-			return nil, nil
+			return nil
 		}
 		if name.Name.String() != vindexTable.Name.String() {
 			// this points to a table alias. safer to not shortcut
-			return nil, nil
+			return nil
 		}
 		this := vindexTable.Keyspace
 		if this == nil || this.Sharded {
-			return nil, nil
+			return nil
 		}
 		if ks == nil {
 			ks = this
 		} else {
 			if ks != this {
-				return nil, nil
+				return nil
 			}
 		}
-		tables = append(tables, vindexTable)
 	}
-	return ks, tables
-}
-
-// EqualsExpr compares two expressions using the semantic analysis information.
-// This means that we use the binding info to recognize that two ColName's can point to the same
-// table column even though they are written differently. Example would be the `foobar` column in the following query:
-// `SELECT foobar FROM tbl ORDER BY tbl.foobar`
-// The expression in the select list is not equal to the one in the ORDER BY,
-// but they point to the same column and would be considered equal by this method
-func (st *SemTable) EqualsExpr(a, b sqlparser.Expr) bool {
-	switch a := a.(type) {
-	case *sqlparser.ColName:
-		colB, ok := b.(*sqlparser.ColName)
-		if !ok {
-			return false
-		}
-		return a.Name.Equal(colB.Name) && st.RecursiveDeps(a) == st.RecursiveDeps(b)
-	default:
-		return sqlparser.EqualsExpr(a, b)
-	}
+	return ks
 }

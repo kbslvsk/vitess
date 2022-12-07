@@ -135,7 +135,7 @@ func TestBindingSingleAliasedTableNegative(t *testing.T) {
 			require.NoError(t, err)
 			_, err = Analyze(parse.(sqlparser.SelectStatement), "", &FakeSI{
 				Tables: map[string]*vindexes.Table{
-					"t": {Name: sqlparser.NewIdentifierCS("t")},
+					"t": {Name: sqlparser.NewTableIdent("t")},
 				},
 			})
 			require.Error(t, err)
@@ -240,8 +240,8 @@ func TestBindingMultiTableNegative(t *testing.T) {
 			require.NoError(t, err)
 			_, err = Analyze(parse.(sqlparser.SelectStatement), "d", &FakeSI{
 				Tables: map[string]*vindexes.Table{
-					"tabl": {Name: sqlparser.NewIdentifierCS("tabl")},
-					"foo":  {Name: sqlparser.NewIdentifierCS("foo")},
+					"tabl": {Name: sqlparser.NewTableIdent("tabl")},
+					"foo":  {Name: sqlparser.NewTableIdent("foo")},
 				},
 			})
 			require.Error(t, err)
@@ -264,8 +264,8 @@ func TestBindingMultiAliasedTableNegative(t *testing.T) {
 			require.NoError(t, err)
 			_, err = Analyze(parse.(sqlparser.SelectStatement), "d", &FakeSI{
 				Tables: map[string]*vindexes.Table{
-					"tabl": {Name: sqlparser.NewIdentifierCS("tabl")},
-					"foo":  {Name: sqlparser.NewIdentifierCS("foo")},
+					"tabl": {Name: sqlparser.NewTableIdent("tabl")},
+					"foo":  {Name: sqlparser.NewTableIdent("foo")},
 				},
 			})
 			require.Error(t, err)
@@ -311,17 +311,17 @@ func TestUnknownColumnMap2(t *testing.T) {
 	int := querypb.Type_INT32
 
 	authoritativeTblA := vindexes.Table{
-		Name: sqlparser.NewIdentifierCS("a"),
+		Name: sqlparser.NewTableIdent("a"),
 		Columns: []vindexes.Column{{
-			Name: sqlparser.NewIdentifierCI("col2"),
+			Name: sqlparser.NewColIdent("col2"),
 			Type: varchar,
 		}},
 		ColumnListAuthoritative: true,
 	}
 	authoritativeTblB := vindexes.Table{
-		Name: sqlparser.NewIdentifierCS("b"),
+		Name: sqlparser.NewTableIdent("b"),
 		Columns: []vindexes.Column{{
-			Name: sqlparser.NewIdentifierCI("col"),
+			Name: sqlparser.NewColIdent("col"),
 			Type: varchar,
 		}},
 		ColumnListAuthoritative: true,
@@ -331,17 +331,17 @@ func TestUnknownColumnMap2(t *testing.T) {
 	nonAuthoritativeTblB := authoritativeTblB
 	nonAuthoritativeTblB.ColumnListAuthoritative = false
 	authoritativeTblAWithConflict := vindexes.Table{
-		Name: sqlparser.NewIdentifierCS("a"),
+		Name: sqlparser.NewTableIdent("a"),
 		Columns: []vindexes.Column{{
-			Name: sqlparser.NewIdentifierCI("col"),
+			Name: sqlparser.NewColIdent("col"),
 			Type: int,
 		}},
 		ColumnListAuthoritative: true,
 	}
 	authoritativeTblBWithInt := vindexes.Table{
-		Name: sqlparser.NewIdentifierCS("b"),
+		Name: sqlparser.NewTableIdent("b"),
 		Columns: []vindexes.Column{{
-			Name: sqlparser.NewIdentifierCI("col"),
+			Name: sqlparser.NewColIdent("col"),
 			Type: int,
 		}},
 		ColumnListAuthoritative: true,
@@ -413,10 +413,10 @@ func TestUnknownColumnMap2(t *testing.T) {
 func TestUnknownPredicate(t *testing.T) {
 	query := "select 1 from a, b where col = 1"
 	authoritativeTblA := &vindexes.Table{
-		Name: sqlparser.NewIdentifierCS("a"),
+		Name: sqlparser.NewTableIdent("a"),
 	}
 	authoritativeTblB := &vindexes.Table{
-		Name: sqlparser.NewIdentifierCS("b"),
+		Name: sqlparser.NewTableIdent("b"),
 	}
 
 	parse, _ := sqlparser.Parse(query)
@@ -461,7 +461,7 @@ func TestScoping(t *testing.T) {
 			require.NoError(t, err)
 			_, err = Analyze(parse.(sqlparser.SelectStatement), "user", &FakeSI{
 				Tables: map[string]*vindexes.Table{
-					"t": {Name: sqlparser.NewIdentifierCS("t")},
+					"t": {Name: sqlparser.NewTableIdent("t")},
 				},
 			})
 			if query.errorMessage == "" {
@@ -813,9 +813,6 @@ func TestHavingBinding(t *testing.T) {
 		"select t.id, count(*) as a from t, t1 group by t.id having a = 1",
 		MergeTableSets(T1, T2),
 	}, {
-		"select t.id, sum(t2.name) as a from t, t2 group by t.id having a = 1",
-		T2,
-	}, {
 		sql:  "select u2.a, u1.a from u1, u2 having u2.a = 2",
 		deps: T2,
 	}}
@@ -1007,7 +1004,7 @@ func TestScopingWDerivedTables(t *testing.T) {
 			require.NoError(t, err)
 			st, err := Analyze(parse.(sqlparser.SelectStatement), "user", &FakeSI{
 				Tables: map[string]*vindexes.Table{
-					"t": {Name: sqlparser.NewIdentifierCS("t")},
+					"t": {Name: sqlparser.NewTableIdent("t")},
 				},
 			})
 			if query.errorMessage != "" {
@@ -1064,7 +1061,7 @@ func TestDerivedTablesOrderClause(t *testing.T) {
 		recursiveExpectation: T1,
 		expectation:          T2,
 	}}
-	si := &FakeSI{Tables: map[string]*vindexes.Table{"t": {Name: sqlparser.NewIdentifierCS("t")}}}
+	si := &FakeSI{Tables: map[string]*vindexes.Table{"t": {Name: sqlparser.NewTableIdent("t")}}}
 	for _, query := range queries {
 		t.Run(query.query, func(t *testing.T) {
 			parse, err := sqlparser.Parse(query.query)
@@ -1105,7 +1102,7 @@ func TestScopingWComplexDerivedTables(t *testing.T) {
 			require.NoError(t, err)
 			st, err := Analyze(parse.(sqlparser.SelectStatement), "user", &FakeSI{
 				Tables: map[string]*vindexes.Table{
-					"t": {Name: sqlparser.NewIdentifierCS("t")},
+					"t": {Name: sqlparser.NewTableIdent("t")},
 				},
 			})
 			if query.errorMessage != "" {
@@ -1147,7 +1144,7 @@ func TestScopingWVindexTables(t *testing.T) {
 			hash, _ := vindexes.NewHash("user_index", nil)
 			st, err := Analyze(parse.(sqlparser.SelectStatement), "user", &FakeSI{
 				Tables: map[string]*vindexes.Table{
-					"t": {Name: sqlparser.NewIdentifierCS("t")},
+					"t": {Name: sqlparser.NewTableIdent("t")},
 				},
 				VindexTables: map[string]vindexes.Vindex{
 					"user_index": hash,
@@ -1355,7 +1352,7 @@ func parseAndAnalyze(t *testing.T, query, dbName string) (sqlparser.Statement, *
 	parse, err := sqlparser.Parse(query)
 	require.NoError(t, err)
 
-	semTable, err := Analyze(parse, dbName, fakeSchemaInfo())
+	semTable, err := Analyze(parse.(sqlparser.SelectStatement), dbName, fakeSchemaInfo())
 	require.NoError(t, err)
 	return parse, semTable
 }
@@ -1364,36 +1361,26 @@ func TestSingleUnshardedKeyspace(t *testing.T) {
 	tests := []struct {
 		query     string
 		unsharded *vindexes.Keyspace
-		tables    []*vindexes.Table
 	}{
 		{
 			query:     "select 1 from t, t1",
 			unsharded: nil, // both tables are unsharded, but from different keyspaces
-			tables:    nil,
 		}, {
 			query:     "select 1 from t2",
 			unsharded: nil,
-			tables:    nil,
 		}, {
 			query:     "select 1 from t, t2",
 			unsharded: nil,
-			tables:    nil,
 		}, {
 			query:     "select 1 from t as A, t as B",
 			unsharded: ks1,
-			tables: []*vindexes.Table{
-				{Keyspace: ks1, Name: sqlparser.NewIdentifierCS("t")},
-				{Keyspace: ks1, Name: sqlparser.NewIdentifierCS("t")},
-			},
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.query, func(t *testing.T) {
 			_, semTable := parseAndAnalyze(t, test.query, "d")
-			queryIsUnsharded, tables := semTable.SingleUnshardedKeyspace()
-			assert.Equal(t, test.unsharded, queryIsUnsharded)
-			assert.Equal(t, test.tables, tables)
+			assert.Equal(t, test.unsharded, semTable.SingleUnshardedKeyspace())
 		})
 	}
 }
@@ -1413,22 +1400,22 @@ var ks3 = &vindexes.Keyspace{
 
 func fakeSchemaInfo() *FakeSI {
 	cols1 := []vindexes.Column{{
-		Name: sqlparser.NewIdentifierCI("id"),
+		Name: sqlparser.NewColIdent("id"),
 		Type: querypb.Type_INT64,
 	}}
 	cols2 := []vindexes.Column{{
-		Name: sqlparser.NewIdentifierCI("uid"),
+		Name: sqlparser.NewColIdent("uid"),
 		Type: querypb.Type_INT64,
 	}, {
-		Name: sqlparser.NewIdentifierCI("name"),
+		Name: sqlparser.NewColIdent("name"),
 		Type: querypb.Type_VARCHAR,
 	}}
 
 	si := &FakeSI{
 		Tables: map[string]*vindexes.Table{
-			"t":  {Name: sqlparser.NewIdentifierCS("t"), Keyspace: ks1},
-			"t1": {Name: sqlparser.NewIdentifierCS("t1"), Columns: cols1, ColumnListAuthoritative: true, Keyspace: ks2},
-			"t2": {Name: sqlparser.NewIdentifierCS("t2"), Columns: cols2, ColumnListAuthoritative: true, Keyspace: ks3},
+			"t":  {Name: sqlparser.NewTableIdent("t"), Keyspace: ks1},
+			"t1": {Name: sqlparser.NewTableIdent("t1"), Columns: cols1, ColumnListAuthoritative: true, Keyspace: ks2},
+			"t2": {Name: sqlparser.NewTableIdent("t2"), Columns: cols2, ColumnListAuthoritative: true, Keyspace: ks3},
 		},
 	}
 	return si

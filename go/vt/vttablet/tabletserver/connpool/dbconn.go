@@ -23,7 +23,6 @@ import (
 	"sync"
 	"time"
 
-	"vitess.io/vitess/go/pools"
 	"vitess.io/vitess/go/vt/dbconfigs"
 	"vitess.io/vitess/go/vt/servenv"
 	"vitess.io/vitess/go/vt/vterrors"
@@ -47,15 +46,12 @@ import (
 // its own queries and the underlying connection.
 // It will also trigger a CheckMySQL whenever applicable.
 type DBConn struct {
-	conn         *dbconnpool.DBConnection
-	info         dbconfigs.Connector
-	pool         *Pool
-	dbaPool      *dbconnpool.ConnectionPool
-	stats        *tabletenv.Stats
-	current      sync2.AtomicString
-	timeCreated  time.Time
-	setting      string
-	resetSetting string
+	conn    *dbconnpool.DBConnection
+	info    dbconfigs.Connector
+	pool    *Pool
+	dbaPool *dbconnpool.ConnectionPool
+	stats   *tabletenv.Stats
+	current sync2.AtomicString
 
 	// err will be set if a query is killed through a Kill.
 	errmu sync.Mutex
@@ -74,37 +70,27 @@ func NewDBConn(ctx context.Context, cp *Pool, appParams dbconfigs.Connector) (*D
 		return nil, err
 	}
 	return &DBConn{
-		conn:        c,
-		info:        appParams,
-		pool:        cp,
-		dbaPool:     cp.dbaPool,
-		timeCreated: time.Now(),
-		stats:       cp.env.Stats(),
+		conn:    c,
+		info:    appParams,
+		pool:    cp,
+		dbaPool: cp.dbaPool,
+		stats:   cp.env.Stats(),
 	}, nil
 }
 
 // NewDBConnNoPool creates a new DBConn without a pool.
-func NewDBConnNoPool(ctx context.Context, params dbconfigs.Connector, dbaPool *dbconnpool.ConnectionPool, setting *pools.Setting) (*DBConn, error) {
+func NewDBConnNoPool(ctx context.Context, params dbconfigs.Connector, dbaPool *dbconnpool.ConnectionPool) (*DBConn, error) {
 	c, err := dbconnpool.NewDBConnection(ctx, params)
 	if err != nil {
 		return nil, err
 	}
-	dbconn := &DBConn{
-		conn:        c,
-		info:        params,
-		dbaPool:     dbaPool,
-		pool:        nil,
-		timeCreated: time.Now(),
-		stats:       tabletenv.NewStats(servenv.NewExporter("Temp", "Tablet")),
-	}
-	if setting == nil {
-		return dbconn, nil
-	}
-	if err = dbconn.ApplySetting(ctx, setting); err != nil {
-		dbconn.Close()
-		return nil, err
-	}
-	return dbconn, nil
+	return &DBConn{
+		conn:    c,
+		info:    params,
+		dbaPool: dbaPool,
+		pool:    nil,
+		stats:   tabletenv.NewStats(servenv.NewExporter("Temp", "Tablet")),
+	}, nil
 }
 
 // Err returns an error if there was a client initiated error
@@ -278,24 +264,6 @@ func (dbc *DBConn) streamOnce(ctx context.Context, query string, callback func(*
 	return err
 }
 
-// StreamOnce executes the query and streams the results. But, does not retry on connection errors.
-func (dbc *DBConn) StreamOnce(ctx context.Context, query string, callback func(*sqltypes.Result) error, alloc func() *sqltypes.Result, streamBufferSize int, includedFields querypb.ExecuteOptions_IncludedFields) error {
-	resultSent := false
-	return dbc.streamOnce(
-		ctx,
-		query,
-		func(r *sqltypes.Result) error {
-			if !resultSent {
-				resultSent = true
-				r = r.StripMetadata(includedFields)
-			}
-			return callback(r)
-		},
-		alloc,
-		streamBufferSize,
-	)
-}
-
 var (
 	getModeSQL    = "select @@global.sql_mode"
 	getAutocommit = "select @@autocommit"
@@ -346,47 +314,9 @@ func (dbc *DBConn) Close() {
 	dbc.conn.Close()
 }
 
-// ApplySetting implements the pools.Resource interface.
-func (dbc *DBConn) ApplySetting(ctx context.Context, setting *pools.Setting) error {
-	query := setting.GetQuery()
-	if _, err := dbc.execOnce(ctx, query, 1, false); err != nil {
-		return err
-	}
-	dbc.setting = query
-	dbc.resetSetting = setting.GetResetQuery()
-	return nil
-}
-
-// IsSettingApplied implements the pools.Resource interface.
-func (dbc *DBConn) IsSettingApplied() bool {
-	return dbc.setting != ""
-}
-
-// IsSameSetting implements the pools.Resource interface.
-func (dbc *DBConn) IsSameSetting(setting string) bool {
-	return strings.EqualFold(setting, dbc.setting)
-}
-
-// ResetSetting implements the pools.Resource interface.
-func (dbc *DBConn) ResetSetting(ctx context.Context) error {
-	if _, err := dbc.execOnce(ctx, dbc.resetSetting, 1, false); err != nil {
-		return err
-	}
-	dbc.setting = ""
-	dbc.resetSetting = ""
-	return nil
-}
-
-var _ pools.Resource = (*DBConn)(nil)
-
 // IsClosed returns true if DBConn is closed.
 func (dbc *DBConn) IsClosed() bool {
 	return dbc.conn.IsClosed()
-}
-
-// Expired returns whether a connection has passed its lifetime
-func (dbc *DBConn) Expired(lifetimeTimeout time.Duration) bool {
-	return lifetimeTimeout > 0 && time.Until(dbc.timeCreated.Add(lifetimeTimeout)) < 0
 }
 
 // Recycle returns the DBConn to the pool.
@@ -450,14 +380,9 @@ func (dbc *DBConn) ID() int64 {
 	return dbc.conn.ID()
 }
 
-// BaseShowTables returns a query that shows tables
+// BaseShowTables returns a query that shows tables and their sizes
 func (dbc *DBConn) BaseShowTables() string {
 	return dbc.conn.BaseShowTables()
-}
-
-// BaseShowTablesWithSizes returns a query that shows tables and their sizes
-func (dbc *DBConn) BaseShowTablesWithSizes() string {
-	return dbc.conn.BaseShowTablesWithSizes()
 }
 
 func (dbc *DBConn) reconnect(ctx context.Context) error {
@@ -467,16 +392,10 @@ func (dbc *DBConn) reconnect(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	dbc.conn = newConn
-	if dbc.IsSettingApplied() {
-		err = dbc.applySameSetting(ctx)
-		if err != nil {
-			return err
-		}
-	}
 	dbc.errmu.Lock()
 	dbc.err = nil
 	dbc.errmu.Unlock()
+	dbc.conn = newConn
 	return nil
 }
 
@@ -530,9 +449,4 @@ func (dbc *DBConn) CurrentForLogging() string {
 		queryToLog, _ = sqlparser.RedactSQLQuery(dbc.Current())
 	}
 	return sqlparser.TruncateForLog(queryToLog)
-}
-
-func (dbc *DBConn) applySameSetting(ctx context.Context) (err error) {
-	_, err = dbc.execOnce(ctx, dbc.setting, 1, false)
-	return
 }

@@ -81,7 +81,7 @@ type Engine struct {
 
 	tableFileSizeGauge      *stats.GaugesWithSingleLabel
 	tableAllocatedSizeGauge *stats.GaugesWithSingleLabel
-	innoDbReadRowsCounter   *stats.Counter
+	innoDbReadRowsGauge     *stats.Gauge
 }
 
 // NewEngine creates a new Engine.
@@ -101,7 +101,7 @@ func NewEngine(env tabletenv.Env) *Engine {
 	_ = env.Exporter().NewGaugeDurationFunc("SchemaReloadTime", "vttablet keeps table schemas in its own memory and periodically refreshes it from MySQL. This config controls the reload time.", se.ticks.Interval)
 	se.tableFileSizeGauge = env.Exporter().NewGaugesWithSingleLabel("TableFileSize", "tracks table file size", "Table")
 	se.tableAllocatedSizeGauge = env.Exporter().NewGaugesWithSingleLabel("TableAllocatedSize", "tracks table allocated size", "Table")
-	se.innoDbReadRowsCounter = env.Exporter().NewCounter("InnodbRowsRead", "number of rows read by mysql")
+	se.innoDbReadRowsGauge = env.Exporter().NewGauge("InnodbRowsRead", "number of rows read by mysql")
 
 	env.Exporter().HandleFunc("/debug/schema", se.handleDebugSchema)
 	env.Exporter().HandleFunc("/schemaz", func(w http.ResponseWriter, r *http.Request) {
@@ -194,7 +194,7 @@ func (se *Engine) Open() error {
 	}
 	se.notifiers = make(map[string]notifier)
 
-	if err := se.reload(ctx, true); err != nil {
+	if err := se.reload(ctx); err != nil {
 		return err
 	}
 	if !se.SkipMetaCheck {
@@ -224,29 +224,12 @@ func (se *Engine) IsOpen() bool {
 // It can be re-opened after Close.
 func (se *Engine) Close() {
 	se.mu.Lock()
+	defer se.mu.Unlock()
 	if !se.isOpen {
-		se.mu.Unlock()
 		return
 	}
 
-	se.closeLocked()
-	log.Info("Schema Engine: closed")
-}
-
-// closeLocked closes the schema engine. It is meant to be called after locking the mutex of the schema engine.
-// It also unlocks the engine when it returns.
-func (se *Engine) closeLocked() {
-	// Close the Timer in a separate go routine because
-	// there might be a tick after we have acquired the lock above
-	// but before closing the timer, in which case Stop function will wait for the
-	// configured function to complete running and that function (ReloadAt) will block
-	// on the lock we have already acquired
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-	go func() {
-		se.ticks.Stop()
-		wg.Done()
-	}()
+	se.ticks.Stop()
 	se.historian.Close()
 	se.conns.Close()
 
@@ -254,11 +237,7 @@ func (se *Engine) closeLocked() {
 	se.lastChange = 0
 	se.notifiers = make(map[string]notifier)
 	se.isOpen = false
-
-	// Unlock the mutex. If there is a tick blocked on this lock,
-	// then it will run and we wait for the Stop function to finish its execution
-	se.mu.Unlock()
-	wg.Wait()
+	log.Info("Schema Engine: closed")
 }
 
 // MakeNonPrimary clears the sequence caches to make sure that
@@ -285,8 +264,6 @@ func (se *Engine) EnableHistorian(enabled bool) error {
 
 // Reload reloads the schema info from the db.
 // Any tables that have changed since the last load are updated.
-// The includeStats argument controls whether table size statistics should be
-// emitted, as they can be expensive to calculate for a large number of tables
 func (se *Engine) Reload(ctx context.Context) error {
 	return se.ReloadAt(ctx, mysql.Position{})
 }
@@ -296,16 +273,6 @@ func (se *Engine) Reload(ctx context.Context) error {
 // It maintains the position at which the schema was reloaded and if the same position is provided
 // (say by multiple vstreams) it returns the cached schema. In case of a newer or empty pos it always reloads the schema
 func (se *Engine) ReloadAt(ctx context.Context, pos mysql.Position) error {
-	return se.ReloadAtEx(ctx, pos, true)
-}
-
-// ReloadAtEx reloads the schema info from the db.
-// Any tables that have changed since the last load are updated.
-// It maintains the position at which the schema was reloaded and if the same position is provided
-// (say by multiple vstreams) it returns the cached schema. In case of a newer or empty pos it always reloads the schema
-// The includeStats argument controls whether table size statistics should be
-// emitted, as they can be expensive to calculate for a large number of tables
-func (se *Engine) ReloadAtEx(ctx context.Context, pos mysql.Position, includeStats bool) error {
 	se.mu.Lock()
 	defer se.mu.Unlock()
 	if !se.isOpen {
@@ -313,10 +280,10 @@ func (se *Engine) ReloadAtEx(ctx context.Context, pos mysql.Position, includeSta
 		return nil
 	}
 	if !pos.IsZero() && se.reloadAtPos.AtLeast(pos) {
-		log.V(2).Infof("ReloadAtEx: found cached schema at %s", mysql.EncodePosition(pos))
+		log.V(2).Infof("ReloadAt: found cached schema at %s", mysql.EncodePosition(pos))
 		return nil
 	}
-	if err := se.reload(ctx, includeStats); err != nil {
+	if err := se.reload(ctx); err != nil {
 		return err
 	}
 	se.reloadAtPos = pos
@@ -324,12 +291,12 @@ func (se *Engine) ReloadAtEx(ctx context.Context, pos mysql.Position, includeSta
 }
 
 // reload reloads the schema. It can also be used to initialize it.
-func (se *Engine) reload(ctx context.Context, includeStats bool) error {
+func (se *Engine) reload(ctx context.Context) error {
 	defer func() {
 		se.env.LogError()
 	}()
 
-	conn, err := se.conns.Get(ctx, nil)
+	conn, err := se.conns.Get(ctx)
 	if err != nil {
 		return err
 	}
@@ -344,14 +311,7 @@ func (se *Engine) reload(ctx context.Context, includeStats bool) error {
 	if se.SkipMetaCheck {
 		return nil
 	}
-
-	var showTablesQuery string
-	if includeStats {
-		showTablesQuery = conn.BaseShowTablesWithSizes()
-	} else {
-		showTablesQuery = conn.BaseShowTables()
-	}
-	tableData, err := conn.Exec(ctx, showTablesQuery, maxTableCount, false)
+	tableData, err := conn.Exec(ctx, conn.BaseShowTables(), maxTableCount, false)
 	if err != nil {
 		return err
 	}
@@ -372,15 +332,12 @@ func (se *Engine) reload(ctx context.Context, includeStats bool) error {
 		tableName := row[0].ToString()
 		curTables[tableName] = true
 		createTime, _ := evalengine.ToInt64(row[2])
-		var fileSize, allocatedSize uint64
+		fileSize, _ := evalengine.ToUint64(row[4])
+		allocatedSize, _ := evalengine.ToUint64(row[5])
 
-		if includeStats {
-			fileSize, _ = evalengine.ToUint64(row[4])
-			allocatedSize, _ = evalengine.ToUint64(row[5])
-			// publish the size metrics
-			se.tableFileSizeGauge.Set(tableName, int64(fileSize))
-			se.tableAllocatedSizeGauge.Set(tableName, int64(allocatedSize))
-		}
+		// publish the size metrics
+		se.tableFileSizeGauge.Set(tableName, int64(fileSize))
+		se.tableAllocatedSizeGauge.Set(tableName, int64(allocatedSize))
 
 		// Table schemas are cached by tabletserver. For each table we cache `information_schema.tables.create_time` (`tbl.CreateTime`).
 		// We also record the last time the schema was loaded (`se.lastChange`). Both are in seconds. We reload a table only when:
@@ -394,23 +351,19 @@ func (se *Engine) reload(ctx context.Context, includeStats bool) error {
 		//      #1 will not identify the renamed table as a changed one.
 		tbl, isInTablesMap := se.tables[tableName]
 		if isInTablesMap && createTime == tbl.CreateTime && createTime < se.lastChange {
-			if includeStats {
-				tbl.FileSize = fileSize
-				tbl.AllocatedSize = allocatedSize
-			}
+			tbl.FileSize = fileSize
+			tbl.AllocatedSize = allocatedSize
 			continue
 		}
 
 		log.V(2).Infof("Reading schema for table: %s", tableName)
-		table, err := LoadTable(conn, se.cp.DBName(), tableName, row[3].ToString())
+		table, err := LoadTable(conn, tableName, row[3].ToString())
 		if err != nil {
 			rec.RecordError(err)
 			continue
 		}
-		if includeStats {
-			table.FileSize = fileSize
-			table.AllocatedSize = allocatedSize
-		}
+		table.FileSize = fileSize
+		table.AllocatedSize = allocatedSize
 		table.CreateTime = createTime
 		changedTables[tableName] = table
 		if isInTablesMap {
@@ -465,7 +418,7 @@ func (se *Engine) updateInnoDBRowsRead(ctx context.Context, conn *connpool.DBCon
 			return err
 		}
 
-		se.innoDbReadRowsCounter.Set(value)
+		se.innoDbReadRowsGauge.Set(value)
 	} else {
 		log.Warningf("got strange results from 'show status': %v", readRowsData.Rows)
 	}
@@ -501,7 +454,7 @@ func (se *Engine) populatePrimaryKeys(ctx context.Context, conn *connpool.DBConn
 			continue
 		}
 		colName := row[1].ToString()
-		index := table.FindColumn(sqlparser.NewIdentifierCI(colName))
+		index := table.FindColumn(sqlparser.NewColIdent(colName))
 		if index < 0 {
 			return vterrors.Errorf(vtrpcpb.Code_INTERNAL, "column %v is listed as primary key, but not present in table %v", colName, tableName)
 		}
@@ -517,7 +470,7 @@ func (se *Engine) RegisterVersionEvent() error {
 }
 
 // GetTableForPos returns a best-effort schema for a specific gtid
-func (se *Engine) GetTableForPos(tableName sqlparser.IdentifierCS, gtid string) (*binlogdatapb.MinimalTable, error) {
+func (se *Engine) GetTableForPos(tableName sqlparser.TableIdent, gtid string) (*binlogdatapb.MinimalTable, error) {
 	mt, err := se.historian.GetTableForPos(tableName, gtid)
 	if err != nil {
 		log.Infof("GetTableForPos returned error: %s", err.Error())
@@ -564,17 +517,13 @@ func (se *Engine) RegisterNotifier(name string, f notifier) {
 // UnregisterNotifier unregisters the notifier function.
 func (se *Engine) UnregisterNotifier(name string) {
 	if !se.isOpen {
-		log.Infof("schema Engine is not open")
 		return
 	}
 
-	log.Infof("schema Engine - acquiring notifierMu lock")
 	se.notifierMu.Lock()
-	log.Infof("schema Engine - acquired notifierMu lock")
 	defer se.notifierMu.Unlock()
 
 	delete(se.notifiers, name)
-	log.Infof("schema Engine - finished UnregisterNotifier")
 }
 
 // broadcast must be called while holding a lock on se.mu.
@@ -595,7 +544,7 @@ func (se *Engine) broadcast(created, altered, dropped []string) {
 }
 
 // GetTable returns the info for a table.
-func (se *Engine) GetTable(tableName sqlparser.IdentifierCS) *Table {
+func (se *Engine) GetTable(tableName sqlparser.TableIdent) *Table {
 	se.mu.Lock()
 	defer se.mu.Unlock()
 	return se.tables[tableName.String()]
@@ -615,7 +564,7 @@ func (se *Engine) GetSchema() map[string]*Table {
 
 // GetConnection returns a connection from the pool
 func (se *Engine) GetConnection(ctx context.Context) (*connpool.DBConn, error) {
-	return se.conns.Get(ctx, nil)
+	return se.conns.Get(ctx)
 }
 
 func (se *Engine) handleDebugSchema(response http.ResponseWriter, request *http.Request) {

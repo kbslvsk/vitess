@@ -17,13 +17,13 @@ limitations under the License.
 package workflow
 
 import (
-	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"sync"
 	"time"
 
-	"github.com/spf13/pflag"
+	"context"
 
 	"vitess.io/vitess/go/vt/log"
 	"vitess.io/vitess/go/vt/logutil"
@@ -208,7 +208,7 @@ type SleepWorkflowFactory struct{}
 // Init is part of the workflow.Factory interface.
 func (f *SleepWorkflowFactory) Init(_ *Manager, w *workflowpb.Workflow, args []string) error {
 	// Parse the flags.
-	subFlags := pflag.NewFlagSet(sleepFactoryName, pflag.ContinueOnError)
+	subFlags := flag.NewFlagSet(sleepFactoryName, flag.ContinueOnError)
 	duration := subFlags.Int("duration", 30, "How long to sleep")
 	if err := subFlags.Parse(args); err != nil {
 		return err

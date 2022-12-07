@@ -53,6 +53,8 @@ func checkSrvKeyspace(t *testing.T, ts *topo.Server) {
 				},
 			},
 		},
+		ShardingColumnName: "video_id",
+		ShardingColumnType: topodatapb.KeyspaceIdType_UINT64,
 		ServedFrom: []*topodatapb.SrvKeyspace_ServedFrom{
 			{
 				TabletType: topodatapb.TabletType_REPLICA,

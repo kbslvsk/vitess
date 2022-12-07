@@ -33,6 +33,7 @@ import (
 	"vitess.io/vitess/go/vt/concurrency"
 	"vitess.io/vitess/go/vt/logutil"
 	"vitess.io/vitess/go/vt/topo"
+	"vitess.io/vitess/go/vt/vtgate/evalengine"
 	"vitess.io/vitess/go/vt/vtgate/vindexes"
 	"vitess.io/vitess/go/vt/vttablet/tmclient"
 
@@ -115,7 +116,6 @@ type ITrafficSwitcher interface {
 	TargetKeyspaceName() string
 	Targets() map[string]*MigrationTarget
 	WorkflowName() string
-	SourceTimeZone() string
 
 	/* Functions that *wrangler.trafficSwitcher implements */
 
@@ -128,12 +128,10 @@ type ITrafficSwitcher interface {
 
 // TargetInfo contains the metadata for a set of targets involved in a workflow.
 type TargetInfo struct {
-	Targets         map[string]*MigrationTarget
-	Frozen          bool
-	OptCells        string
-	OptTabletTypes  string
-	WorkflowType    binlogdatapb.VReplicationWorkflowType
-	WorkflowSubType binlogdatapb.VReplicationWorkflowSubType
+	Targets        map[string]*MigrationTarget
+	Frozen         bool
+	OptCells       string
+	OptTabletTypes string
 }
 
 // MigrationSource contains the metadata for each migration source.
@@ -195,12 +193,10 @@ func BuildTargets(ctx context.Context, ts *topo.Server, tmc tmclient.TabletManag
 	}
 
 	var (
-		frozen          bool
-		optCells        string
-		optTabletTypes  string
-		targets         = make(map[string]*MigrationTarget, len(targetShards))
-		workflowType    binlogdatapb.VReplicationWorkflowType
-		workflowSubType binlogdatapb.VReplicationWorkflowSubType
+		frozen         bool
+		optCells       string
+		optTabletTypes string
+		targets        = make(map[string]*MigrationTarget, len(targetShards))
 	)
 
 	// We check all shards in the target keyspace. Not all of them may have a
@@ -226,7 +222,7 @@ func BuildTargets(ctx context.Context, ts *topo.Server, tmc tmclient.TabletManag
 		// NB: changing the whitespace of this query breaks tests for now.
 		// (TODO:@ajm188) extend FakeDBClient to be less whitespace-sensitive on
 		// expected queries.
-		query := fmt.Sprintf("select id, source, message, cell, tablet_types, workflow_type, workflow_sub_type from _vt.vreplication where workflow=%s and db_name=%s", encodeString(workflow), encodeString(primary.DbName()))
+		query := fmt.Sprintf("select id, source, message, cell, tablet_types from _vt.vreplication where workflow=%s and db_name=%s", encodeString(workflow), encodeString(primary.DbName()))
 		p3qr, err := tmc.VReplicationExec(ctx, primary.Tablet, query)
 		if err != nil {
 			return nil, err
@@ -243,14 +239,14 @@ func BuildTargets(ctx context.Context, ts *topo.Server, tmc tmclient.TabletManag
 		}
 
 		qr := sqltypes.Proto3ToResult(p3qr)
-		for _, row := range qr.Named().Rows {
-			id, err := row["id"].ToInt64()
+		for _, row := range qr.Rows {
+			id, err := evalengine.ToInt64(row[0])
 			if err != nil {
 				return nil, err
 			}
 
 			var bls binlogdatapb.BinlogSource
-			rowBytes, err := row["source"].ToBytes()
+			rowBytes, err := row[1].ToBytes()
 			if err != nil {
 				return nil, err
 			}
@@ -258,17 +254,13 @@ func BuildTargets(ctx context.Context, ts *topo.Server, tmc tmclient.TabletManag
 				return nil, err
 			}
 
-			if row["message"].ToString() == Frozen {
+			if row[2].ToString() == Frozen {
 				frozen = true
 			}
 
 			target.Sources[uint32(id)] = &bls
-			optCells = row["cell"].ToString()
-			optTabletTypes = row["tablet_types"].ToString()
-
-			workflowType = getVReplicationWorkflowType(row)
-			workflowSubType = getVReplicationWorkflowSubType(row)
-
+			optCells = row[3].ToString()
+			optTabletTypes = row[4].ToString()
 		}
 
 		targets[targetShard] = target
@@ -279,23 +271,11 @@ func BuildTargets(ctx context.Context, ts *topo.Server, tmc tmclient.TabletManag
 	}
 
 	return &TargetInfo{
-		Targets:         targets,
-		Frozen:          frozen,
-		OptCells:        optCells,
-		OptTabletTypes:  optTabletTypes,
-		WorkflowType:    workflowType,
-		WorkflowSubType: workflowSubType,
+		Targets:        targets,
+		Frozen:         frozen,
+		OptCells:       optCells,
+		OptTabletTypes: optTabletTypes,
 	}, nil
-}
-
-func getVReplicationWorkflowType(row sqltypes.RowNamedValues) binlogdatapb.VReplicationWorkflowType {
-	i, _ := row["workflow_type"].ToInt64()
-	return binlogdatapb.VReplicationWorkflowType(i)
-}
-
-func getVReplicationWorkflowSubType(row sqltypes.RowNamedValues) binlogdatapb.VReplicationWorkflowSubType {
-	i, _ := row["workflow_sub_type"].ToInt64()
-	return binlogdatapb.VReplicationWorkflowSubType(i)
 }
 
 // CompareShards compares the list of shards in a workflow with the shards in

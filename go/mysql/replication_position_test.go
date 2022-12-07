@@ -20,8 +20,6 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
-
-	"github.com/stretchr/testify/assert"
 )
 
 func TestPositionEqual(t *testing.T) {
@@ -227,8 +225,9 @@ func TestMustParsePositionError(t *testing.T) {
 	defer func() {
 		want := `parse error: unknown GTIDSet flavor "unknown flavor !@$!@"`
 		err := recover()
-		assert.NotNil(t, err, "wrong error, got %#v, want %#v", err, want)
-
+		if err == nil {
+			t.Errorf("wrong error, got %#v, want %#v", err, want)
+		}
 		got, ok := err.(error)
 		if !ok || !strings.HasPrefix(got.Error(), want) {
 			t.Errorf("wrong error, got %#v, want %#v", got, want)
@@ -267,9 +266,12 @@ func TestDecodePosition(t *testing.T) {
 	want := Position{GTIDSet: fakeGTID{value: "123-456:789"}}
 
 	got, err := DecodePosition(input)
-	assert.NoError(t, err, "unexpected error: %v", err)
-	assert.True(t, got.Equal(want), "DecodePosition(%#v) = %#v, want %#v", input, got, want)
-
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if !got.Equal(want) {
+		t.Errorf("DecodePosition(%#v) = %#v, want %#v", input, got, want)
+	}
 }
 
 func TestDecodePositionZero(t *testing.T) {
@@ -277,9 +279,12 @@ func TestDecodePositionZero(t *testing.T) {
 	want := Position{}
 
 	got, err := DecodePosition(input)
-	assert.NoError(t, err, "unexpected error: %v", err)
-	assert.True(t, got.Equal(want), "DecodePosition(%#v) = %#v, want %#v", input, got, want)
-
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if !got.Equal(want) {
+		t.Errorf("DecodePosition(%#v) = %#v, want %#v", input, got, want)
+	}
 }
 
 func TestDecodePositionNoFlavor(t *testing.T) {
@@ -290,9 +295,12 @@ func TestDecodePositionNoFlavor(t *testing.T) {
 	want := Position{GTIDSet: fakeGTID{value: "12345"}}
 
 	got, err := DecodePosition(input)
-	assert.NoError(t, err, "unexpected error: %v", err)
-	assert.True(t, got.Equal(want), "DecodePosition(%#v) = %#v, want %#v", input, got, want)
-
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if !got.Equal(want) {
+		t.Errorf("DecodePosition(%#v) = %#v, want %#v", input, got, want)
+	}
 }
 
 func TestJsonMarshalPosition(t *testing.T) {
@@ -300,7 +308,9 @@ func TestJsonMarshalPosition(t *testing.T) {
 	want := `"golf/par"`
 
 	buf, err := json.Marshal(input)
-	assert.NoError(t, err, "unexpected error: %v", err)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
 
 	if got := string(buf); got != want {
 		t.Errorf("json.Marshal(%#v) = %#v, want %#v", input, got, want)
@@ -312,7 +322,9 @@ func TestJsonMarshalPositionPointer(t *testing.T) {
 	want := `"golf/par"`
 
 	buf, err := json.Marshal(&input)
-	assert.NoError(t, err, "unexpected error: %v", err)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
 
 	if got := string(buf); got != want {
 		t.Errorf("json.Marshal(%#v) = %#v, want %#v", input, got, want)
@@ -328,9 +340,12 @@ func TestJsonUnmarshalPosition(t *testing.T) {
 
 	var got Position
 	err := json.Unmarshal([]byte(input), &got)
-	assert.NoError(t, err, "unexpected error: %v", err)
-	assert.True(t, got.Equal(want), "json.Unmarshal(%#v) = %#v, want %#v", input, got, want)
-
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if !got.Equal(want) {
+		t.Errorf("json.Unmarshal(%#v) = %#v, want %#v", input, got, want)
+	}
 }
 
 func TestJsonMarshalPositionInStruct(t *testing.T) {
@@ -342,7 +357,9 @@ func TestJsonMarshalPositionInStruct(t *testing.T) {
 	}
 
 	buf, err := json.Marshal(&mystruct{input})
-	assert.NoError(t, err, "unexpected error: %v", err)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
 
 	if got := string(buf); got != want {
 		t.Errorf("json.Marshal(%#v) = %#v, want %#v", input, got, want)
@@ -360,8 +377,9 @@ func TestJsonUnmarshalPositionInStruct(t *testing.T) {
 		Position Position
 	}
 	err := json.Unmarshal([]byte(input), &gotStruct)
-	assert.NoError(t, err, "unexpected error: %v", err)
-
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
 	if got := gotStruct.Position; !got.Equal(want) {
 		t.Errorf("json.Unmarshal(%#v) = %#v, want %#v", input, got, want)
 	}
@@ -372,7 +390,9 @@ func TestJsonMarshalPositionZero(t *testing.T) {
 	want := `""`
 
 	buf, err := json.Marshal(input)
-	assert.NoError(t, err, "unexpected error: %v", err)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
 
 	if got := string(buf); got != want {
 		t.Errorf("json.Marshal(%#v) = %#v, want %#v", input, got, want)
@@ -385,7 +405,10 @@ func TestJsonUnmarshalPositionZero(t *testing.T) {
 
 	var got Position
 	err := json.Unmarshal([]byte(input), &got)
-	assert.NoError(t, err, "unexpected error: %v", err)
-	assert.True(t, got.Equal(want), "json.Unmarshal(%#v) = %#v, want %#v", input, got, want)
-
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if !got.Equal(want) {
+		t.Errorf("json.Unmarshal(%#v) = %#v, want %#v", input, got, want)
+	}
 }

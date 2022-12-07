@@ -18,7 +18,6 @@ package evalengine
 
 import (
 	"vitess.io/vitess/go/mysql/collations"
-	"vitess.io/vitess/go/sqltypes"
 	vtrpcpb "vitess.io/vitess/go/vt/proto/vtrpc"
 	"vitess.io/vitess/go/vt/sqlparser"
 	"vitess.io/vitess/go/vt/vterrors"
@@ -38,7 +37,7 @@ var collationNumeric = collations.TypedCollation{
 
 var collationBinary = collations.TypedCollation{
 	Collation:    collations.CollationBinaryID,
-	Coercibility: collations.CoerceCoercible,
+	Coercibility: collations.CoerceExplicit,
 	Repertoire:   collations.RepertoireASCII,
 }
 
@@ -48,11 +47,6 @@ func (c *CollateExpr) eval(env *ExpressionEnv, out *EvalResult) {
 		throwEvalError(vterrors.New(vtrpcpb.Code_INVALID_ARGUMENT, err.Error()))
 	}
 	out.replaceCollation(c.TypedCollation)
-}
-
-func (c *CollateExpr) typeof(env *ExpressionEnv) (sqltypes.Type, flag) {
-	t, f := c.Inner.typeof(env)
-	return t, f | flagExplicitCollation
 }
 
 type LookupDefaultCollation collations.ID
@@ -76,8 +70,8 @@ func mergeCollations(left, right *EvalResult) (collations.ID, error) {
 		return lc.Collation, nil
 	}
 
-	lt := left.isTextual()
-	rt := right.isTextual()
+	lt := left.textual()
+	rt := right.textual()
 	if !lt || !rt {
 		if lt {
 			return lc.Collation, nil
@@ -98,16 +92,10 @@ func mergeCollations(left, right *EvalResult) (collations.ID, error) {
 	}
 
 	if coerceLeft != nil {
-		left.bytes_, err = coerceLeft(nil, left.bytes())
-		if err != nil {
-			throwEvalError(err)
-		}
+		left.bytes_, _ = coerceLeft(nil, left.bytes())
 	}
 	if coerceRight != nil {
-		right.bytes_, err = coerceRight(nil, right.bytes())
-		if err != nil {
-			throwEvalError(err)
-		}
+		right.bytes_, _ = coerceRight(nil, right.bytes())
 	}
 
 	left.replaceCollation(mc)

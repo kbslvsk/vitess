@@ -35,6 +35,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"hash/crc32"
 	"html/template"
@@ -44,15 +45,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/spf13/pflag"
-
-	"vitess.io/vitess/go/netutil"
+	"vitess.io/vitess/go/flagutil"
 	"vitess.io/vitess/go/stats"
 	"vitess.io/vitess/go/vt/log"
 	"vitess.io/vitess/go/vt/proto/query"
 	"vitess.io/vitess/go/vt/proto/topodata"
 	"vitess.io/vitess/go/vt/proto/vtrpc"
-	"vitess.io/vitess/go/vt/servenv"
 	"vitess.io/vitess/go/vt/topo"
 	"vitess.io/vitess/go/vt/topo/topoproto"
 	"vitess.io/vitess/go/vt/vterrors"
@@ -66,30 +64,24 @@ var (
 	healthcheckOnce           sync.Once
 
 	// TabletURLTemplateString is a flag to generate URLs for the tablets that vtgate discovers.
-	TabletURLTemplateString = "http://{{.GetTabletHostPort}}"
+	TabletURLTemplateString = flag.String("tablet_url_template", "http://{{.GetTabletHostPort}}", "format string describing debug tablet url formatting. See the Go code for getTabletDebugURL() how to customize this.")
 	tabletURLTemplate       *template.Template
 
-	// AllowedTabletTypes is the list of allowed tablet types. e.g. {PRIMARY, REPLICA}.
-	AllowedTabletTypes []topodata.TabletType
+	//TODO(deepthi): change these vars back to unexported when discoveryGateway is removed
 
+	// AllowedTabletTypes is the list of allowed tablet types. e.g. {PRIMARY, REPLICA}
+	AllowedTabletTypes []topodata.TabletType
+	// TabletFilters are the keyspace|shard or keyrange filters to apply to the full set of tablets
+	TabletFilters flagutil.StringListValue
 	// KeyspacesToWatch - if provided this specifies which keyspaces should be
 	// visible to the healthcheck. By default the healthcheck will watch all keyspaces.
-	KeyspacesToWatch []string
-
-	// tabletFilters are the keyspace|shard or keyrange filters to apply to the full set of tablets.
-	tabletFilters []string
-
-	// refreshInterval is the interval at which healthcheck refreshes its list of tablets from topo.
-	refreshInterval = 1 * time.Minute
-
-	// refreshKnownTablets tells us whether to process all tablets or only new tablets.
-	refreshKnownTablets = true
-
-	// topoReadConcurrency tells us how many topo reads are allowed in parallel.
-	topoReadConcurrency = 32
-
-	// How much to sleep between each check.
-	waitAvailableTabletInterval = 100 * time.Millisecond
+	KeyspacesToWatch flagutil.StringListValue
+	// RefreshInterval is the interval at which healthcheck refreshes its list of tablets from topo
+	RefreshInterval = flag.Duration("tablet_refresh_interval", 1*time.Minute, "tablet refresh interval")
+	// RefreshKnownTablets tells us whether to process all tablets or only new tablets
+	RefreshKnownTablets = flag.Bool("tablet_refresh_known_tablets", true, "tablet refresh reloads the tablet address/port map from topo in case it changes")
+	// TopoReadConcurrency tells us how many topo reads are allowed in parallel
+	TopoReadConcurrency = flag.Int("topo_read_concurrency", 32, "concurrent topo reads")
 )
 
 // See the documentation for NewHealthCheck below for an explanation of these parameters.
@@ -97,7 +89,7 @@ const (
 	DefaultHealthCheckRetryDelay = 5 * time.Second
 	DefaultHealthCheckTimeout    = 1 * time.Minute
 
-	// DefaultTopoReadConcurrency is used as the default value for the topoReadConcurrency parameter of a TopologyWatcher.
+	// DefaultTopoReadConcurrency is used as the default value for the TopoReadConcurrency parameter of a TopologyWatcher.
 	DefaultTopoReadConcurrency int = 5
 	// DefaultTopologyWatcherRefreshInterval is used as the default value for
 	// the refresh interval of a topology watcher.
@@ -140,33 +132,18 @@ const (
 // ParseTabletURLTemplateFromFlag loads or reloads the URL template.
 func ParseTabletURLTemplateFromFlag() {
 	tabletURLTemplate = template.New("")
-	_, err := tabletURLTemplate.Parse(TabletURLTemplateString)
+	_, err := tabletURLTemplate.Parse(*TabletURLTemplateString)
 	if err != nil {
 		log.Exitf("error parsing template: %v", err)
 	}
 }
 
 func init() {
-	for _, cmd := range []string{"vtgate", "vtcombo"} {
-		servenv.OnParseFor(cmd, registerDiscoveryFlags)
-		servenv.OnParseFor(cmd, registerWebUIFlags)
-	}
-
-	servenv.OnParseFor("vtctld", registerWebUIFlags)
-}
-
-func registerDiscoveryFlags(fs *pflag.FlagSet) {
-	fs.StringSliceVar(&tabletFilters, "tablet_filters", []string{}, "Specifies a comma-separated list of 'keyspace|shard_name or keyrange' values to filter the tablets to watch.")
-	fs.Var((*topoproto.TabletTypeListFlag)(&AllowedTabletTypes), "allowed_tablet_types", "Specifies the tablet types this vtgate is allowed to route queries to. Should be provided as a comma-separated set of tablet types.")
-	fs.StringSliceVar(&KeyspacesToWatch, "keyspaces_to_watch", []string{}, "Specifies which keyspaces this vtgate should have access to while routing queries or accessing the vschema.")
-}
-
-func registerWebUIFlags(fs *pflag.FlagSet) {
-	fs.StringVar(&TabletURLTemplateString, "tablet_url_template", "http://{{.GetTabletHostPort}}", "Format string describing debug tablet url formatting. See getTabletDebugURL() for how to customize this.")
-	fs.DurationVar(&refreshInterval, "tablet_refresh_interval", 1*time.Minute, "Tablet refresh interval.")
-	fs.BoolVar(&refreshKnownTablets, "tablet_refresh_known_tablets", true, "Whether to reload the tablet's address/port map from topo in case they change.")
-	fs.IntVar(&topoReadConcurrency, "topo_read_concurrency", 32, "Concurrency of topo reads.")
+	// Flags are not parsed at this point and the default value of the flag (just the hostname) will be used.
 	ParseTabletURLTemplateFromFlag()
+	flag.Var(&TabletFilters, "tablet_filters", "Specifies a comma-separated list of 'keyspace|shard_name or keyrange' values to filter the tablets to watch")
+	topoproto.TabletTypeListVar(&AllowedTabletTypes, "allowed_tablet_types", "Specifies the tablet types this vtgate is allowed to route queries to")
+	flag.Var(&KeyspacesToWatch, "keyspaces_to_watch", "Specifies which keyspaces this vtgate should have access to while routing queries or accessing the vschema")
 }
 
 // FilteringKeyspaces returns true if any keyspaces have been configured to be filtered.
@@ -174,25 +151,24 @@ func FilteringKeyspaces() bool {
 	return len(KeyspacesToWatch) > 0
 }
 
-type KeyspaceShardTabletType string
-type tabletAliasString string
-
-// HealthCheck declares what the TabletGateway needs from the HealthCheck
-type HealthCheck interface {
+// TabletRecorder is a sub interface of HealthCheck.
+// It is separated out to enable unit testing.
+type TabletRecorder interface {
 	// AddTablet adds the tablet.
 	AddTablet(tablet *topodata.Tablet)
-
 	// RemoveTablet removes the tablet.
 	RemoveTablet(tablet *topodata.Tablet)
-
 	// ReplaceTablet does an AddTablet and RemoveTablet in one call, effectively replacing the old tablet with the new.
 	ReplaceTablet(old, new *topodata.Tablet)
+}
 
+type keyspaceShardTabletType string
+type tabletAliasString string
+
+//HealthCheck declares what the TabletGateway needs from the HealthCheck
+type HealthCheck interface {
 	// CacheStatus returns a displayable version of the health check cache.
 	CacheStatus() TabletsCacheStatusList
-
-	// CacheStatusMap returns a map of the health check cache.
-	CacheStatusMap() map[string]*TabletsCacheStatus
 
 	// Close stops the healthcheck.
 	Close() error
@@ -217,12 +193,6 @@ type HealthCheck interface {
 	// synchronization
 	GetHealthyTabletStats(target *query.Target) []*TabletHealth
 
-	// GetTabletHealth results the TabletHealth of the tablet that matches the given alias
-	GetTabletHealth(kst KeyspaceShardTabletType, alias *topodata.TabletAlias) (*TabletHealth, error)
-
-	// GetTabletHealthByAlias results the TabletHealth of the tablet that matches the given alias
-	GetTabletHealthByAlias(alias *topodata.TabletAlias) (*TabletHealth, error)
-
 	// Subscribe adds a listener. Used by vtgate buffer to learn about primary changes.
 	Subscribe() chan *TabletHealth
 
@@ -231,17 +201,6 @@ type HealthCheck interface {
 }
 
 var _ HealthCheck = (*HealthCheckImpl)(nil)
-
-// Target includes cell which we ignore here
-// because tabletStatsCache is intended to be per-cell
-func KeyFromTarget(target *query.Target) KeyspaceShardTabletType {
-	return KeyspaceShardTabletType(fmt.Sprintf("%s.%s.%s", target.Keyspace, target.Shard, topoproto.TabletTypeLString(target.TabletType)))
-}
-
-// KeyFromTablet returns the KeyspaceShardTabletType that matches the given topodata.Tablet
-func KeyFromTablet(tablet *topodata.Tablet) KeyspaceShardTabletType {
-	return KeyspaceShardTabletType(fmt.Sprintf("%s.%s.%s", tablet.Keyspace, tablet.Shard, topoproto.TabletTypeLString(tablet.Type)))
-}
 
 // HealthCheckImpl performs health checking and stores the results.
 // The goal of this object is to maintain a StreamHealth RPC
@@ -269,9 +228,9 @@ type HealthCheckImpl struct {
 	// a map keyed by keyspace.shard.tabletType
 	// contains a map of TabletHealth keyed by tablet alias for each tablet relevant to the keyspace.shard.tabletType
 	// has to be kept in sync with healthByAlias
-	healthData map[KeyspaceShardTabletType]map[tabletAliasString]*TabletHealth
+	healthData map[keyspaceShardTabletType]map[tabletAliasString]*TabletHealth
 	// another map keyed by keyspace.shard.tabletType, this one containing a sorted list of TabletHealth
-	healthy map[KeyspaceShardTabletType][]*TabletHealth
+	healthy map[keyspaceShardTabletType][]*TabletHealth
 	// connsWG keeps track of all launched Go routines that monitor tablet connections.
 	connsWG sync.WaitGroup
 	// topology watchers that inform healthcheck of tablets being added and deleted
@@ -287,27 +246,18 @@ type HealthCheckImpl struct {
 // NewHealthCheck creates a new HealthCheck object.
 // Parameters:
 // retryDelay.
-//
-//	The duration to wait before retrying to connect (e.g. after a failed connection
-//	attempt).
-//
+//   The duration to wait before retrying to connect (e.g. after a failed connection
+//   attempt).
 // healthCheckTimeout.
-//
-//	The duration for which we consider a health check response to be 'fresh'. If we don't get
-//	a health check response from a tablet for more than this duration, we consider the tablet
-//	not healthy.
-//
+//   The duration for which we consider a health check response to be 'fresh'. If we don't get
+//   a health check response from a tablet for more than this duration, we consider the tablet
+//   not healthy.
 // topoServer.
-//
-//	The topology server that this healthcheck object can use to retrieve cell or tablet information
-//
+//   The topology server that this healthcheck object can use to retrieve cell or tablet information
 // localCell.
-//
-//	The localCell for this healthcheck
-//
+//   The localCell for this healthcheck
 // callback.
-//
-//	A function to call when there is a primary change. Used to notify vtgate's buffer to stop buffering.
+//   A function to call when there is a primary change. Used to notify vtgate's buffer to stop buffering.
 func NewHealthCheck(ctx context.Context, retryDelay, healthCheckTimeout time.Duration, topoServer *topo.Server, localCell, cellsToWatch string) *HealthCheckImpl {
 	log.Infof("loading tablets for cells: %v", cellsToWatch)
 
@@ -317,8 +267,8 @@ func NewHealthCheck(ctx context.Context, retryDelay, healthCheckTimeout time.Dur
 		retryDelay:         retryDelay,
 		healthCheckTimeout: healthCheckTimeout,
 		healthByAlias:      make(map[tabletAliasString]*tabletHealthCheck),
-		healthData:         make(map[KeyspaceShardTabletType]map[tabletAliasString]*TabletHealth),
-		healthy:            make(map[KeyspaceShardTabletType][]*TabletHealth),
+		healthData:         make(map[keyspaceShardTabletType]map[tabletAliasString]*TabletHealth),
+		healthy:            make(map[keyspaceShardTabletType][]*TabletHealth),
 		subscribers:        make(map[chan *TabletHealth]struct{}),
 		cellAliases:        make(map[string]string),
 	}
@@ -328,18 +278,17 @@ func NewHealthCheck(ctx context.Context, retryDelay, healthCheckTimeout time.Dur
 	if cellsToWatch == "" {
 		cells = append(cells, localCell)
 	}
-
 	for _, c := range cells {
 		log.Infof("Setting up healthcheck for cell: %v", c)
 		if c == "" {
 			continue
 		}
-		if len(tabletFilters) > 0 {
+		if len(TabletFilters) > 0 {
 			if len(KeyspacesToWatch) > 0 {
 				log.Exitf("Only one of -keyspaces_to_watch and -tablet_filters may be specified at a time")
 			}
 
-			fbs, err := NewFilterByShard(tabletFilters)
+			fbs, err := NewFilterByShard(TabletFilters)
 			if err != nil {
 				log.Exitf("Cannot parse tablet_filters parameter: %v", err)
 			}
@@ -347,7 +296,7 @@ func NewHealthCheck(ctx context.Context, retryDelay, healthCheckTimeout time.Dur
 		} else if len(KeyspacesToWatch) > 0 {
 			filter = NewFilterByKeyspace(KeyspacesToWatch)
 		}
-		topoWatchers = append(topoWatchers, NewCellTabletsWatcher(ctx, topoServer, hc, filter, c, refreshInterval, refreshKnownTablets, topoReadConcurrency))
+		topoWatchers = append(topoWatchers, NewCellTabletsWatcher(ctx, topoServer, hc, filter, c, *RefreshInterval, *RefreshKnownTablets, *TopoReadConcurrency))
 	}
 
 	hc.topoWatchers = topoWatchers
@@ -393,7 +342,7 @@ func (hc *HealthCheckImpl) AddTablet(tablet *topodata.Tablet) {
 	}
 
 	// add to our datastore
-	key := KeyFromTarget(target)
+	key := hc.keyFromTarget(target)
 	tabletAlias := topoproto.TabletAliasString(tablet.Alias)
 	if _, ok := hc.healthByAlias[tabletAliasString(tabletAlias)]; ok {
 		// We should not add a tablet that we already have
@@ -429,7 +378,7 @@ func (hc *HealthCheckImpl) deleteTablet(tablet *topodata.Tablet) {
 	hc.mu.Lock()
 	defer hc.mu.Unlock()
 
-	key := KeyFromTablet(tablet)
+	key := hc.keyFromTablet(tablet)
 	tabletAlias := tabletAliasString(topoproto.TabletAliasString(tablet.Alias))
 	// delete from authoritative map
 	th, ok := hc.healthByAlias[tabletAlias]
@@ -469,14 +418,14 @@ func (hc *HealthCheckImpl) updateHealth(th *TabletHealth, prevTarget *query.Targ
 		return
 	}
 
-	targetKey := KeyFromTarget(th.Target)
+	targetKey := hc.keyFromTarget(th.Target)
 	targetChanged := prevTarget.TabletType != th.Target.TabletType || prevTarget.Keyspace != th.Target.Keyspace || prevTarget.Shard != th.Target.Shard
 	if targetChanged {
 		// Error counter has to be set here in case we get a new tablet type for the first time in a stream response
 		hcErrorCounters.Add([]string{th.Target.Keyspace, th.Target.Shard, topoproto.TabletTypeLString(th.Target.TabletType)}, 0)
 		// keyspace and shard are not expected to change, but just in case ...
 		// move this tabletHealthCheck to the correct map
-		oldTargetKey := KeyFromTarget(prevTarget)
+		oldTargetKey := hc.keyFromTarget(prevTarget)
 		delete(hc.healthData[oldTargetKey], tabletAlias)
 		_, ok := hc.healthData[targetKey]
 		if !ok {
@@ -528,7 +477,7 @@ func (hc *HealthCheckImpl) updateHealth(th *TabletHealth, prevTarget *query.Targ
 			hc.recomputeHealthy(targetKey)
 		}
 		if targetChanged && prevTarget.TabletType != topodata.TabletType_PRIMARY && hc.isIncluded(th.Target.TabletType, th.Tablet.Alias) { // also recompute old target's healthy list
-			oldTargetKey := KeyFromTarget(prevTarget)
+			oldTargetKey := hc.keyFromTarget(prevTarget)
 			hc.recomputeHealthy(oldTargetKey)
 		}
 	}
@@ -543,7 +492,7 @@ func (hc *HealthCheckImpl) updateHealth(th *TabletHealth, prevTarget *query.Targ
 	hc.broadcast(th)
 }
 
-func (hc *HealthCheckImpl) recomputeHealthy(key KeyspaceShardTabletType) {
+func (hc *HealthCheckImpl) recomputeHealthy(key keyspaceShardTabletType) {
 	all := hc.healthData[key]
 	allArray := make([]*TabletHealth, 0, len(all))
 	for _, s := range all {
@@ -584,7 +533,7 @@ func (hc *HealthCheckImpl) broadcast(th *TabletHealth) {
 
 // CacheStatus returns a displayable version of the cache.
 func (hc *HealthCheckImpl) CacheStatus() TabletsCacheStatusList {
-	tcsMap := hc.CacheStatusMap()
+	tcsMap := hc.cacheStatusMap()
 	tcsl := make(TabletsCacheStatusList, 0, len(tcsMap))
 	for _, tcs := range tcsMap {
 		tcsl = append(tcsl, tcs)
@@ -593,7 +542,7 @@ func (hc *HealthCheckImpl) CacheStatus() TabletsCacheStatusList {
 	return tcsl
 }
 
-func (hc *HealthCheckImpl) CacheStatusMap() map[string]*TabletsCacheStatus {
+func (hc *HealthCheckImpl) cacheStatusMap() map[string]*TabletsCacheStatus {
 	tcsMap := make(map[string]*TabletsCacheStatus)
 	hc.mu.Lock()
 	defer hc.mu.Unlock()
@@ -651,18 +600,21 @@ func (hc *HealthCheckImpl) GetHealthyTabletStats(target *query.Target) []*Tablet
 	var result []*TabletHealth
 	hc.mu.Lock()
 	defer hc.mu.Unlock()
-	return append(result, hc.healthy[KeyFromTarget(target)]...)
+	if target.Shard == "" {
+		target.Shard = "0"
+	}
+	return append(result, hc.healthy[hc.keyFromTarget(target)]...)
 }
 
-// GetTabletStats returns all tablets for the given target.
+// getTabletStats returns all tablets for the given target.
 // The returned array is owned by the caller.
 // For TabletType_PRIMARY, this will only return at most one entry,
 // the most recent tablet of type primary.
-func (hc *HealthCheckImpl) GetTabletStats(target *query.Target) []*TabletHealth {
+func (hc *HealthCheckImpl) getTabletStats(target *query.Target) []*TabletHealth {
 	var result []*TabletHealth
 	hc.mu.Lock()
 	defer hc.mu.Unlock()
-	ths := hc.healthData[KeyFromTarget(target)]
+	ths := hc.healthData[hc.keyFromTarget(target)]
 	for _, th := range ths {
 		result = append(result, th)
 	}
@@ -727,7 +679,7 @@ func (hc *HealthCheckImpl) waitForTablets(ctx context.Context, targets []*query.
 			if requireServing {
 				tabletHealths = hc.GetHealthyTabletStats(target)
 			} else {
-				tabletHealths = hc.GetTabletStats(target)
+				tabletHealths = hc.getTabletStats(target)
 			}
 			if len(tabletHealths) == 0 {
 				allPresent = false
@@ -757,41 +709,26 @@ func (hc *HealthCheckImpl) waitForTablets(ctx context.Context, targets []*query.
 	}
 }
 
-// GetTabletHealthByAlias results the TabletHealth of the tablet that matches the given alias
-func (hc *HealthCheckImpl) GetTabletHealthByAlias(alias *topodata.TabletAlias) (*TabletHealth, error) {
-	hc.mu.Lock()
-	defer hc.mu.Unlock()
-
-	if hd, ok := hc.healthByAlias[tabletAliasString(topoproto.TabletAliasString(alias))]; ok {
-		return hd.SimpleCopy(), nil
-	}
-	return nil, fmt.Errorf("could not find tablet: %s", alias.String())
-}
-
-// GetTabletHealth results the TabletHealth of the tablet that matches the given alias and KeyspaceShardTabletType
-// The data is retrieved from the healthData map.
-func (hc *HealthCheckImpl) GetTabletHealth(kst KeyspaceShardTabletType, alias *topodata.TabletAlias) (*TabletHealth, error) {
-	hc.mu.Lock()
-	defer hc.mu.Unlock()
-
-	if hd, ok := hc.healthData[kst]; ok {
-		if th, ok := hd[tabletAliasString(topoproto.TabletAliasString(alias))]; ok {
-			return th, nil
-		}
-	}
-	return nil, fmt.Errorf("could not find tablet: %s", alias.String())
-}
-
 // TabletConnection returns the Connection to a given tablet.
 func (hc *HealthCheckImpl) TabletConnection(alias *topodata.TabletAlias, target *query.Target) (queryservice.QueryService, error) {
 	hc.mu.Lock()
 	thc := hc.healthByAlias[tabletAliasString(topoproto.TabletAliasString(alias))]
 	hc.mu.Unlock()
 	if thc == nil || thc.Conn == nil {
-		// TODO: test that throws this error
+		//TODO: test that throws this error
 		return nil, vterrors.Errorf(vtrpc.Code_NOT_FOUND, "tablet: %v is either down or nonexistent", alias)
 	}
 	return thc.Connection(), nil
+}
+
+// Target includes cell which we ignore here
+// because tabletStatsCache is intended to be per-cell
+func (hc *HealthCheckImpl) keyFromTarget(target *query.Target) keyspaceShardTabletType {
+	return keyspaceShardTabletType(fmt.Sprintf("%s.%s.%s", target.Keyspace, target.Shard, topoproto.TabletTypeLString(target.TabletType)))
+}
+
+func (hc *HealthCheckImpl) keyFromTablet(tablet *topodata.Tablet) keyspaceShardTabletType {
+	return keyspaceShardTabletType(fmt.Sprintf("%s.%s.%s", tablet.Keyspace, tablet.Shard, topoproto.TabletTypeLString(tablet.Type)))
 }
 
 // getAliasByCell should only be called while holding hc.mu
@@ -875,7 +812,7 @@ func (hc *HealthCheckImpl) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 	status := hc.CacheStatus()
 	b, err := json.MarshalIndent(status, "", " ")
 	if err != nil {
-		// Error logged
+		//Error logged
 		if _, err := w.Write([]byte(err.Error())); err != nil {
 			log.Errorf("write to buffer error failed: %v", err)
 		}
@@ -886,7 +823,7 @@ func (hc *HealthCheckImpl) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 	buf := bytes.NewBuffer(nil)
 	json.HTMLEscape(buf, b)
 
-	// Error logged
+	//Error logged
 	if _, err := w.Write(buf.Bytes()); err != nil {
 		log.Errorf("write to buffer bytes failed: %v", err)
 	}
@@ -927,16 +864,4 @@ func (hc *HealthCheckImpl) stateChecksum() int64 {
 	}
 
 	return int64(crc32.ChecksumIEEE(buf.Bytes()))
-}
-
-// TabletToMapKey creates a key to the map from tablet's host and ports.
-// It should only be used in discovery and related module.
-func TabletToMapKey(tablet *topodata.Tablet) string {
-	parts := make([]string, 0, 1)
-	for name, port := range tablet.PortMap {
-		parts = append(parts, netutil.JoinHostPort(name, port))
-	}
-	sort.Strings(parts)
-	parts = append([]string{tablet.Hostname}, parts...)
-	return strings.Join(parts, ",")
 }

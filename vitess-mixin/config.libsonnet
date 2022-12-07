@@ -5,6 +5,7 @@
     vtctldSelector: 'job="vitess-vtctld"',
     vtgateSelector: 'job="vitess-vtgate"',
     vttabletSelector: 'job="vitess-vttablet"',
+    vtworkerSelector: 'job="vitess-vtworker"',
     vtgateNodeSelector: 'job="node-exporter-vitess-vtgate"',
     mysqlSelector: 'job="mysql"',
     defaultTimeFrom: 'now-30m',

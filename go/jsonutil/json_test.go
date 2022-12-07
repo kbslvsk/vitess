@@ -23,7 +23,7 @@ import (
 func TestMarshalNoEscape(t *testing.T) {
 	cases := []struct {
 		name     string
-		v        any
+		v        interface{}
 		expected string
 	}{
 		{
@@ -63,7 +63,7 @@ func TestMarshalNoEscape(t *testing.T) {
 func TestMarshalIndentNoEscape(t *testing.T) {
 	cases := []struct {
 		name     string
-		v        any
+		v        interface{}
 		prefix   string
 		ident    string
 		expected string

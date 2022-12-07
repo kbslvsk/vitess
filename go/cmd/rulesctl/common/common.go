@@ -18,7 +18,7 @@ func GetRules(path string) *rules.Rules {
 	return rules
 }
 
-func MustPrintJSON(obj any) {
+func MustPrintJSON(obj interface{}) {
 	enc, err := json.MarshalIndent(obj, "", "  ")
 	if err != nil {
 		log.Fatalf("Unable to marshal object: %v", err)
@@ -26,7 +26,7 @@ func MustPrintJSON(obj any) {
 	fmt.Printf("%v\n", string(enc))
 }
 
-func MustWriteJSON(obj any, path string) {
+func MustWriteJSON(obj interface{}, path string) {
 	enc, err := json.MarshalIndent(obj, "", "  ")
 	if err != nil {
 		log.Fatalf("Unable to marshal object: %v", err)

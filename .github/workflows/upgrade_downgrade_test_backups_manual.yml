@@ -8,16 +8,34 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  get_upgrade_downgrade_label:
+    timeout-minutes: 5
+    if: github.repository == 'vitessio/vitess'
+    name: Get the Upgrade Downgrade pull request label
+    runs-on: ubuntu-latest
+    outputs:
+      hasLabel: ${{ steps.check_label.outputs.hasLabel }}
+
+    steps:
+      - name: Check Label for PR
+        if: github.event_name == 'pull_request'
+        uses: Dreamcodeio/pr-has-label-action@master
+        id: check_label
+        with:
+          label: Skip Upgrade Downgrade
+
   get_previous_release:
-    if: always()
-    name: Get a recent LTS release
+    if: always() && (github.event_name != 'pull_request' || needs.get_upgrade_downgrade_label.outputs.hasLabel != 'true')
+    name: Get latest release
     runs-on: ubuntu-20.04
+    needs:
+      - get_upgrade_downgrade_label
     outputs:
       previous_release: ${{ steps.output-previous-release-ref.outputs.previous_release_ref }}
 
     steps:
       - name: Check out to HEAD
-        uses: actions/checkout@v3
+        uses: actions/checkout@v2
         with:
           fetch-depth: 0
 
@@ -26,25 +44,19 @@ jobs:
         run: |
           previous_release_ref=$(./tools/get_previous_release.sh ${{github.base_ref}} ${{github.ref}})
           echo $previous_release_ref
-          echo "previous_release_ref=${previous_release_ref}" >> $GITHUB_OUTPUT
+          echo "::set-output name=previous_release_ref::${previous_release_ref}"
 
   # This job usually execute in ± 20 minutes
   upgrade_downgrade_test_manual:
     timeout-minutes: 40
     if: always() && (needs.get_previous_release.result == 'success')
-    name: Run Upgrade Downgrade Test
+    name: Run Upgrade Downgrade Test Backup Manual
     runs-on: ubuntu-20.04
     needs:
+      - get_upgrade_downgrade_label
       - get_previous_release
 
     steps:
-    - name: Skip CI
-      run: |
-        if [[ "${{contains( github.event.pull_request.labels.*.name, 'Skip CI')}}" == "true" ]]; then
-          echo "skipping CI due to the 'Skip CI' label"
-          exit 1
-        fi
-
     - name: Check if workflow needs to be skipped
       id: skip-workflow
       run: |
@@ -53,12 +65,12 @@ jobs:
           skip='true'
         fi
         echo Skip ${skip}
-        echo "skip-workflow=${skip}" >> $GITHUB_OUTPUT
+        echo "::set-output name=skip-workflow::${skip}"
 
     # Checkout to this build's commit
     - name: Checkout to commit's code
       if: steps.skip-workflow.outputs.skip-workflow == 'false'
-      uses: actions/checkout@v3
+      uses: actions/checkout@v2
 
     - name: Check for changes in relevant files
       if: steps.skip-workflow.outputs.skip-workflow == 'false'
@@ -73,28 +85,26 @@ jobs:
             - 'test.go'
             - 'Makefile'
             - 'build.env'
-            - 'go.sum'
-            - 'go.mod'
+            - 'go.[sumod]'
             - 'proto/*.proto'
             - 'tools/**'
             - 'config/**'
             - 'bootstrap.sh'
-            - '.github/workflows/upgrade_downgrade_test_backups_manual.yml'
 
     - name: Set up Go
       if: steps.skip-workflow.outputs.skip-workflow == 'false' && steps.changes.outputs.end_to_end == 'true'
-      uses: actions/setup-go@v3
+      uses: actions/setup-go@v2
       with:
-        go-version: 1.19.3
+        go-version: 1.18.5
 
     - name: Set up python
       if: steps.skip-workflow.outputs.skip-workflow == 'false' && steps.changes.outputs.end_to_end == 'true'
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v2
 
     - name: Tune the OS
       if: steps.skip-workflow.outputs.skip-workflow == 'false' && steps.changes.outputs.end_to_end == 'true'
       run: |
-        sudo sysctl -w net.ipv4.ip_local_port_range="22768 65535"
+        echo '1024 65535' | sudo tee -a /proc/sys/net/ipv4/ip_local_port_range
 
     # TEMPORARY WHILE GITHUB FIXES THIS https://github.com/actions/virtual-environments/issues/3185
     - name: Add the current IP address, long hostname and short hostname record to /etc/hosts file
@@ -118,16 +128,9 @@ jobs:
 
         # Install MySQL 8.0
         ####
-        ## Temporarily pin the MySQL version at 8.0.29 as Vitess 14.0.1 does not have the fix to support
-        ## backups of 8.0.30+. See: https://github.com/vitessio/vitess/pull/10847
-        ## TODO: remove this pin once the above fixes are included in a v14 release (will be in v14.0.2) OR
-        ##       Vitess 16.0.0-SNAPSHOT becomes the dev version on vitessio/main
-        #sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 467B942D3A79BD29
-        #wget -c https://dev.mysql.com/get/mysql-apt-config_0.8.20-1_all.deb
-        #echo mysql-apt-config mysql-apt-config/select-server select mysql-8.0 | sudo debconf-set-selections
-        #sudo DEBIAN_FRONTEND="noninteractive" dpkg -i mysql-apt-config*
-        #sudo apt-get update
-        #sudo DEBIAN_FRONTEND="noninteractive" apt-get install -y mysql-server mysql-client
+        ## Pin the MySQL version at 8.0.29 as Vitess 12.0 does not have the fix to support
+        ## backups of 8.0.30+ and no backport to v12.0 is currently planned.
+        ##   See: https://github.com/vitessio/vitess/pull/10847
         ####
         wget -c https://cdn.mysql.com/archives/mysql-8.0/mysql-common_8.0.28-1ubuntu20.04_amd64.deb \
                 https://cdn.mysql.com/archives/mysql-8.0/mysql-community-client-core_8.0.28-1ubuntu20.04_amd64.deb \
@@ -147,7 +150,7 @@ jobs:
         sudo apparmor_parser -R /etc/apparmor.d/usr.sbin.mysqld || echo "could not remove mysqld profile"
 
         # install JUnit report formatter
-        go install github.com/vitessio/go-junit-report@HEAD
+        go get -u github.com/vitessio/go-junit-report@HEAD
 
         wget https://repo.percona.com/apt/percona-release_latest.$(lsb_release -sc)_all.deb
         sudo apt-get install -y gnupg2
@@ -158,7 +161,7 @@ jobs:
     # Checkout to the last release of Vitess
     - name: Checkout to the other version's code (${{ needs.get_previous_release.outputs.previous_release }})
       if: steps.skip-workflow.outputs.skip-workflow == 'false' && steps.changes.outputs.end_to_end == 'true'
-      uses: actions/checkout@v3
+      uses: actions/checkout@v2
       with:
         ref: ${{ needs.get_previous_release.outputs.previous_release }}
 
@@ -180,7 +183,7 @@ jobs:
     # Checkout to this build's commit
     - name: Checkout to commit's code
       if: steps.skip-workflow.outputs.skip-workflow == 'false' && steps.changes.outputs.end_to_end == 'true'
-      uses: actions/checkout@v3
+      uses: actions/checkout@v2
 
     - name: Get dependencies for this commit
       if: steps.skip-workflow.outputs.skip-workflow == 'false' && steps.changes.outputs.end_to_end == 'true'

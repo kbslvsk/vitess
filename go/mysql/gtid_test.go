@@ -19,8 +19,6 @@ package mysql
 import (
 	"strings"
 	"testing"
-
-	"github.com/stretchr/testify/assert"
 )
 
 func TestParseGTID(t *testing.T) {
@@ -32,9 +30,12 @@ func TestParseGTID(t *testing.T) {
 	want := fakeGTID{value: "12345"}
 
 	got, err := ParseGTID(flavor, input)
-	assert.NoError(t, err, "unexpected error: %v", err)
-	assert.Equal(t, want, got, "ParseGTID(%#v, %#v) = %#v, want %#v", flavor, input, got, want)
-
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if got != want {
+		t.Errorf("ParseGTID(%#v, %#v) = %#v, want %#v", flavor, input, got, want)
+	}
 }
 
 func TestMustParseGTID(t *testing.T) {
@@ -46,16 +47,18 @@ func TestMustParseGTID(t *testing.T) {
 	want := fakeGTID{value: "12345"}
 
 	got := MustParseGTID(flavor, input)
-	assert.Equal(t, want, got, "MustParseGTID(%#v, %#v) = %#v, want %#v", flavor, input, got, want)
-
+	if got != want {
+		t.Errorf("MustParseGTID(%#v, %#v) = %#v, want %#v", flavor, input, got, want)
+	}
 }
 
 func TestMustParseGTIDError(t *testing.T) {
 	defer func() {
 		want := `parse error: unknown GTID flavor "unknown flavor !@$!@"`
 		err := recover()
-		assert.NotNil(t, err, "wrong error, got %#v, want %#v", err, want)
-
+		if err == nil {
+			t.Errorf("wrong error, got %#v, want %#v", err, want)
+		}
 		got, ok := err.(error)
 		if !ok || !strings.HasPrefix(got.Error(), want) {
 			t.Errorf("wrong error, got %#v, want %#v", got, want)
@@ -69,8 +72,9 @@ func TestParseUnknownFlavor(t *testing.T) {
 	want := `parse error: unknown GTID flavor "foobar8675309"`
 
 	_, err := ParseGTID("foobar8675309", "foo")
-	assert.True(t, strings.HasPrefix(err.Error(), want), "wrong error, got '%v', want '%v'", err, want)
-
+	if !strings.HasPrefix(err.Error(), want) {
+		t.Errorf("wrong error, got '%v', want '%v'", err, want)
+	}
 }
 
 func TestEncodeGTID(t *testing.T) {
@@ -93,9 +97,12 @@ func TestDecodeGTID(t *testing.T) {
 	want := fakeGTID{value: "123-456:789"}
 
 	got, err := DecodeGTID(input)
-	assert.NoError(t, err, "unexpected error: %v", err)
-	assert.Equal(t, want, got, "DecodeGTID(%#v) = %#v, want %#v", input, got, want)
-
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if got != want {
+		t.Errorf("DecodeGTID(%#v) = %#v, want %#v", input, got, want)
+	}
 }
 
 func TestMustDecodeGTID(t *testing.T) {
@@ -106,16 +113,18 @@ func TestMustDecodeGTID(t *testing.T) {
 	want := fakeGTID{value: "123-456:789"}
 
 	got := MustDecodeGTID(input)
-	assert.Equal(t, want, got, "DecodeGTID(%#v) = %#v, want %#v", input, got, want)
-
+	if got != want {
+		t.Errorf("DecodeGTID(%#v) = %#v, want %#v", input, got, want)
+	}
 }
 
 func TestMustDecodeGTIDError(t *testing.T) {
 	defer func() {
 		want := `parse error: unknown GTID flavor "unknown flavor !@$!@"`
 		err := recover()
-		assert.NotNil(t, err, "wrong error, got %#v, want %#v", err, want)
-
+		if err == nil {
+			t.Errorf("wrong error, got %#v, want %#v", err, want)
+		}
 		got, ok := err.(error)
 		if !ok || !strings.HasPrefix(got.Error(), want) {
 			t.Errorf("wrong error, got %#v, want %#v", got, want)
@@ -139,9 +148,12 @@ func TestDecodeNilGTID(t *testing.T) {
 	want := GTID(nil)
 
 	got, err := DecodeGTID(input)
-	assert.NoError(t, err, "unexpected error: %v", err)
-	assert.Equal(t, want, got, "DecodeGTID(%#v) = %#v, want %#v", input, got, want)
-
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if got != want {
+		t.Errorf("DecodeGTID(%#v) = %#v, want %#v", input, got, want)
+	}
 }
 
 func TestDecodeNoFlavor(t *testing.T) {
@@ -152,9 +164,12 @@ func TestDecodeNoFlavor(t *testing.T) {
 	want := fakeGTID{value: "12345"}
 
 	got, err := DecodeGTID(input)
-	assert.NoError(t, err, "unexpected error: %v", err)
-	assert.Equal(t, want, got, "DecodeGTID(%#v) = %#v, want %#v", input, got, want)
-
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if got != want {
+		t.Errorf("DecodeGTID(%#v) = %#v, want %#v", input, got, want)
+	}
 }
 
 func TestDecodeGTIDWithSeparator(t *testing.T) {
@@ -165,22 +180,25 @@ func TestDecodeGTIDWithSeparator(t *testing.T) {
 	want := fakeGTID{value: "GTID containing / a slash"}
 
 	got, err := DecodeGTID(input)
-	assert.NoError(t, err, "unexpected error: %v", err)
-	assert.Equal(t, want, got, "DecodeGTID(%#v) = %#v, want %#v", input, got, want)
-
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if got != want {
+		t.Errorf("DecodeGTID(%#v) = %#v, want %#v", input, got, want)
+	}
 }
 
 type fakeGTID struct {
 	flavor, value string
 }
 
-func (f fakeGTID) String() string    { return f.value }
-func (f fakeGTID) Last() string      { panic("not implemented") }
-func (f fakeGTID) Flavor() string    { return f.flavor }
-func (fakeGTID) SourceServer() any   { return int(1) }
-func (fakeGTID) SequenceNumber() any { return int(1) }
-func (fakeGTID) SequenceDomain() any { return int(1) }
-func (f fakeGTID) GTIDSet() GTIDSet  { return nil }
+func (f fakeGTID) String() string            { return f.value }
+func (f fakeGTID) Last() string              { panic("not implemented") }
+func (f fakeGTID) Flavor() string            { return f.flavor }
+func (fakeGTID) SourceServer() interface{}   { return int(1) }
+func (fakeGTID) SequenceNumber() interface{} { return int(1) }
+func (fakeGTID) SequenceDomain() interface{} { return int(1) }
+func (f fakeGTID) GTIDSet() GTIDSet          { return nil }
 
 func (fakeGTID) ContainsGTID(GTID) bool  { return false }
 func (fakeGTID) Contains(GTIDSet) bool   { return false }

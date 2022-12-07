@@ -17,39 +17,31 @@ limitations under the License.
 package controller
 
 import (
-	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"sort"
 	"strconv"
 	"sync"
 	"time"
 
-	"github.com/spf13/pflag"
+	"golang.org/x/net/context"
 
 	"vitess.io/vitess/go/mysql"
 	"vitess.io/vitess/go/stats"
 	"vitess.io/vitess/go/vt/concurrency"
-	"vitess.io/vitess/go/vt/servenv"
+	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 	"vitess.io/vitess/go/vt/topo"
 	"vitess.io/vitess/go/vt/vterrors"
 	"vitess.io/vitess/go/vt/vtgr/db"
-
-	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 )
 
 var (
 	repairTimingsMs    = stats.NewMultiTimings("repairTimingsMs", "time vtgr takes to repair", []string{"status", "success"})
 	unexpectedLockLost = stats.NewCountersWithMultiLabels("unexpectedLockLost", "unexpected lost of the lock", []string{"Keyspace", "Shard"})
 
-	abortRebootstrap bool
+	abortRebootstrap = flag.Bool("abort_rebootstrap", false, "don't allow vtgr to rebootstrap an existing group")
 )
-
-func init() {
-	servenv.OnParseFor("vtgr", func(fs *pflag.FlagSet) {
-		fs.BoolVar(&abortRebootstrap, "abort_rebootstrap", false, "Don't allow vtgr to rebootstrap an existing group.")
-	})
-}
 
 // RepairResultCode is the code for repair
 type RepairResultCode string
@@ -296,7 +288,7 @@ func (shard *GRShard) stopAndRebootstrap(ctx context.Context) error {
 	if !shard.sqlGroup.IsSafeToRebootstrap() {
 		return errors.New("unsafe to bootstrap group")
 	}
-	if abortRebootstrap {
+	if *abortRebootstrap {
 		shard.logger.Warningf("Abort stopAndRebootstrap because rebootstrap hook override")
 		return errForceAbortBootstrap
 	}

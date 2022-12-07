@@ -73,7 +73,3 @@ func (e *Charset_8bit) EncodeRune(dst []byte, r rune) int {
 	}
 	return -1
 }
-
-func (Charset_8bit) Length(src []byte) int {
-	return len(src)
-}

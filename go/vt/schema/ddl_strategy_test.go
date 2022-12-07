@@ -44,11 +44,8 @@ func TestParseDDLStrategy(t *testing.T) {
 		options              string
 		isDeclarative        bool
 		isSingleton          bool
-		isPostponeLaunch     bool
 		isPostponeCompletion bool
 		isAllowConcurrent    bool
-		fastOverRevertible   bool
-		fastRangeRotation    bool
 		runtimeOptions       string
 		err                  error
 	}{
@@ -104,13 +101,6 @@ func TestParseDDLStrategy(t *testing.T) {
 			isSingleton:      true,
 		},
 		{
-			strategyVariable: "online -postpone-launch",
-			strategy:         DDLStrategyOnline,
-			options:          "-postpone-launch",
-			runtimeOptions:   "",
-			isPostponeLaunch: true,
-		},
-		{
 			strategyVariable:     "online -postpone-completion",
 			strategy:             DDLStrategyOnline,
 			options:              "-postpone-completion",
@@ -131,20 +121,6 @@ func TestParseDDLStrategy(t *testing.T) {
 			runtimeOptions:    "",
 			isAllowConcurrent: true,
 		},
-		{
-			strategyVariable:   "vitess --prefer-instant-ddl",
-			strategy:           DDLStrategyVitess,
-			options:            "--prefer-instant-ddl",
-			runtimeOptions:     "",
-			fastOverRevertible: true,
-		},
-		{
-			strategyVariable:  "vitess --fast-range-rotation",
-			strategy:          DDLStrategyVitess,
-			options:           "--fast-range-rotation",
-			runtimeOptions:    "",
-			fastRangeRotation: true,
-		},
 	}
 	for _, ts := range tt {
 		setting, err := ParseDDLStrategy(ts.strategyVariable)
@@ -154,10 +130,7 @@ func TestParseDDLStrategy(t *testing.T) {
 		assert.Equal(t, ts.isDeclarative, setting.IsDeclarative())
 		assert.Equal(t, ts.isSingleton, setting.IsSingleton())
 		assert.Equal(t, ts.isPostponeCompletion, setting.IsPostponeCompletion())
-		assert.Equal(t, ts.isPostponeLaunch, setting.IsPostponeLaunch())
 		assert.Equal(t, ts.isAllowConcurrent, setting.IsAllowConcurrent())
-		assert.Equal(t, ts.fastOverRevertible, setting.IsPreferInstantDDL())
-		assert.Equal(t, ts.fastRangeRotation, setting.IsFastRangeRotationFlag())
 
 		runtimeOptions := strings.Join(setting.RuntimeOptions(), " ")
 		assert.Equal(t, ts.runtimeOptions, runtimeOptions)

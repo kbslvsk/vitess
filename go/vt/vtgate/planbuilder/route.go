@@ -17,8 +17,6 @@ limitations under the License.
 package planbuilder
 
 import (
-	"strconv"
-
 	"vitess.io/vitess/go/mysql/collations"
 	vtrpcpb "vitess.io/vitess/go/vt/proto/vtrpc"
 	"vitess.io/vitess/go/vt/vterrors"
@@ -254,7 +252,7 @@ func (rb *route) procureValues(plan logicalPlan, jt *jointab, val sqlparser.Expr
 		joinVar := jt.Procure(plan, typedVal, rb.Order())
 		return evalengine.NewBindVar(joinVar, collations.TypedCollation{}), nil
 	default:
-		return evalengine.Translate(typedVal, semantics.EmptySemTable())
+		return evalengine.Convert(typedVal, semantics.EmptySemTable())
 	}
 }
 
@@ -329,7 +327,7 @@ func (rb *route) SupplyWeightString(colNumber int, alsoAddToGroupBy bool) (weigh
 		return 0, vterrors.Errorf(vtrpcpb.Code_INTERNAL, "unexpected AST struct for query %T", s.SelectExprs[colNumber])
 	}
 	weightStringExpr := &sqlparser.FuncExpr{
-		Name: sqlparser.NewIdentifierCI("weight_string"),
+		Name: sqlparser.NewColIdent("weight_string"),
 		Exprs: []sqlparser.SelectExpr{
 			&sqlparser.AliasedExpr{
 				Expr: aliasExpr.Expr,
@@ -344,7 +342,7 @@ func (rb *route) SupplyWeightString(colNumber int, alsoAddToGroupBy bool) (weigh
 		if !isSelect {
 			return 0, vterrors.Errorf(vtrpcpb.Code_INTERNAL, "cannot add weight string in %T", rb.Select)
 		}
-		sel.AddGroupBy(weightStringExpr)
+		sel.GroupBy = append(sel.GroupBy, weightStringExpr)
 	}
 
 	if weightcolNumber, ok := rb.weightStrings[rc]; ok {
@@ -696,10 +694,6 @@ func (rb *route) computeISPlan(pb *primitiveBuilder, comparison *sqlparser.IsExp
 	if vindex == nil {
 		return engine.Scatter, nil, nil
 	}
-	if _, isLookup := vindex.(vindexes.Lookup); isLookup {
-		// the lookup table is keyed by the lookup value, so it does not support nulls
-		return engine.Scatter, nil, nil
-	}
 	if vindex.IsUnique() {
 		return engine.EqualUnique, vindex, &sqlparser.NullVal{}
 	}
@@ -850,9 +844,18 @@ func (rb *route) exprIsValue(expr sqlparser.Expr) bool {
 }
 
 // queryTimeout returns DirectiveQueryTimeout value if set, otherwise returns 0.
-func queryTimeout(d *sqlparser.CommentDirectives) int {
-	val, _ := d.GetString(sqlparser.DirectiveQueryTimeout, "0")
-	if intVal, err := strconv.Atoi(val); err == nil {
+func queryTimeout(d sqlparser.CommentDirectives) int {
+	if d == nil {
+		return 0
+	}
+
+	val, ok := d[sqlparser.DirectiveQueryTimeout]
+	if !ok {
+		return 0
+	}
+
+	intVal, ok := val.(int)
+	if ok {
 		return intVal
 	}
 	return 0

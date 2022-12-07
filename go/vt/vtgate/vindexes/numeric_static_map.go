@@ -18,7 +18,6 @@ package vindexes
 
 import (
 	"bytes"
-	"context"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -89,7 +88,7 @@ func (vind *NumericStaticMap) NeedsVCursor() bool {
 }
 
 // Verify returns true if ids and ksids match.
-func (vind *NumericStaticMap) Verify(ctx context.Context, vcursor VCursor, ids []sqltypes.Value, ksids [][]byte) ([]bool, error) {
+func (vind *NumericStaticMap) Verify(_ VCursor, ids []sqltypes.Value, ksids [][]byte) ([]bool, error) {
 	out := make([]bool, 0, len(ids))
 	for i, id := range ids {
 		ksid, err := vind.Hash(id)
@@ -102,7 +101,7 @@ func (vind *NumericStaticMap) Verify(ctx context.Context, vcursor VCursor, ids [
 }
 
 // Map can map ids to key.Destination objects.
-func (vind *NumericStaticMap) Map(ctx context.Context, vcursor VCursor, ids []sqltypes.Value) ([]key.Destination, error) {
+func (vind *NumericStaticMap) Map(cursor VCursor, ids []sqltypes.Value) ([]key.Destination, error) {
 	out := make([]key.Destination, 0, len(ids))
 	for _, id := range ids {
 		ksid, err := vind.Hash(id)

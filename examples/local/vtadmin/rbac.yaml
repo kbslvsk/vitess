@@ -1,5 +1,10 @@
 rules:
   - resource: "*"
-    actions: ["*"]
+    actions:
+    - "get"
+    - "create"
+    - "delete"
+    - "put"
+    - "ping"
     subjects: ["*"]
     clusters: ["*"]

@@ -28,6 +28,7 @@ import (
 
 	"vitess.io/vitess/go/vt/topo"
 	"vitess.io/vitess/go/vt/topo/topoproto"
+	"vitess.io/vitess/go/vt/vtctl"
 )
 
 // backendExplorer is a class that uses the Backend interface of a
@@ -88,7 +89,7 @@ func (ex *backendExplorer) HandlePath(nodePath string, r *http.Request) *Result 
 	case nil:
 		if len(data) > 0 {
 			// It has contents, we just use it if possible.
-			decoded, err := topo.DecodeContent(relativePath, data, false)
+			decoded, err := vtctl.DecodeContent(relativePath, data, false)
 			if err != nil {
 				result.Error = err.Error()
 			} else {
@@ -167,7 +168,7 @@ func handleExplorerRedirect(ctx context.Context, ts *topo.Server, r *http.Reques
 func initExplorer(ts *topo.Server) {
 	// Main backend explorer functions.
 	be := newBackendExplorer(ts)
-	handleCollection("topodata", func(r *http.Request) (any, error) {
+	handleCollection("topodata", func(r *http.Request) (interface{}, error) {
 		return be.HandlePath(path.Clean("/"+getItemPath(r.URL.Path)), r), nil
 	})
 

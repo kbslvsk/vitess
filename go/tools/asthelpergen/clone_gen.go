@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"go/types"
 	"log"
-	"strings"
 
 	"github.com/dave/jennifer/jen"
 )
@@ -63,7 +62,7 @@ func (c *cloneGen) readValueOfType(t types.Type, expr jen.Code, spi generatorSPI
 	case *types.Basic:
 		return expr
 	case *types.Interface:
-		if types.TypeString(t, noQualifier) == "any" {
+		if types.TypeString(t, noQualifier) == "interface{}" {
 			// these fields have to be taken care of manually
 			return expr
 		}
@@ -232,7 +231,7 @@ func (c *cloneGen) ptrToStructMethod(t types.Type, strct *types.Struct, spi gene
 	var fields []jen.Code
 	for i := 0; i < strct.NumFields(); i++ {
 		field := strct.Field(i)
-		if isBasic(field.Type()) || strings.HasPrefix(field.Name(), "_") {
+		if isBasic(field.Type()) || field.Name() == "_" {
 			continue
 		}
 		// out.Field = CloneType(n.Field)

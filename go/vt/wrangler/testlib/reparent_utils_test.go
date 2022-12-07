@@ -20,10 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"vitess.io/vitess/go/vt/vtctl/reparentutil/reparenttestutil"
-
 	"vitess.io/vitess/go/vt/discovery"
-	"vitess.io/vitess/go/vt/vtctl/reparentutil"
 
 	"context"
 
@@ -89,18 +86,11 @@ func TestShardReplicationStatuses(t *testing.T) {
 	}
 	replica.FakeMysqlDaemon.CurrentSourceHost = primary.Tablet.MysqlHostname
 	replica.FakeMysqlDaemon.CurrentSourcePort = int(primary.Tablet.MysqlPort)
-	replica.FakeMysqlDaemon.SetReplicationSourceInputs = append(replica.FakeMysqlDaemon.SetReplicationSourceInputs, topoproto.MysqlAddr(primary.Tablet))
-	replica.FakeMysqlDaemon.ExpectedExecuteSuperQueryList = []string{
-		// These 3 statements come from tablet startup
-		"RESET SLAVE ALL",
-		"FAKE SET MASTER",
-		"START SLAVE",
-	}
 	replica.StartActionLoop(t, wr)
 	defer replica.StopActionLoop(t)
 
 	// run ShardReplicationStatuses
-	ti, rs, err := reparentutil.ShardReplicationStatuses(ctx, wr.TopoServer(), wr.TabletManagerClient(), "test_keyspace", "0")
+	ti, rs, err := wr.ShardReplicationStatuses(ctx, "test_keyspace", "0")
 	if err != nil {
 		t.Fatalf("ShardReplicationStatuses failed: %v", err)
 	}
@@ -138,7 +128,6 @@ func TestReparentTablet(t *testing.T) {
 	}
 	primary := NewFakeTablet(t, wr, "cell1", 1, topodatapb.TabletType_PRIMARY, nil)
 	replica := NewFakeTablet(t, wr, "cell1", 2, topodatapb.TabletType_REPLICA, nil)
-	reparenttestutil.SetKeyspaceDurability(context.Background(), t, ts, "test_keyspace", "semi_sync")
 
 	// mark the primary inside the shard
 	if _, err := ts.UpdateShardFields(ctx, "test_keyspace", "0", func(si *topo.ShardInfo) error {
@@ -160,12 +149,7 @@ func TestReparentTablet(t *testing.T) {
 	replica.FakeMysqlDaemon.IOThreadRunning = true
 	replica.FakeMysqlDaemon.SetReplicationSourceInputs = append(replica.FakeMysqlDaemon.SetReplicationSourceInputs, topoproto.MysqlAddr(primary.Tablet))
 	replica.FakeMysqlDaemon.ExpectedExecuteSuperQueryList = []string{
-		// These 3 statements come from tablet startup
-		"RESET SLAVE ALL",
-		"FAKE SET MASTER",
-		"START SLAVE",
 		"STOP SLAVE",
-		"RESET SLAVE ALL",
 		"FAKE SET MASTER",
 		"START SLAVE",
 	}

@@ -17,10 +17,11 @@ limitations under the License.
 package topotests
 
 import (
-	"context"
 	"reflect"
 	"sort"
 	"testing"
+
+	"context"
 
 	"vitess.io/vitess/go/vt/topo/memorytopo"
 

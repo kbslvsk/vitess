@@ -17,7 +17,6 @@ limitations under the License.
 package engine
 
 import (
-	"context"
 	"sync"
 
 	"vitess.io/vitess/go/sqltypes"
@@ -32,24 +31,6 @@ var _ Primitive = (*Concatenate)(nil)
 // Concatenate specified the parameter for concatenate primitive
 type Concatenate struct {
 	Sources []Primitive
-
-	// These column offsets do not need to be typed checked - they usually contain weight_string()
-	// columns that are not going to be returned to the user
-	NoNeedToTypeCheck map[int]any
-}
-
-// NewConcatenate creates a Concatenate primitive. The ignoreCols slice contains the offsets that
-// don't need to have the same type between sources -
-// weight_string() sometimes returns VARBINARY and sometimes VARCHAR
-func NewConcatenate(Sources []Primitive, ignoreCols []int) *Concatenate {
-	ignoreTypes := map[int]any{}
-	for _, i := range ignoreCols {
-		ignoreTypes[i] = nil
-	}
-	return &Concatenate{
-		Sources:           Sources,
-		NoNeedToTypeCheck: ignoreTypes,
-	}
 }
 
 // RouteType returns a description of the query routing type used by the primitive
@@ -86,8 +67,8 @@ func formatTwoOptionsNicely(a, b string) string {
 var ErrWrongNumberOfColumnsInSelect = vterrors.NewErrorf(vtrpcpb.Code_FAILED_PRECONDITION, vterrors.WrongNumberOfColumnsInSelect, "The used SELECT statements have a different number of columns")
 
 // TryExecute performs a non-streaming exec.
-func (c *Concatenate) TryExecute(ctx context.Context, vcursor VCursor, bindVars map[string]*querypb.BindVariable, wantfields bool) (*sqltypes.Result, error) {
-	res, err := c.execSources(ctx, vcursor, bindVars, wantfields)
+func (c *Concatenate) TryExecute(vcursor VCursor, bindVars map[string]*querypb.BindVariable, wantfields bool) (*sqltypes.Result, error) {
+	res, err := c.execSources(vcursor, bindVars, wantfields)
 	if err != nil {
 		return nil, err
 	}
@@ -120,90 +101,50 @@ func (c *Concatenate) TryExecute(ctx context.Context, vcursor VCursor, bindVars 
 }
 
 func (c *Concatenate) getFields(res []*sqltypes.Result) ([]*querypb.Field, error) {
-	if len(res) == 0 {
-		return nil, nil
-	}
-
-	var fields []*querypb.Field
+	var resFields []*querypb.Field
 	for _, r := range res {
-		if r.Fields == nil {
-			continue
-		}
+		fields := r.Fields
 		if fields == nil {
-			fields = r.Fields
 			continue
 		}
-
-		err := c.compareFields(fields, r.Fields)
+		if resFields == nil {
+			resFields = fields
+			continue
+		}
+		err := compareFields(fields, resFields)
 		if err != nil {
 			return nil, err
 		}
 	}
-	return fields, nil
+	return resFields, nil
 }
-
-func (c *Concatenate) execSources(ctx context.Context, vcursor VCursor, bindVars map[string]*querypb.BindVariable, wantfields bool) ([]*sqltypes.Result, error) {
-	if vcursor.Session().InTransaction() {
-		// as we are in a transaction, we need to execute all queries inside a single transaction
-		// therefore it needs a sequential execution.
-		return c.sequentialExec(ctx, vcursor, bindVars, wantfields)
-	}
-	// not in transaction, so execute in parallel.
-	return c.parallelExec(ctx, vcursor, bindVars, wantfields)
-}
-
-func (c *Concatenate) parallelExec(ctx context.Context, vcursor VCursor, bindVars map[string]*querypb.BindVariable, wantfields bool) ([]*sqltypes.Result, error) {
+func (c *Concatenate) execSources(vcursor VCursor, bindVars map[string]*querypb.BindVariable, wantfields bool) ([]*sqltypes.Result, error) {
 	results := make([]*sqltypes.Result, len(c.Sources))
-	var outerErr error
-
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
 	var wg sync.WaitGroup
+	var outerErr error
 	for i, source := range c.Sources {
 		currIndex, currSource := i, source
 		vars := copyBindVars(bindVars)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			result, err := vcursor.ExecutePrimitive(ctx, currSource, vars, wantfields)
+			result, err := vcursor.ExecutePrimitive(currSource, vars, wantfields)
 			if err != nil {
 				outerErr = err
-				cancel()
+				vcursor.CancelContext()
 			}
 			results[currIndex] = result
 		}()
 	}
 	wg.Wait()
-	return results, outerErr
-}
-
-func (c *Concatenate) sequentialExec(ctx context.Context, vcursor VCursor, bindVars map[string]*querypb.BindVariable, wantfields bool) ([]*sqltypes.Result, error) {
-	results := make([]*sqltypes.Result, len(c.Sources))
-	for i, source := range c.Sources {
-		currIndex, currSource := i, source
-		vars := copyBindVars(bindVars)
-		result, err := vcursor.ExecutePrimitive(ctx, currSource, vars, wantfields)
-		if err != nil {
-			return nil, err
-		}
-		results[currIndex] = result
+	if outerErr != nil {
+		return nil, outerErr
 	}
 	return results, nil
 }
 
 // TryStreamExecute performs a streaming exec.
-func (c *Concatenate) TryStreamExecute(ctx context.Context, vcursor VCursor, bindVars map[string]*querypb.BindVariable, wantfields bool, callback func(*sqltypes.Result) error) error {
-	if vcursor.Session().InTransaction() {
-		// as we are in a transaction, we need to execute all queries inside a single transaction
-		// therefore it needs a sequential execution.
-		return c.sequentialStreamExec(ctx, vcursor, bindVars, wantfields, callback)
-	}
-	// not in transaction, so execute in parallel.
-	return c.parallelStreamExec(ctx, vcursor, bindVars, wantfields, callback)
-}
-
-func (c *Concatenate) parallelStreamExec(ctx context.Context, vcursor VCursor, bindVars map[string]*querypb.BindVariable, wantfields bool, callback func(*sqltypes.Result) error) error {
+func (c *Concatenate) TryStreamExecute(vcursor VCursor, bindVars map[string]*querypb.BindVariable, wantfields bool, callback func(*sqltypes.Result) error) error {
 	var seenFields []*querypb.Field
 	var outerErr error
 
@@ -218,7 +159,7 @@ func (c *Concatenate) parallelStreamExec(ctx context.Context, vcursor VCursor, b
 
 		go func() {
 			defer wg.Done()
-			err := vcursor.StreamExecutePrimitive(ctx, currSource, bindVars, wantfields, func(resultChunk *sqltypes.Result) error {
+			err := vcursor.StreamExecutePrimitive(currSource, bindVars, wantfields, func(resultChunk *sqltypes.Result) error {
 				// if we have fields to compare, make sure all the fields are all the same
 				if currIndex == 0 {
 					fieldsMu.Lock()
@@ -234,7 +175,7 @@ func (c *Concatenate) parallelStreamExec(ctx context.Context, vcursor VCursor, b
 				}
 				fieldSendWg.Wait()
 				if resultChunk.Fields != nil {
-					err := c.compareFields(seenFields, resultChunk.Fields)
+					err := compareFields(seenFields, resultChunk.Fields)
 					if err != nil {
 						return err
 					}
@@ -243,7 +184,7 @@ func (c *Concatenate) parallelStreamExec(ctx context.Context, vcursor VCursor, b
 				cbMu.Lock()
 				defer cbMu.Unlock()
 				select {
-				case <-ctx.Done():
+				case <-vcursor.Context().Done():
 					return nil
 				default:
 					return callback(resultChunk)
@@ -260,7 +201,7 @@ func (c *Concatenate) parallelStreamExec(ctx context.Context, vcursor VCursor, b
 			}
 			if err != nil {
 				outerErr = err
-				ctx.Done()
+				vcursor.CancelContext()
 			}
 		}()
 
@@ -269,63 +210,23 @@ func (c *Concatenate) parallelStreamExec(ctx context.Context, vcursor VCursor, b
 	return outerErr
 }
 
-func (c *Concatenate) sequentialStreamExec(ctx context.Context, vcursor VCursor, bindVars map[string]*querypb.BindVariable, wantfields bool, callback func(*sqltypes.Result) error) error {
-	// all the below fields ensure that the fields are sent only once.
-	var seenFields []*querypb.Field
-	var fieldsMu sync.Mutex
-	var fieldsSent bool
-
-	for idx, source := range c.Sources {
-		err := vcursor.StreamExecutePrimitive(ctx, source, bindVars, wantfields, func(resultChunk *sqltypes.Result) error {
-			// if we have fields to compare, make sure all the fields are all the same
-			if idx == 0 {
-				fieldsMu.Lock()
-				defer fieldsMu.Unlock()
-				if !fieldsSent {
-					fieldsSent = true
-					seenFields = resultChunk.Fields
-					return callback(resultChunk)
-				}
-			}
-			if resultChunk.Fields != nil {
-				err := c.compareFields(seenFields, resultChunk.Fields)
-				if err != nil {
-					return err
-				}
-			}
-			// check if context has expired.
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			return callback(resultChunk)
-
-		})
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // GetFields fetches the field info.
-func (c *Concatenate) GetFields(ctx context.Context, vcursor VCursor, bindVars map[string]*querypb.BindVariable) (*sqltypes.Result, error) {
-	// TODO: type coercions
-	res, err := c.Sources[0].GetFields(ctx, vcursor, bindVars)
+func (c *Concatenate) GetFields(vcursor VCursor, bindVars map[string]*querypb.BindVariable) (*sqltypes.Result, error) {
+	res, err := c.Sources[0].GetFields(vcursor, bindVars)
 	if err != nil {
 		return nil, err
 	}
 
 	for i := 1; i < len(c.Sources); i++ {
-		result, err := c.Sources[i].GetFields(ctx, vcursor, bindVars)
+		result, err := c.Sources[i].GetFields(vcursor, bindVars)
 		if err != nil {
 			return nil, err
 		}
-		err = c.compareFields(res.Fields, result.Fields)
+		err = compareFields(result.Fields, res.Fields)
 		if err != nil {
 			return nil, err
 		}
 	}
-
 	return res, nil
 }
 
@@ -348,15 +249,12 @@ func (c *Concatenate) description() PrimitiveDescription {
 	return PrimitiveDescription{OperatorType: c.RouteType()}
 }
 
-func (c *Concatenate) compareFields(fields1 []*querypb.Field, fields2 []*querypb.Field) error {
+func compareFields(fields1 []*querypb.Field, fields2 []*querypb.Field) error {
 	if len(fields1) != len(fields2) {
 		return ErrWrongNumberOfColumnsInSelect
 	}
-	for i, field1 := range fields1 {
-		if _, found := c.NoNeedToTypeCheck[i]; found {
-			continue
-		}
-		field2 := fields2[i]
+	for i, field2 := range fields2 {
+		field1 := fields1[i]
 		if field1.Type != field2.Type {
 			return vterrors.Errorf(vtrpcpb.Code_UNIMPLEMENTED, "merging field of different types is not supported, name: (%v, %v) types: (%v, %v)", field1.Name, field2.Name, field1.Type, field2.Type)
 		}

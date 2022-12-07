@@ -18,17 +18,13 @@ package evalengine
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"vitess.io/vitess/go/mysql/collations"
-	vtrpcpb "vitess.io/vitess/go/vt/proto/vtrpc"
-	"vitess.io/vitess/go/vt/servenv"
 	"vitess.io/vitess/go/vt/sqlparser"
-	"vitess.io/vitess/go/vt/vterrors"
 
 	"vitess.io/vitess/go/sqltypes"
 
@@ -46,21 +42,13 @@ type testCase struct {
 }
 
 var (
-	T            = true
-	F            = false
-	collationEnv *collations.Environment
+	T = true
+	F = false
 )
-
-func init() {
-	// We require MySQL 8.0 collations for the comparisons in the tests
-	mySQLVersion := "8.0.0"
-	servenv.SetMySQLServerVersionForTest(mySQLVersion)
-	collationEnv = collations.NewEnvironment(mySQLVersion)
-}
 
 func defaultCollation() collations.TypedCollation {
 	return collations.TypedCollation{
-		Collation:    collationEnv.LookupByName("utf8mb4_bin").ID(),
+		Collation:    collations.Local().LookupByName("utf8mb4_bin").ID(),
 		Coercibility: collations.CoerceImplicit,
 		Repertoire:   collations.RepertoireASCII,
 	}
@@ -70,16 +58,11 @@ func (tc testCase) run(t *testing.T) {
 	if tc.bv == nil {
 		tc.bv = map[string]*querypb.BindVariable{}
 	}
-	fields := make([]*querypb.Field, len(tc.row))
-	for i, value := range tc.row {
-		fields[i] = &querypb.Field{Type: value.Type()}
-	}
 	env := &ExpressionEnv{
 		BindVars: tc.bv,
 		Row:      tc.row,
-		Fields:   fields,
 	}
-	cmp, err := translateComparisonExpr2(tc.op, tc.v1, tc.v2)
+	cmp, err := convertComparisonExpr2(tc.op, tc.v1, tc.v2)
 	if err != nil {
 		t.Fatalf("failed to convert: %v", err)
 	}
@@ -445,36 +428,6 @@ func TestCompareNumerics(t *testing.T) {
 			v1:   NewColumn(0, defaultCollation()), v2: NewColumn(1, defaultCollation()),
 			out: &T, op: sqlparser.LessEqualOp,
 			row: []sqltypes.Value{sqltypes.NewDecimal("1.000101"), sqltypes.NewFloat64(1.00101)},
-		},
-		{
-			name: "different int types are equal for 8 bit",
-			v1:   NewColumn(0, defaultCollation()), v2: NewLiteralInt(0),
-			out: &T, op: sqlparser.EqualOp,
-			row: []sqltypes.Value{sqltypes.NewInt8(0)},
-		},
-		{
-			name: "different int types are equal for 32 bit",
-			v1:   NewColumn(0, defaultCollation()), v2: NewLiteralInt(0),
-			out: &T, op: sqlparser.EqualOp,
-			row: []sqltypes.Value{sqltypes.NewInt32(0)},
-		},
-		{
-			name: "different int types are equal for float32 bit",
-			v1:   NewColumn(0, defaultCollation()), v2: NewLiteralFloat(1.0),
-			out: &T, op: sqlparser.EqualOp,
-			row: []sqltypes.Value{sqltypes.MakeTrusted(sqltypes.Float32, []byte("1.0"))},
-		},
-		{
-			name: "different unsigned int types are equal for 8 bit",
-			v1:   NewColumn(0, defaultCollation()), v2: NewLiteralInt(0),
-			out: &T, op: sqlparser.EqualOp,
-			row: []sqltypes.Value{sqltypes.MakeTrusted(sqltypes.Uint8, []byte("0"))},
-		},
-		{
-			name: "different unsigned int types are equal for 32 bit",
-			v1:   NewColumn(0, defaultCollation()), v2: NewLiteralInt(0),
-			out: &T, op: sqlparser.EqualOp,
-			row: []sqltypes.Value{sqltypes.NewUint32(0)},
 		},
 	}
 
@@ -1089,263 +1042,4 @@ func TestNullComparisons(t *testing.T) {
 			tcase.run(t)
 		})
 	}
-}
-
-func TestNullsafeCompare(t *testing.T) {
-	collation := collationEnv.LookupByName("utf8mb4_general_ci").ID()
-	tcases := []struct {
-		v1, v2 sqltypes.Value
-		out    int
-		err    error
-	}{{
-		// All nulls.
-		v1:  NULL,
-		v2:  NULL,
-		out: 0,
-	}, {
-		// LHS null.
-		v1:  NULL,
-		v2:  NewInt64(1),
-		out: -1,
-	}, {
-		// RHS null.
-		v1:  NewInt64(1),
-		v2:  NULL,
-		out: 1,
-	}, {
-		// LHS Text
-		v1:  TestValue(sqltypes.VarChar, "abcd"),
-		v2:  TestValue(sqltypes.VarChar, "abcd"),
-		out: 0,
-	}, {
-		// Make sure underlying error is returned for LHS.
-		v1:  TestValue(sqltypes.Int64, "1.2"),
-		v2:  NewInt64(2),
-		err: vterrors.New(vtrpcpb.Code_INVALID_ARGUMENT, "strconv.ParseInt: parsing \"1.2\": invalid syntax"),
-	}, {
-		// Make sure underlying error is returned for RHS.
-		v1:  NewInt64(2),
-		v2:  TestValue(sqltypes.Int64, "1.2"),
-		err: vterrors.New(vtrpcpb.Code_INVALID_ARGUMENT, "strconv.ParseInt: parsing \"1.2\": invalid syntax"),
-	}, {
-		// Numeric equal.
-		v1:  NewInt64(1),
-		v2:  NewUint64(1),
-		out: 0,
-	}, {
-		// Numeric unequal.
-		v1:  NewInt64(1),
-		v2:  NewUint64(2),
-		out: -1,
-	}, {
-		// Non-numeric equal
-		v1:  TestValue(sqltypes.VarBinary, "abcd"),
-		v2:  TestValue(sqltypes.Binary, "abcd"),
-		out: 0,
-	}, {
-		// Non-numeric unequal
-		v1:  TestValue(sqltypes.VarBinary, "abcd"),
-		v2:  TestValue(sqltypes.Binary, "bcde"),
-		out: -1,
-	}, {
-		// Date/Time types
-		v1:  TestValue(sqltypes.Datetime, "1000-01-01 00:00:00"),
-		v2:  TestValue(sqltypes.Binary, "1000-01-01 00:00:00"),
-		out: 0,
-	}, {
-		// Date/Time types
-		v1:  TestValue(sqltypes.Datetime, "2000-01-01 00:00:00"),
-		v2:  TestValue(sqltypes.Binary, "1000-01-01 00:00:00"),
-		out: 1,
-	}, {
-		// Date/Time types
-		v1:  TestValue(sqltypes.Datetime, "1000-01-01 00:00:00"),
-		v2:  TestValue(sqltypes.Binary, "2000-01-01 00:00:00"),
-		out: -1,
-	}, {
-		// Date/Time types
-		v1:  TestValue(sqltypes.Bit, "101"),
-		v2:  TestValue(sqltypes.Bit, "101"),
-		out: 0,
-	}, {
-		// Date/Time types
-		v1:  TestValue(sqltypes.Bit, "1"),
-		v2:  TestValue(sqltypes.Bit, "0"),
-		out: 1,
-	}, {
-		// Date/Time types
-		v1:  TestValue(sqltypes.Bit, "0"),
-		v2:  TestValue(sqltypes.Bit, "1"),
-		out: -1,
-	}}
-	for _, tcase := range tcases {
-		got, err := NullsafeCompare(tcase.v1, tcase.v2, collation)
-		if tcase.err != nil {
-			require.EqualError(t, err, tcase.err.Error())
-		}
-		if tcase.err != nil {
-			continue
-		}
-
-		if got != tcase.out {
-			t.Errorf("NullsafeCompare(%v, %v): %v, want %v", printValue(tcase.v1), printValue(tcase.v2), got, tcase.out)
-		}
-	}
-}
-
-func getCollationID(collation string) collations.ID {
-	id, _ := collationEnv.LookupID(collation)
-	return id
-}
-
-func TestNullsafeCompareCollate(t *testing.T) {
-	tcases := []struct {
-		v1, v2    string
-		collation collations.ID
-		out       int
-		err       error
-	}{
-		{
-			// case insensitive
-			v1:        "abCd",
-			v2:        "aBcd",
-			out:       0,
-			collation: getCollationID("utf8mb4_0900_as_ci"),
-		},
-		{
-			// accent sensitive
-			v1:        "ǍḄÇ",
-			v2:        "ÁḆĈ",
-			out:       1,
-			collation: getCollationID("utf8mb4_0900_as_ci"),
-		},
-		{
-			// hangul decomposition
-			v1:        "\uAC00",
-			v2:        "\u326E",
-			out:       0,
-			collation: getCollationID("utf8mb4_0900_as_ci"),
-		},
-		{
-			// kana sensitive
-			v1:        "\xE3\x81\xAB\xE3\x81\xBB\xE3\x82\x93\xE3\x81\x94",
-			v2:        "\xE3\x83\x8B\xE3\x83\x9B\xE3\x83\xB3\xE3\x82\xB4",
-			out:       -1,
-			collation: getCollationID("utf8mb4_ja_0900_as_cs_ks"),
-		},
-		{
-			// non breaking space
-			v1:        "abc ",
-			v2:        "abc\u00a0",
-			out:       -1,
-			collation: getCollationID("utf8mb4_0900_as_cs"),
-		},
-		{
-			// "cs" counts as a separate letter, where c < cs < d
-			v1:        "c",
-			v2:        "cs",
-			out:       -1,
-			collation: getCollationID("utf8mb4_hu_0900_ai_ci"),
-		},
-		{
-			v1:        "abcd",
-			v2:        "abcd",
-			collation: 0,
-			err:       vterrors.New(vtrpcpb.Code_UNKNOWN, "cannot compare strings, collation is unknown or unsupported (collation ID: 0)"),
-		},
-		{
-			v1:        "abcd",
-			v2:        "abcd",
-			collation: 1111,
-			err:       vterrors.New(vtrpcpb.Code_UNKNOWN, "cannot compare strings, collation is unknown or unsupported (collation ID: 1111)"),
-		},
-		{
-			v1: "abcd",
-			v2: "abcd",
-			// unsupported collation gb18030_bin
-			collation: 249,
-			err:       vterrors.New(vtrpcpb.Code_UNKNOWN, "cannot compare strings, collation is unknown or unsupported (collation ID: 249)"),
-		},
-	}
-	for _, tcase := range tcases {
-		got, err := NullsafeCompare(TestValue(sqltypes.VarChar, tcase.v1), TestValue(sqltypes.VarChar, tcase.v2), tcase.collation)
-		if !vterrors.Equals(err, tcase.err) {
-			t.Errorf("NullsafeCompare(%v, %v) error: %v, want %v", tcase.v1, tcase.v2, vterrors.Print(err), vterrors.Print(tcase.err))
-		}
-		if tcase.err != nil {
-			continue
-		}
-
-		if got != tcase.out {
-			t.Errorf("NullsafeCompare(%v, %v): %v, want %v", tcase.v1, tcase.v2, got, tcase.out)
-		}
-	}
-}
-
-func BenchmarkNullSafeComparison(b *testing.B) {
-	var collnames = []string{
-		"utf8mb4_0900_ai_ci",
-		"utf8mb4_0900_as_cs",
-		"utf8mb4_general_ci",
-		"utf8mb4_0900_bin",
-	}
-
-	var lengths = []int{1, 16}
-
-	for _, collation := range collnames {
-		for _, length := range lengths {
-			b.Run(fmt.Sprintf("Strings/%s/%d", collation, length), func(b *testing.B) {
-				var collid = getCollationID(collation)
-				var long = func(in string) string {
-					return strings.Repeat(in, length)
-				}
-				var inputs = []sqltypes.Value{
-					TestValue(sqltypes.VarChar, long("abCd")),
-					TestValue(sqltypes.VarChar, long("aBcd")),
-					TestValue(sqltypes.VarChar, long("ǍḄÇ")),
-					TestValue(sqltypes.VarChar, long("ÁḆĈ")),
-					TestValue(sqltypes.VarChar, long("\xE3\x81\xAB\xE3\x81\xBB\xE3\x82\x93\xE3\x81\x94")),
-					TestValue(sqltypes.VarChar, long("\xE3\x83\x8B\xE3\x83\x9B\xE3\x83\xB3\xE3\x82\xB4")),
-				}
-				b.ReportAllocs()
-				b.ResetTimer()
-
-				for i := 0; i < b.N; i++ {
-					for _, lhs := range inputs {
-						for _, rhs := range inputs {
-							_, _ = NullsafeCompare(lhs, rhs, collid)
-						}
-					}
-				}
-			})
-		}
-	}
-
-	b.Run("Numeric", func(b *testing.B) {
-		var inputs = []sqltypes.Value{
-			TestValue(sqltypes.Int64, "123456789"),
-			TestValue(sqltypes.Uint64, "123456789"),
-			TestValue(sqltypes.Int64, "-123456789"),
-			TestValue(sqltypes.Int64, "0"),
-			TestValue(sqltypes.Uint64, "0"),
-			TestValue(sqltypes.Float64, "1.0"),
-			TestValue(sqltypes.Float64, "0.0"),
-			TestValue(sqltypes.Decimal, "1.0000"),
-			TestValue(sqltypes.Decimal, "0.0000"),
-			TestValue(sqltypes.VarChar, "12345"),
-			TestValue(sqltypes.VarChar, "0"),
-			TestValue(sqltypes.VarChar, "12392874.0potato"),
-		}
-
-		b.ReportAllocs()
-		b.ResetTimer()
-
-		for i := 0; i < b.N; i++ {
-			for _, lhs := range inputs {
-				for _, rhs := range inputs {
-					_, _ = NullsafeCompare(lhs, rhs, collations.CollationUtf8mb4ID)
-				}
-			}
-		}
-	})
 }

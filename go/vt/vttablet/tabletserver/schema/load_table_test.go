@@ -17,34 +17,37 @@ limitations under the License.
 package schema
 
 import (
-	"context"
-	"errors"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"context"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"vitess.io/vitess/go/mysql/fakesqldb"
 	"vitess.io/vitess/go/sqltypes"
-	querypb "vitess.io/vitess/go/vt/proto/query"
 	"vitess.io/vitess/go/vt/sqlparser"
 	"vitess.io/vitess/go/vt/vttablet/tabletserver/connpool"
 	"vitess.io/vitess/go/vt/vttablet/tabletserver/tabletenv"
+
+	querypb "vitess.io/vitess/go/vt/proto/query"
 )
 
 func TestLoadTable(t *testing.T) {
 	db := fakesqldb.New(t)
 	defer db.Close()
-	mockLoadTableQueries(db)
+	for query, result := range getTestLoadTableQueries() {
+		db.AddQuery(query, result)
+	}
 	table, err := newTestLoadTable("USER_TABLE", "test table", db)
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := &Table{
-		Name: sqlparser.NewIdentifierCS("test_table"),
+		Name: sqlparser.NewTableIdent("test_table"),
 		Fields: []*querypb.Field{{
 			Name: "pk",
 			Type: sqltypes.Int32,
@@ -62,13 +65,15 @@ func TestLoadTable(t *testing.T) {
 func TestLoadTableSequence(t *testing.T) {
 	db := fakesqldb.New(t)
 	defer db.Close()
-	mockLoadTableQueries(db)
+	for query, result := range getTestLoadTableQueries() {
+		db.AddQuery(query, result)
+	}
 	table, err := newTestLoadTable("USER_TABLE", "vitess_sequence", db)
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := &Table{
-		Name:         sqlparser.NewIdentifierCS("test_table"),
+		Name:         sqlparser.NewTableIdent("test_table"),
 		Type:         Sequence,
 		SequenceInfo: &SequenceInfo{},
 	}
@@ -82,13 +87,15 @@ func TestLoadTableSequence(t *testing.T) {
 func TestLoadTableMessage(t *testing.T) {
 	db := fakesqldb.New(t)
 	defer db.Close()
-	mockMessageTableQueries(db)
+	for query, result := range getMessageTableQueries() {
+		db.AddQuery(query, result)
+	}
 	table, err := newTestLoadTable("USER_TABLE", "vitess_message,vt_ack_wait=30,vt_purge_after=120,vt_batch_size=1,vt_cache_size=10,vt_poller_interval=30", db)
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := &Table{
-		Name: sqlparser.NewIdentifierCS("test_table"),
+		Name: sqlparser.NewTableIdent("test_table"),
 		Type: Message,
 		Fields: []*querypb.Field{{
 			Name: "id",
@@ -134,59 +141,6 @@ func TestLoadTableMessage(t *testing.T) {
 	want.MessageInfo.MaxBackoff = 100 * time.Second
 	assert.Equal(t, want, table)
 
-	//
-	// multiple tests for vt_message_cols
-	//
-	origFields := want.MessageInfo.Fields
-
-	// Test loading id column from vt_message_cols
-	table, err = newTestLoadTable("USER_TABLE", "vitess_message,vt_message_cols=id,vt_ack_wait=30,vt_purge_after=120,vt_batch_size=1,vt_cache_size=10,vt_poller_interval=30,vt_min_backoff=10,vt_max_backoff=100", db)
-	require.NoError(t, err)
-	want.MessageInfo.Fields = []*querypb.Field{{
-		Name: "id",
-		Type: sqltypes.Int64,
-	}}
-	assert.Equal(t, want, table)
-
-	// Test loading message column from vt_message_cols
-	_, err = newTestLoadTable("USER_TABLE", "vitess_message,vt_message_cols=message,vt_ack_wait=30,vt_purge_after=120,vt_batch_size=1,vt_cache_size=10,vt_poller_interval=30,vt_min_backoff=10,vt_max_backoff=100", db)
-	require.Equal(t, errors.New("vt_message_cols must begin with id: test_table"), err)
-
-	// Test loading id & message columns from vt_message_cols
-	table, err = newTestLoadTable("USER_TABLE", "vitess_message,vt_message_cols=id|message,vt_ack_wait=30,vt_purge_after=120,vt_batch_size=1,vt_cache_size=10,vt_poller_interval=30,vt_min_backoff=10,vt_max_backoff=100", db)
-	require.NoError(t, err)
-	want.MessageInfo.Fields = []*querypb.Field{{
-		Name: "id",
-		Type: sqltypes.Int64,
-	}, {
-		Name: "message",
-		Type: sqltypes.VarBinary,
-	}}
-	assert.Equal(t, want, table)
-
-	// Test loading id & message columns in reverse order from vt_message_cols
-	_, err = newTestLoadTable("USER_TABLE", "vitess_message,vt_message_cols=message|id,vt_ack_wait=30,vt_purge_after=120,vt_batch_size=1,vt_cache_size=10,vt_poller_interval=30,vt_min_backoff=10,vt_max_backoff=100", db)
-	require.Equal(t, errors.New("vt_message_cols must begin with id: test_table"), err)
-
-	// Test setting zero columns on vt_message_cols, which is ignored and loads the default columns
-	table, err = newTestLoadTable("USER_TABLE", "vitess_message,vt_message_cols,vt_ack_wait=30,vt_purge_after=120,vt_batch_size=1,vt_cache_size=10,vt_poller_interval=30,vt_min_backoff=10,vt_max_backoff=100", db)
-	require.NoError(t, err)
-	want.MessageInfo.Fields = []*querypb.Field{{
-		Name: "id",
-		Type: sqltypes.Int64,
-	}, {
-		Name: "message",
-		Type: sqltypes.VarBinary,
-	}}
-	assert.Equal(t, want, table)
-
-	// reset fields after all vt_message_cols tests
-	want.MessageInfo.Fields = origFields
-
-	//
-	// end vt_message_cols tests
-	//
-
 	// Missing property
 	_, err = newTestLoadTable("USER_TABLE", "vitess_message,vt_ack_wait=30", db)
 	wanterr := "not specified for message table"
@@ -194,7 +148,9 @@ func TestLoadTableMessage(t *testing.T) {
 		t.Errorf("newTestLoadTable: %v, want %s", err, wanterr)
 	}
 
-	mockLoadTableQueries(db)
+	for query, result := range getTestLoadTableQueries() {
+		db.AddQuery(query, result)
+	}
 	_, err = newTestLoadTable("USER_TABLE", "vitess_message,vt_ack_wait=30,vt_purge_after=120,vt_batch_size=1,vt_cache_size=10,vt_poller_interval=30", db)
 	wanterr = "missing from message table: test_table"
 	if err == nil || !strings.Contains(err.Error(), wanterr) {
@@ -211,52 +167,54 @@ func newTestLoadTable(tableType string, comment string, db *fakesqldb.DB) (*Tabl
 		IdleTimeoutSeconds: 10,
 	})
 	connPool.Open(appParams, dbaParams, appParams)
-	conn, err := connPool.Get(ctx, nil)
+	conn, err := connPool.Get(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer conn.Recycle()
 
-	return LoadTable(conn, "fakesqldb", "test_table", comment)
+	return LoadTable(conn, "test_table", comment)
 }
 
-func mockLoadTableQueries(db *fakesqldb.DB) {
-	db.ClearQueryPattern()
-	db.MockQueriesForTable("test_table", &sqltypes.Result{
-		Fields: []*querypb.Field{{
-			Name: "pk",
-			Type: sqltypes.Int32,
-		}, {
-			Name: "name",
-			Type: sqltypes.Int32,
-		}, {
-			Name: "addr",
-			Type: sqltypes.Int32,
-		}},
-	})
+func getTestLoadTableQueries() map[string]*sqltypes.Result {
+	return map[string]*sqltypes.Result{
+		"select * from test_table where 1 != 1": {
+			Fields: []*querypb.Field{{
+				Name: "pk",
+				Type: sqltypes.Int32,
+			}, {
+				Name: "name",
+				Type: sqltypes.Int32,
+			}, {
+				Name: "addr",
+				Type: sqltypes.Int32,
+			}},
+		},
+	}
 }
 
-func mockMessageTableQueries(db *fakesqldb.DB) {
-	db.ClearQueryPattern()
-	db.MockQueriesForTable("test_table", &sqltypes.Result{
-		Fields: []*querypb.Field{{
-			Name: "id",
-			Type: sqltypes.Int64,
-		}, {
-			Name: "priority",
-			Type: sqltypes.Int64,
-		}, {
-			Name: "time_next",
-			Type: sqltypes.Int64,
-		}, {
-			Name: "epoch",
-			Type: sqltypes.Int64,
-		}, {
-			Name: "time_acked",
-			Type: sqltypes.Int64,
-		}, {
-			Name: "message",
-			Type: sqltypes.VarBinary,
-		}},
-	})
+func getMessageTableQueries() map[string]*sqltypes.Result {
+	return map[string]*sqltypes.Result{
+		"select * from test_table where 1 != 1": {
+			Fields: []*querypb.Field{{
+				Name: "id",
+				Type: sqltypes.Int64,
+			}, {
+				Name: "priority",
+				Type: sqltypes.Int64,
+			}, {
+				Name: "time_next",
+				Type: sqltypes.Int64,
+			}, {
+				Name: "epoch",
+				Type: sqltypes.Int64,
+			}, {
+				Name: "time_acked",
+				Type: sqltypes.Int64,
+			}, {
+				Name: "message",
+				Type: sqltypes.VarBinary,
+			}},
+		},
+	}
 }

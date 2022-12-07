@@ -19,10 +19,8 @@ package engine
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"sort"
 
-	"vitess.io/vitess/go/tools/graphviz"
 	"vitess.io/vitess/go/vt/key"
 	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 	"vitess.io/vitess/go/vt/vtgate/vindexes"
@@ -40,7 +38,7 @@ type PrimitiveDescription struct {
 	// TargetTabletType specifies an explicit target destination tablet type
 	// this is only used in conjunction with TargetDestination
 	TargetTabletType topodatapb.TabletType
-	Other            map[string]any
+	Other            map[string]interface{}
 	Inputs           []PrimitiveDescription
 }
 
@@ -93,55 +91,7 @@ func (pd PrimitiveDescription) MarshalJSON() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func (pd PrimitiveDescription) addToGraph(g *graphviz.Graph) (*graphviz.Node, error) {
-	var nodes []*graphviz.Node
-	for _, input := range pd.Inputs {
-		n, err := input.addToGraph(g)
-		if err != nil {
-			return nil, err
-		}
-		nodes = append(nodes, n)
-	}
-	name := pd.OperatorType + ":" + pd.Variant
-	if pd.Variant == "" {
-		name = pd.OperatorType
-	}
-	this := g.AddNode(name)
-	for k, v := range pd.Other {
-		switch k {
-		case "Query":
-			this.AddTooltip(fmt.Sprintf("%v", v))
-		case "FieldQuery":
-		// skip these
-		default:
-			slice, ok := v.([]string)
-			if ok {
-				this.AddAttribute(k)
-				for _, s := range slice {
-					this.AddAttribute(s)
-				}
-			} else {
-				this.AddAttribute(fmt.Sprintf("%s:%v", k, v))
-			}
-		}
-	}
-	for _, n := range nodes {
-		g.AddEdge(this, n)
-	}
-	return this, nil
-}
-
-func GraphViz(p Primitive) (*graphviz.Graph, error) {
-	g := graphviz.New()
-	description := PrimitiveToPlanDescription(p)
-	_, err := description.addToGraph(g)
-	if err != nil {
-		return nil, err
-	}
-	return g, nil
-}
-
-func addMap(input map[string]any, buf *bytes.Buffer) error {
+func addMap(input map[string]interface{}, buf *bytes.Buffer) error {
 	var mk []string
 	for k, v := range input {
 		if v == "" || v == nil || v == 0 {
@@ -159,7 +109,7 @@ func addMap(input map[string]any, buf *bytes.Buffer) error {
 	return nil
 }
 
-func marshalAdd(prepend string, buf *bytes.Buffer, name string, obj any) error {
+func marshalAdd(prepend string, buf *bytes.Buffer, name string, obj interface{}) error {
 	buf.WriteString(prepend + `"` + name + `":`)
 
 	enc := json.NewEncoder(buf)
@@ -194,7 +144,7 @@ func orderedStringIntMap(in map[string]int) orderedMap {
 
 type keyVal struct {
 	key string
-	val any
+	val interface{}
 }
 
 // Define an ordered, sortable map

@@ -14,27 +14,21 @@ limitations under the License.
 package main
 
 import (
-	"context"
+	"flag"
+	"strings"
 
-	"github.com/spf13/pflag"
+	"golang.org/x/net/context"
 
-	"vitess.io/vitess/go/acl"
-	"vitess.io/vitess/go/vt/servenv"
 	"vitess.io/vitess/go/vt/vtgr"
 )
 
 func main() {
-	var clustersToWatch []string
-	servenv.OnParseFor("vtgr", func(fs *pflag.FlagSet) {
-		fs.StringSliceVar(&clustersToWatch, "clusters_to_watch", nil, `Comma-separated list of keyspaces or keyspace/shards that this instance will monitor and repair. Defaults to all clusters in the topology. Example: "ks1,ks2/-80"`)
-
-		acl.RegisterFlags(fs)
-	})
-	servenv.ParseFlags("vtgr")
+	clustersToWatch := flag.String("clusters_to_watch", "", "Comma-separated list of keyspaces or keyspace/shards that this instance will monitor and repair. Defaults to all clusters in the topology. Example: \"ks1,ks2/-80\"")
+	flag.Parse()
 
 	// openTabletDiscovery will open up a connection to topo server
 	// and populate the tablets in memory
-	vtgr := vtgr.OpenTabletDiscovery(context.Background(), nil, clustersToWatch)
+	vtgr := vtgr.OpenTabletDiscovery(context.Background(), nil, strings.Split(*clustersToWatch, ","))
 	vtgr.RefreshCluster()
 	vtgr.ScanAndRepair()
 

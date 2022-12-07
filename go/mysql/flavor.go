@@ -41,22 +41,6 @@ var (
 type FlavorCapability int
 
 const (
-	NoneFlavorCapability          FlavorCapability = iota // default placeholder
-	FastDropTableFlavorCapability                         // supported in MySQL 8.0.23 and above: https://dev.mysql.com/doc/relnotes/mysql/8.0/en/news-8-0-23.html
-	TransactionalGtidExecutedFlavorCapability
-	InstantDDLFlavorCapability
-	InstantAddLastColumnFlavorCapability
-	InstantAddDropVirtualColumnFlavorCapability
-	InstantAddDropColumnFlavorCapability
-	InstantChangeColumnDefaultFlavorCapability
-	InstantExpandEnumCapability
-	MySQLJSONFlavorCapability
-	MySQLUpgradeInServerFlavorCapability
-	DynamicRedoLogCapacityFlavorCapability // supported in MySQL 8.0.30 and above: https://dev.mysql.com/doc/relnotes/mysql/8.0/en/news-8-0-30.html
-	DisableRedoLogFlavorCapability         // supported in MySQL 8.0.21 and above: https://dev.mysql.com/doc/relnotes/mysql/8.0/en/news-8-0-21.html
-)
-
-const (
 	// mariaDBReplicationHackPrefix is the prefix of a version for MariaDB 10.0
 	// versions, to work around replication bugs.
 	mariaDBReplicationHackPrefix = "5.5.5-"
@@ -65,7 +49,9 @@ const (
 	// mysql57VersionPrefix is the prefix for 5.7 mysql version, such as 5.7.31-log
 	mysql57VersionPrefix = "5.7."
 	// mysql80VersionPrefix is the prefix for 8.0 mysql version, such as 8.0.19
-	mysql80VersionPrefix = "8.0."
+	mysql80VersionPrefix                                    = "8.0."
+	NoneFlavorCapability                   FlavorCapability = iota // default placeholder
+	DynamicRedoLogCapacityFlavorCapability                         // supported in MySQL 8.0.30 and above: https://dev.mysql.com/doc/relnotes/mysql/8.0/en/news-8-0-30.html
 )
 
 // flavor is the abstract interface for a flavor.
@@ -77,15 +63,6 @@ const (
 type flavor interface {
 	// primaryGTIDSet returns the current GTIDSet of a server.
 	primaryGTIDSet(c *Conn) (GTIDSet, error)
-
-	// purgedGTIDSet returns the purged GTIDSet of a server.
-	purgedGTIDSet(c *Conn) (GTIDSet, error)
-
-	// gtidMode returns the gtid mode of a server.
-	gtidMode(c *Conn) (string, error)
-
-	// serverUUID returns the UUID of a server.
-	serverUUID(c *Conn) (string, error)
 
 	// startReplicationCommand returns the command to start the replication.
 	startReplicationCommand() string
@@ -124,10 +101,6 @@ type flavor interface {
 	// replication on the host.
 	resetReplicationCommands(c *Conn) []string
 
-	// resetReplicationParametersCommands returns the commands to reset
-	// replication parameters on the host.
-	resetReplicationParametersCommands(c *Conn) []string
-
 	// setReplicationPositionCommands returns the commands to set the
 	// replication position at which the replica will resume.
 	setReplicationPositionCommands(pos Position) []string
@@ -157,9 +130,7 @@ type flavor interface {
 	enableBinlogPlaybackCommand() string
 	disableBinlogPlaybackCommand() string
 
-	baseShowTables() string
 	baseShowTablesWithSizes() string
-
 	supportsCapability(serverVersion string, capability FlavorCapability) (bool, error)
 }
 
@@ -191,6 +162,29 @@ func ServerVersionAtLeast(serverVersion string, parts ...int) (bool, error) {
 		}
 	}
 	return true, nil
+}
+
+// ServerVersionAtLeast returns 'true' if server version is equal or greater than given parts. e.g.
+// "8.0.14-log" is at least [8, 0, 13] and [8, 0, 14], but not [8, 0, 15]
+func (c *Conn) ServerVersionAtLeast(parts ...int) (bool, error) {
+	return ServerVersionAtLeast(c.ServerVersion, parts...)
+}
+
+// fillFlavor fills in c.Flavor. If the params specify the flavor,
+// that is used. Otherwise, we auto-detect.
+//
+// This is the same logic as the ConnectorJ java client. We try to recognize
+// MariaDB as much as we can, but default to MySQL.
+//
+// MariaDB note: the server version returned here might look like:
+// 5.5.5-10.0.21-MariaDB-...
+// If that is the case, we are removing the 5.5.5- prefix.
+// Note on such servers, 'select version()' would return 10.0.21-MariaDB-...
+// as well (not matching what c.ServerVersion is, but matching after we remove
+// the prefix).
+func (c *Conn) fillFlavor(params *ConnParams) {
+	flavorFunc := flavors[params.Flavor]
+	c.flavor, _, c.ServerVersion = GetFlavor(c.ServerVersion, flavorFunc)
 }
 
 // GetFlavor fills in c.Flavor. If the params specify the flavor,
@@ -233,29 +227,6 @@ func GetFlavor(serverVersion string, flavorFunc func() flavor) (f flavor, capabl
 		}, canonicalVersion
 }
 
-// fillFlavor fills in c.Flavor. If the params specify the flavor,
-// that is used. Otherwise, we auto-detect.
-//
-// This is the same logic as the ConnectorJ java client. We try to recognize
-// MariaDB as much as we can, but default to MySQL.
-//
-// MariaDB note: the server version returned here might look like:
-// 5.5.5-10.0.21-MariaDB-...
-// If that is the case, we are removing the 5.5.5- prefix.
-// Note on such servers, 'select version()' would return 10.0.21-MariaDB-...
-// as well (not matching what c.ServerVersion is, but matching after we remove
-// the prefix).
-func (c *Conn) fillFlavor(params *ConnParams) {
-	flavorFunc := flavors[params.Flavor]
-	c.flavor, _, c.ServerVersion = GetFlavor(c.ServerVersion, flavorFunc)
-}
-
-// ServerVersionAtLeast returns 'true' if server version is equal or greater than given parts. e.g.
-// "8.0.14-log" is at least [8, 0, 13] and [8, 0, 14], but not [8, 0, 15]
-func (c *Conn) ServerVersionAtLeast(parts ...int) (bool, error) {
-	return ServerVersionAtLeast(c.ServerVersion, parts...)
-}
-
 //
 // The following methods are dependent on the flavor.
 // Only valid for client connections (will panic for server connections).
@@ -281,27 +252,6 @@ func (c *Conn) PrimaryPosition() (Position, error) {
 	return Position{
 		GTIDSet: gtidSet,
 	}, nil
-}
-
-// GetGTIDPurged returns the tablet's GTIDs which are purged.
-func (c *Conn) GetGTIDPurged() (Position, error) {
-	gtidSet, err := c.flavor.purgedGTIDSet(c)
-	if err != nil {
-		return Position{}, err
-	}
-	return Position{
-		GTIDSet: gtidSet,
-	}, nil
-}
-
-// GetGTIDMode returns the tablet's GTID mode. Only available in MySQL flavour
-func (c *Conn) GetGTIDMode() (string, error) {
-	return c.flavor.gtidMode(c)
-}
-
-// GetServerUUID returns the server's UUID.
-func (c *Conn) GetServerUUID() (string, error) {
-	return c.flavor.serverUUID(c)
 }
 
 // PrimaryFilePosition returns the current primary's file based replication position.
@@ -377,12 +327,6 @@ func (c *Conn) ResetReplicationCommands() []string {
 	return c.flavor.resetReplicationCommands(c)
 }
 
-// ResetReplicationParametersCommands returns the commands to reset
-// replication parameters on the host.
-func (c *Conn) ResetReplicationParametersCommands() []string {
-	return c.flavor.resetReplicationParametersCommands(c)
-}
-
 // SetReplicationPositionCommands returns the commands to set the
 // replication position at which the replica will resume
 // when it is later reparented with SetReplicationSourceCommand.
@@ -446,17 +390,10 @@ func parseReplicationStatus(fields map[string]string) ReplicationStatus {
 	// The field names in the map are identical to what we receive from the database
 	// Hence the names still contain Master
 	status := ReplicationStatus{
-		SourceHost:            fields["Master_Host"],
-		SourceUser:            fields["Master_User"],
-		SSLAllowed:            fields["Master_SSL_Allowed"] == "Yes",
-		AutoPosition:          fields["Auto_Position"] == "1",
-		UsingGTID:             fields["Using_Gtid"] != "No" && fields["Using_Gtid"] != "",
-		HasReplicationFilters: (fields["Replicate_Do_DB"] != "") || (fields["Replicate_Ignore_DB"] != "") || (fields["Replicate_Do_Table"] != "") || (fields["Replicate_Ignore_Table"] != "") || (fields["Replicate_Wild_Do_Table"] != "") || (fields["Replicate_Wild_Ignore_Table"] != ""),
+		SourceHost: fields["Master_Host"],
 		// These fields are returned from the underlying DB and cannot be renamed
-		IOState:      ReplicationStatusToState(fields["Slave_IO_Running"]),
-		LastIOError:  fields["Last_IO_Error"],
-		SQLState:     ReplicationStatusToState(fields["Slave_SQL_Running"]),
-		LastSQLError: fields["Last_SQL_Error"],
+		IOThreadRunning:  fields["Slave_IO_Running"] == "Yes" || fields["Slave_IO_Running"] == "Connecting",
+		SQLThreadRunning: fields["Slave_SQL_Running"] == "Yes",
 	}
 	parseInt, _ := strconv.ParseInt(fields["Master_Port"], 10, 0)
 	status.SourcePort = int(parseInt)
@@ -473,8 +410,6 @@ func parseReplicationStatus(fields map[string]string) ReplicationStatus {
 	}
 	parseUint, _ = strconv.ParseUint(fields["Master_Server_Id"], 10, 0)
 	status.SourceServerID = uint(parseUint)
-	parseUint, _ = strconv.ParseUint(fields["SQL_Delay"], 10, 0)
-	status.SQLDelay = uint(parseUint)
 
 	executedPosStr := fields["Exec_Master_Log_Pos"]
 	file := fields["Relay_Master_Log_File"]
@@ -493,21 +428,9 @@ func parseReplicationStatus(fields map[string]string) ReplicationStatus {
 	if file != "" && readPosStr != "" {
 		fileRelayPos, err := strconv.Atoi(readPosStr)
 		if err == nil {
-			status.RelayLogSourceBinlogEquivalentPosition.GTIDSet = filePosGTID{
+			status.FileRelayLogPosition.GTIDSet = filePosGTID{
 				file: file,
 				pos:  fileRelayPos,
-			}
-		}
-	}
-
-	relayPosStr := fields["Relay_Log_Pos"]
-	file = fields["Relay_Log_File"]
-	if file != "" && relayPosStr != "" {
-		relayFilePos, err := strconv.Atoi(relayPosStr)
-		if err == nil {
-			status.RelayLogFilePosition.GTIDSet = filePosGTID{
-				file: file,
-				pos:  relayFilePos,
 			}
 		}
 	}
@@ -574,13 +497,8 @@ func (c *Conn) DisableBinlogPlaybackCommand() string {
 	return c.flavor.disableBinlogPlaybackCommand()
 }
 
-// BaseShowTables returns a query that shows tables
+// BaseShowTables returns a query that shows tables and their sizes
 func (c *Conn) BaseShowTables() string {
-	return c.flavor.baseShowTables()
-}
-
-// BaseShowTablesWithSizes returns a query that shows tables and their sizes
-func (c *Conn) BaseShowTablesWithSizes() string {
 	return c.flavor.baseShowTablesWithSizes()
 }
 

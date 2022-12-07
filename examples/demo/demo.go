@@ -117,7 +117,7 @@ func exec(w http.ResponseWriter, req *http.Request) {
 	}
 	defer conn.Close()
 	query := req.FormValue("query")
-	response := make(map[string]any)
+	response := make(map[string]interface{})
 
 	var queries []string
 	// Clear existing log.
@@ -157,14 +157,14 @@ func exec(w http.ResponseWriter, req *http.Request) {
 	enc.Encode(response)
 }
 
-func execQuery(conn *mysql.Conn, key, query, keyspace, shard string, response map[string]any) {
+func execQuery(conn *mysql.Conn, key, query, keyspace, shard string, response map[string]interface{}) {
 	if query == "" || query == "undefined" {
 		return
 	}
 	if keyspace != "" {
 		_, err := conn.ExecuteFetch(fmt.Sprintf("use `%v:%v`", keyspace, shard), 10000, true)
 		if err != nil {
-			response[key] = map[string]any{
+			response[key] = map[string]interface{}{
 				"title": key,
 				"error": err.Error(),
 			}
@@ -183,7 +183,7 @@ func execQuery(conn *mysql.Conn, key, query, keyspace, shard string, response ma
 		if strings.Contains(err.Error(), "doesn't exist") {
 			return
 		}
-		response[key] = map[string]any{
+		response[key] = map[string]interface{}{
 			"title": title,
 			"error": err.Error(),
 		}
@@ -193,7 +193,7 @@ func execQuery(conn *mysql.Conn, key, query, keyspace, shard string, response ma
 	response[key] = resultToMap(title, qr)
 }
 
-func resultToMap(title string, qr *sqltypes.Result) map[string]any {
+func resultToMap(title string, qr *sqltypes.Result) map[string]interface{} {
 	fields := make([]string, 0, len(qr.Fields))
 	for _, field := range qr.Fields {
 		fields = append(fields, field.Name)
@@ -203,19 +203,14 @@ func resultToMap(title string, qr *sqltypes.Result) map[string]any {
 		srow := make([]string, 0, len(row))
 		for _, value := range row {
 			if value.Type() == sqltypes.VarBinary {
-				bytes, err := value.ToBytes()
-				if err != nil {
-					log.Errorf("Error converting value to bytes: %v", err)
-					return nil
-				}
-				srow = append(srow, hex.EncodeToString(bytes))
+				srow = append(srow, hex.EncodeToString(value.ToBytes()))
 			} else {
 				srow = append(srow, value.ToString())
 			}
 		}
 		rows = append(rows, srow)
 	}
-	return map[string]any{
+	return map[string]interface{}{
 		"title":        title,
 		"fields":       fields,
 		"rows":         rows,

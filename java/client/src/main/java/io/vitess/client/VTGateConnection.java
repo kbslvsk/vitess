@@ -114,7 +114,6 @@ public class VTGateConnection implements Closeable {
 
   /**
    * This method calls the VTGate to execute list of queries as a batch.
-   * <p>
    *
    * @param ctx Context on user and execution deadline if any.
    * @param queryList List of sql queries to be executed.
@@ -125,7 +124,27 @@ public class VTGateConnection implements Closeable {
    * @throws SQLException If anything fails on query execution.
    */
   public SQLFuture<List<CursorWithError>> executeBatch(Context ctx, List<String> queryList,
-      @Nullable List<Map<String, ?>> bindVarsList, final VTSession vtSession)
+      @Nullable List<Map<String, ?>> bindVarsList, final VTSession vtSession) throws SQLException {
+    return executeBatch(ctx, queryList, bindVarsList, false, vtSession);
+  }
+
+  /**
+   * This method calls the VTGate to execute list of queries as a batch.
+   * <p>
+   * <p>If asTransaction is set to <code>true</code> then query execution will not change the
+   * session cookie. Otherwise, query execution will become part of the session.</p>
+   *
+   * @param ctx Context on user and execution deadline if any.
+   * @param queryList List of sql queries to be executed.
+   * @param bindVarsList <p>For each sql query it will provide a list of parameters to bind with. If
+   * provided, should match the number of sql queries.</p>
+   * @param asTransaction To execute query without impacting session cookie.
+   * @param vtSession Session to be used with the call.
+   * @return SQL Future with List of Cursors
+   * @throws SQLException If anything fails on query execution.
+   */
+  public SQLFuture<List<CursorWithError>> executeBatch(Context ctx, List<String> queryList,
+      @Nullable List<Map<String, ?>> bindVarsList, boolean asTransaction, final VTSession vtSession)
       throws SQLException {
     vtSession.checkCallIsAllowed("executeBatch");
     List<Query.BoundQuery> queries = new ArrayList<>();
@@ -143,7 +162,8 @@ public class VTGateConnection implements Closeable {
     Vtgate.ExecuteBatchRequest.Builder requestBuilder =
         Vtgate.ExecuteBatchRequest.newBuilder()
             .addAllQueries(checkNotNull(queries))
-            .setSession(vtSession.getSession());
+            .setSession(vtSession.getSession())
+            .setAsTransaction(asTransaction);
 
     if (ctx.getCallerId() != null) {
       requestBuilder.setCallerId(ctx.getCallerId());

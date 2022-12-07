@@ -319,14 +319,14 @@ func main() {
 			writer := runner{
 				connString:   endpoint.ConnectionString,
 				fn:           writeNextRecord,
-				errMessage:   "Received error writing next record",
+				errMessage:   "Recieved error writing next record",
 				opsPerSecond: endpoint.TargetWritesPerSecond,
 			}
 			go writer.run()
 			deleter := runner{
 				connString:   endpoint.ConnectionString,
 				fn:           deleteLastRecordIfNecessary,
-				errMessage:   "Received error deleting last record",
+				errMessage:   "Recieved error deleting last record",
 				opsPerSecond: 100, // This is based on target "dataset_size", and will not make a query if not needed.  TODO: Actually tune this in a reasonable way after redesigning the schema?
 			}
 			go deleter.run()
@@ -335,7 +335,7 @@ func main() {
 			reader := runner{
 				connString:   endpoint.ConnectionString,
 				fn:           readRandomRecord,
-				errMessage:   "Received error reading record",
+				errMessage:   "Recieved error reading record",
 				opsPerSecond: endpoint.TargetQueriesPerSecond,
 			}
 			go reader.run()
@@ -344,7 +344,7 @@ func main() {
 			counter := runner{
 				connString:   endpoint.ConnectionString,
 				fn:           runCount,
-				errMessage:   "Received error running count",
+				errMessage:   "Recieved error running count",
 				opsPerSecond: endpoint.TargetCountsPerSecond,
 			}
 			go counter.run()

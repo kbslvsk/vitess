@@ -17,23 +17,26 @@ limitations under the License.
 package tabletserver
 
 import (
-	"context"
 	"fmt"
 	"time"
 
-	"vitess.io/vitess/go/mysql"
-	"vitess.io/vitess/go/pools"
-	"vitess.io/vitess/go/sqltypes"
-	"vitess.io/vitess/go/vt/callerid"
 	"vitess.io/vitess/go/vt/log"
+
+	"vitess.io/vitess/go/vt/callerid"
+	querypb "vitess.io/vitess/go/vt/proto/query"
 	"vitess.io/vitess/go/vt/servenv"
-	"vitess.io/vitess/go/vt/vterrors"
+
+	"vitess.io/vitess/go/mysql"
+	"vitess.io/vitess/go/sqltypes"
 	"vitess.io/vitess/go/vt/vttablet/tabletserver/connpool"
-	"vitess.io/vitess/go/vt/vttablet/tabletserver/tabletenv"
+
 	"vitess.io/vitess/go/vt/vttablet/tabletserver/tx"
 
-	querypb "vitess.io/vitess/go/vt/proto/query"
+	"context"
+
 	vtrpcpb "vitess.io/vitess/go/vt/proto/vtrpc"
+	"vitess.io/vitess/go/vt/vterrors"
+	"vitess.io/vitess/go/vt/vttablet/tabletserver/tabletenv"
 )
 
 // StatefulConnection is used in the situations where we need a dedicated connection for a vtgate session.
@@ -48,8 +51,6 @@ type StatefulConnection struct {
 	reservedProps  *Properties
 	tainted        bool
 	enforceTimeout bool
-	timeout        time.Duration
-	expiryTime     time.Time
 }
 
 // Properties contains meta information about the connection
@@ -77,16 +78,6 @@ func (sc *StatefulConnection) IsInTransaction() bool {
 	return sc.txProps != nil
 }
 
-func (sc *StatefulConnection) ElapsedTimeout() bool {
-	if !sc.enforceTimeout {
-		return false
-	}
-	if sc.timeout <= 0 {
-		return false
-	}
-	return sc.expiryTime.Before(time.Now())
-}
-
 // Exec executes the statement in the dedicated connection
 func (sc *StatefulConnection) Exec(ctx context.Context, query string, maxrows int, wantfields bool) (*sqltypes.Result, error) {
 	if sc.IsClosed() {
@@ -112,15 +103,14 @@ func (sc *StatefulConnection) Exec(ctx context.Context, query string, maxrows in
 	return r, nil
 }
 
-func (sc *StatefulConnection) execWithRetry(ctx context.Context, query string, maxrows int, wantfields bool) (string, error) {
+func (sc *StatefulConnection) execWithRetry(ctx context.Context, query string, maxrows int, wantfields bool) error {
 	if sc.IsClosed() {
-		return "", vterrors.New(vtrpcpb.Code_CANCELED, "connection is closed")
+		return vterrors.New(vtrpcpb.Code_CANCELED, "connection is closed")
 	}
-	res, err := sc.dbConn.Exec(ctx, query, maxrows, wantfields)
-	if err != nil {
-		return "", err
+	if _, err := sc.dbConn.Exec(ctx, query, maxrows, wantfields); err != nil {
+		return err
 	}
-	return res.SessionStateChanges, nil
+	return nil
 }
 
 // FetchNext returns the next result set.
@@ -164,7 +154,7 @@ func (sc *StatefulConnection) Release(reason tx.ReleaseReason) {
 
 // Releasef is used when the connection will not be used ever again.
 // The underlying dbConn is removed so that this connection cannot be used by mistake.
-func (sc *StatefulConnection) Releasef(reasonFormat string, a ...any) {
+func (sc *StatefulConnection) Releasef(reasonFormat string, a ...interface{}) {
 	if sc.dbConn == nil {
 		return
 	}
@@ -283,11 +273,6 @@ func (sc *StatefulConnection) LogTransaction(reason tx.ReleaseReason) {
 	tabletenv.TxLogger.Send(sc)
 }
 
-func (sc *StatefulConnection) SetTimeout(timeout time.Duration) {
-	sc.timeout = timeout
-	sc.resetExpiryTime()
-}
-
 // logReservedConn logs reserved connection related stats.
 func (sc *StatefulConnection) logReservedConn() {
 	if sc.reservedProps == nil {
@@ -306,15 +291,4 @@ func (sc *StatefulConnection) getUsername() string {
 		return username
 	}
 	return callerid.GetUsername(sc.reservedProps.ImmediateCaller)
-}
-
-func (sc *StatefulConnection) ApplySetting(ctx context.Context, setting *pools.Setting) error {
-	if sc.dbConn.IsSameSetting(setting.GetQuery()) {
-		return nil
-	}
-	return sc.dbConn.ApplySetting(ctx, setting)
-}
-
-func (sc *StatefulConnection) resetExpiryTime() {
-	sc.expiryTime = time.Now().Add(sc.timeout)
 }

@@ -22,8 +22,6 @@ import (
 	"testing"
 	"time"
 
-	"vitess.io/vitess/go/vt/withddl"
-
 	"vitess.io/vitess/go/sqltypes"
 )
 
@@ -51,10 +49,7 @@ type mockExpect struct {
 
 func getQueriesToIgnore() []*mockExpect {
 	var queriesToIgnore []*mockExpect
-	var queries []string
-	queries = append(queries, WithDDLInitialQueries...)
-	queries = append(queries, withddl.QueryToTriggerWithDDL)
-	for _, query := range queries {
+	for _, query := range WithDDLInitialQueries {
 		exp := &mockExpect{
 			query:  query,
 			re:     nil,

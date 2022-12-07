@@ -22,9 +22,9 @@ access to Vitess.
    3. `tar xzf ./actions-runner-linux-x64-2.280.3.tar.gz`
    4. `./config.sh --url https://github.com/vitessio/vitess --token <token> --name github-runner-<num>`
    5. With a screen execute `./run.sh`
-8. Set up a cron job to remove docker volumes and images every other weekday
+8. Set up a cron job to remove docker volumes and images every week
    1. `crontab -e`
-   2. Within the file add a line `0 5 * * 1,3,5 docker system prune -f --volumes --all`
+   2. Within the file add a line `8 5 * * 6 docker system prune -f --volumes --all`
 9. Vtorc, Cluster 14 and some other tests use multiple MySQL instances which are all brought up with asynchronous I/O setup in InnoDB. This sometimes leads to us hitting the Linux asynchronous I/O limit.
 To fix this we increase the default limit on the self-hosted runners by -
    1. To set the aio-max-nr value, add the following line to the /etc/sysctl.conf file:
@@ -51,41 +51,3 @@ You will need access to the self-hosted runner machine to be able to connect to 
 8. Alternately, execute `docker cp <docker-id>:/vt/vtdataroot ./debugFiles/` to copy the files from the docker container to the servers local file system
 9. You can browse the files there or go a step further and download them locally via `scp`.
 10. Please remember to cleanup the folders created and remove the docker container via `docker stop <docker-id>`.
-
-## Single Self-Hosted runners
-There is currently one self-hosted runner which only hosts a single runner. This allows us to run tests
-that do not use docker on that runner.
-
-All that is needed to be done is to add `runs-on: single-self-hosted`, remove any code that downloads
-dependencies (since they are already present on the self-hosted runner) and add a couple of lines to save
-the vtdataroot output if needed.
-
-[9944](https://github.com/vitessio/vitess/pull/9944/) is an example PR that moves one of the tests to a single-self-hosted runner.
-
-**NOTE** - It is essential to ensure that all the binaries spawned while running the test be stopped even on failure.
-Otherwise, they will keep on running until someone goes ahead and removes them manually. They might interfere
-with the future runs as well.
-
-### Using a single-self-hosted runner to debug a flaky test
-The logs will be stored in the `savedRuns` directory and can be copied locally via `scp`.
-
-A cronjob is already setup to empty the `savedRuns` directory every week so please download the runs
-before they are deleted.
-
-## Running out of disk space in Self-hosted runners
-
-If the loads on the self-hosted runners increases due to multiple tests being moved to them or some other reason, 
-they sometimes end up running out of disk space. This causes the runner to stop working all together.
-
-In order to fix this issue follow the following steps -
-1. `ssh` into the self-hosted runner by finding its address from the equinix dashboard.
-2. Clear out the disk by running `docker system prune -f --volumes --all`. This is the same command that we run on a cron on the server.
-3. Switch to the `github-runner` user
-   1. `su github-runner`
-4. Resume an existing `screen`
-   1. `screen -r`
-5. Start the runner again.
-   1. `./run.sh`
-6. Verify that the runner has started accepting jobs again. Detach the screen and close the `ssh` connection.
-
-

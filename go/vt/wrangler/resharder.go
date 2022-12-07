@@ -18,7 +18,6 @@ package wrangler
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -28,6 +27,8 @@ import (
 	"vitess.io/vitess/go/vt/log"
 	"vitess.io/vitess/go/vt/schema"
 	"vitess.io/vitess/go/vt/vtctl/workflow"
+
+	"github.com/pkg/errors"
 
 	"vitess.io/vitess/go/sqltypes"
 	"vitess.io/vitess/go/vt/binlog/binlogplayer"
@@ -55,7 +56,6 @@ type resharder struct {
 	cell            string //single cell or cellsAlias or comma-separated list of cells/cellsAliases
 	tabletTypes     string
 	stopAfterCopy   bool
-	onDDL           string
 }
 
 type refStream struct {
@@ -67,7 +67,7 @@ type refStream struct {
 
 // Reshard initiates a resharding workflow.
 func (wr *Wrangler) Reshard(ctx context.Context, keyspace, workflow string, sources, targets []string,
-	skipSchemaCopy bool, cell, tabletTypes, onDDL string, autoStart, stopAfterCopy bool) error {
+	skipSchemaCopy bool, cell, tabletTypes string, autoStart, stopAfterCopy bool) error {
 	if err := wr.validateNewWorkflow(ctx, keyspace, workflow); err != nil {
 		return err
 	}
@@ -82,7 +82,6 @@ func (wr *Wrangler) Reshard(ctx context.Context, keyspace, workflow string, sour
 		return vterrors.Wrap(err, "buildResharder")
 	}
 
-	rs.onDDL = onDDL
 	rs.stopAfterCopy = stopAfterCopy
 	if !skipSchemaCopy {
 		if err := rs.copySchema(ctx); err != nil {
@@ -329,18 +328,12 @@ func (rs *resharder) createStreams(ctx context.Context) error {
 				Shard:         source.ShardName(),
 				Filter:        filter,
 				StopAfterCopy: rs.stopAfterCopy,
-				OnDdl:         binlogdatapb.OnDDLAction(binlogdatapb.OnDDLAction_value[rs.onDDL]),
 			}
-			ig.AddRow(rs.workflow, bls, "", rs.cell, rs.tabletTypes,
-				int64(binlogdatapb.VReplicationWorkflowType_Reshard),
-				int64(binlogdatapb.VReplicationWorkflowSubType_None))
+			ig.AddRow(rs.workflow, bls, "", rs.cell, rs.tabletTypes)
 		}
 
 		for _, rstream := range rs.refStreams {
-			ig.AddRow(rstream.workflow, rstream.bls, "", rstream.cell, rstream.tabletTypes,
-				//todo: fix based on original stream
-				int64(binlogdatapb.VReplicationWorkflowType_Reshard),
-				int64(binlogdatapb.VReplicationWorkflowSubType_None))
+			ig.AddRow(rstream.workflow, rstream.bls, "", rstream.cell, rstream.tabletTypes)
 		}
 		query := ig.String()
 		if _, err := rs.wr.tmc.VReplicationExec(ctx, targetPrimary.Tablet, query); err != nil {

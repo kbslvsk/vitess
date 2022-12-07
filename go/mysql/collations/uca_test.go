@@ -18,15 +18,11 @@ package collations
 
 import (
 	"bytes"
-	"fmt"
 	"sort"
 	"strings"
 	"sync"
 	"testing"
 	"unicode/utf8"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 
 	"vitess.io/vitess/go/mysql/collations/internal/charset"
 )
@@ -56,8 +52,9 @@ func testcollation(t testing.TB, name string) Collation {
 	t.Helper()
 	testinit()
 	coll := testcollationMap[name]
-	require.NotNil(t, coll, "missing collation: %s", name)
-
+	if coll == nil {
+		t.Fatalf("missing collation: %s", name)
+	}
 	return coll
 }
 
@@ -83,8 +80,9 @@ func TestWeightsForSpace(t *testing.T) {
 		default:
 			continue
 		}
-		assert.Equal(t, expected, actual, "expected Weight(' ') == 0x%X, got 0x%X", expected, actual)
-
+		if actual != expected {
+			t.Errorf("expected Weight(' ') == 0x%X, got 0x%X", expected, actual)
+		}
 	}
 }
 
@@ -105,8 +103,9 @@ func TestKanaSensitivity(t *testing.T) {
 		t.Run(tc.collation, func(t *testing.T) {
 			collation := testcollation(t, tc.collation)
 			equal := collation.Collate([]byte(Kana1), []byte(Kana2), false) == 0
-			assert.Equal(t, tc.equal, equal, "expected %q == %q to be %v", Kana1, Kana2, tc.equal)
-
+			if equal != tc.equal {
+				t.Errorf("expected %q == %q to be %v", Kana1, Kana2, tc.equal)
+			}
 		})
 	}
 }
@@ -135,8 +134,9 @@ func TestContractions(t *testing.T) {
 
 			for _, in := range tc.inputs {
 				weightString := coll.WeightString(nil, []byte(in), 0)
-				assert.True(t, bytes.Equal(weightString, tc.expected), "weight_string(%q) = %#v (expected %#v)", in, weightString, tc.expected)
-
+				if !bytes.Equal(weightString, tc.expected) {
+					t.Errorf("weight_string(%q) = %#v (expected %#v)", in, weightString, tc.expected)
+				}
 			}
 		})
 	}
@@ -156,8 +156,9 @@ func TestReplacementCharacter(t *testing.T) {
 		t.Run(tc.collation, func(t *testing.T) {
 			coll := testcollation(t, tc.collation)
 			weightString := coll.WeightString(nil, []byte(string(utf8.RuneError)), 0)
-			assert.True(t, bytes.Equal(weightString, tc.expected), "weight_string(\\uFFFD) = %#v (expected %#v)", weightString, tc.expected)
-
+			if !bytes.Equal(weightString, tc.expected) {
+				t.Errorf("weight_string(\\uFFFD) = %#v (expected %#v)", weightString, tc.expected)
+			}
 		})
 	}
 }
@@ -180,8 +181,9 @@ func TestIsPrefix(t *testing.T) {
 			right := string(input[:size])
 
 			cmp := coll.Collate([]byte(left), []byte(right), true)
-			assert.Equal(t, 0, cmp, "IsPrefix(%q, %q) = %d (expected 0)", left, right, cmp)
-
+			if cmp != 0 {
+				t.Errorf("IsPrefix(%q, %q) = %d (expected 0)", left, right, cmp)
+			}
 		}
 	}
 }
@@ -237,10 +239,6 @@ const ChineseString2 = "春江潮水连海平，海上明月共潮生。" +
 	"不知江月待何人，但见长江送流水。" +
 	"白云一片去悠悠，青枫浦上不胜愁。" +
 	"谁家今夜扁舟子？何处相思明月楼？"
-const SpanishString = "A mí se me hace cuento que empezó Buenos Aires: " +
-	"La juzgo tan eterna como el agua y el aire."
-const EnglishString = "Dame Mary Rosa Alleyne Hunnings DBE (nee Berry; born 24 March 1935), " +
-	"known professionally as Mary Berry, is an English food writer, chef, baker and television presenter."
 
 var AllTestStrings = []struct {
 	Name, Content string
@@ -253,8 +251,6 @@ var AllTestStrings = []struct {
 	{"Japanese2", JapaneseString2},
 	{"Chinese", ChineseString},
 	{"Chinese2", ChineseString2},
-	{"Spanish", SpanishString},
-	{"English", EnglishString},
 }
 
 var TestCases = []struct {
@@ -796,8 +792,10 @@ func TestCompareWithWeightString(t *testing.T) {
 	for _, tc := range cases {
 		left := collation.WeightString(nil, []byte(tc.left), 0)
 		right := collation.WeightString(nil, []byte(tc.right), 0)
-		assert.Equal(t, tc.equal, bytes.Equal(left, right), "expected %q / %v == %q / %v to be %v", tc.left, left, tc.right, right, tc.equal)
 
+		if bytes.Equal(left, right) != tc.equal {
+			t.Errorf("expected %q / %v == %q / %v to be %v", tc.left, left, tc.right, right, tc.equal)
+		}
 	}
 }
 
@@ -830,8 +828,9 @@ func TestFastIterators(t *testing.T) {
 		t.Run(tc.collation, func(t *testing.T) {
 			coll := testcollation(t, tc.collation)
 			result := coll.WeightString(nil, allASCIICharacters, 0)
-			assert.True(t, bytes.Equal(tc.expected, result), "weight_string(%q) = %#v (expected %#v)", allASCIICharacters, result, tc.expected)
-
+			if !bytes.Equal(tc.expected, result) {
+				t.Errorf("weight_string(%q) = %#v (expected %#v)", allASCIICharacters, result, tc.expected)
+			}
 		})
 	}
 }
@@ -867,13 +866,13 @@ func (c *ConsistentCollation) Collate(left, right []byte, isPrefix bool) int {
 	w1 := c.WeightString(nil, left, 0)
 	w2 := c.WeightString(nil, right, 0)
 	if bytes.Equal(w1, w2) != equal {
-		c.t.Errorf("ConsistentCollation(%s): expected WeightString %q / %v == %q / %v to be %v", c.Name(), left, w1, right, w2, equal)
+		c.t.Errorf("ConsistentCollation: expected WeightString %q / %v == %q / %v to be %v", left, w1, right, w2, equal)
 	}
 
 	h1 := c.Hash(left, 0)
 	h2 := c.Hash(right, 0)
 	if (h1 == h2) != equal {
-		c.t.Errorf("ConsistentCollation(%s): expected Hash %q / %v == %q / %v to be %v", c.Name(), left, h1, right, h2, equal)
+		c.t.Errorf("ConsistentCollation: expected Hash %q / %v == %q / %v to be %v", left, h1, right, h2, equal)
 	}
 
 	return cmp
@@ -899,8 +898,9 @@ func TestEqualities(t *testing.T) {
 		collation = &ConsistentCollation{Collation: collation, t: t}
 
 		cmp := collation.Collate([]byte(tc.left), []byte(tc.right), false)
-		assert.Equal(t, tc.equal, (cmp == 0), "expected %q == %q to be %v", tc.left, tc.right, tc.equal)
-
+		if (cmp == 0) != tc.equal {
+			t.Errorf("expected %q == %q to be %v", tc.left, tc.right, tc.equal)
+		}
 	}
 }
 
@@ -924,37 +924,5 @@ func TestCaseChangeEqualities(t *testing.T) {
 				_ = collation.Collate(trans2, trans3, false)
 			}
 		})
-	}
-}
-
-func BenchmarkUCA900Collation(b *testing.B) {
-	var Collations = []Collation{
-		testcollation(b, "utf8mb4_0900_as_cs"),
-		testcollation(b, "utf8mb4_0900_as_ci"),
-		testcollation(b, "utf8mb4_0900_ai_ci"),
-	}
-
-	var BenchStrings = []struct {
-		Name, Content string
-	}{
-		{"Long", ExampleStringLong},
-		{"Spanish", SpanishString},
-		{"English", EnglishString},
-		{"Japanese", JapaneseString2},
-	}
-
-	for _, teststr := range BenchStrings {
-		for _, length := range []int{1, 8} {
-			content := strings.Repeat(teststr.Content, length)
-			str1 := []byte(content)
-			str2 := []byte(strings.ToUpper(content))
-			for _, collation := range Collations {
-				b.Run(fmt.Sprintf("%s/%d/%s", teststr.Name, length, collation.Name()), func(b *testing.B) {
-					for i := 0; i < b.N; i++ {
-						_ = collation.Collate(str1, str2, false)
-					}
-				})
-			}
-		}
 	}
 }

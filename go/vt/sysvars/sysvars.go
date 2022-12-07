@@ -16,8 +16,6 @@ limitations under the License.
 
 package sysvars
 
-import "sync"
-
 // This information lives here, because it's needed from the vtgate planbuilder, the vtgate engine,
 // and the AST rewriter, that happens to live in sqlparser.
 
@@ -37,8 +35,6 @@ type SystemVariable struct {
 	Default string
 
 	Name string
-
-	SupportSetVar bool
 }
 
 // System Settings
@@ -55,14 +51,11 @@ var (
 	SessionUUID                 = SystemVariable{Name: "session_uuid", IdentifierAsString: true}
 	SkipQueryPlanCache          = SystemVariable{Name: "skip_query_plan_cache", IsBoolean: true, Default: off}
 	Socket                      = SystemVariable{Name: "socket", Default: off}
-	SQLSelectLimit              = SystemVariable{Name: "sql_select_limit", Default: off, SupportSetVar: true}
+	SQLSelectLimit              = SystemVariable{Name: "sql_select_limit", Default: off}
 	TransactionMode             = SystemVariable{Name: "transaction_mode", IdentifierAsString: true}
 	TransactionReadOnly         = SystemVariable{Name: "transaction_read_only", IsBoolean: true, Default: off}
 	TxReadOnly                  = SystemVariable{Name: "tx_read_only", IsBoolean: true, Default: off}
 	Workload                    = SystemVariable{Name: "workload", IdentifierAsString: true}
-	QueryTimeout                = SystemVariable{Name: "query_timeout"}
-	TransactionIsolation        = SystemVariable{Name: "transaction_isolation", Default: off}
-	TxIsolation                 = SystemVariable{Name: "tx_isolation", Default: off}
 
 	// Online DDL
 	DDLStrategy    = SystemVariable{Name: "ddl_strategy", IdentifierAsString: true}
@@ -91,9 +84,6 @@ var (
 		ReadAfterWriteGTID,
 		ReadAfterWriteTimeOut,
 		SessionTrackGTIDs,
-		QueryTimeout,
-		TransactionIsolation,
-		TxIsolation,
 	}
 
 	ReadOnly = []SystemVariable{
@@ -103,16 +93,16 @@ var (
 	}
 
 	IgnoreThese = []SystemVariable{
-		{Name: "big_tables", IsBoolean: true, SupportSetVar: true},
-		{Name: "bulk_insert_buffer_size", SupportSetVar: true},
+		{Name: "big_tables", IsBoolean: true},
+		{Name: "bulk_insert_buffer_size"},
 		{Name: "debug"},
 		{Name: "default_storage_engine"},
-		{Name: "default_tmp_storage_engine", SupportSetVar: true},
+		{Name: "default_tmp_storage_engine"},
 		{Name: "innodb_strict_mode", IsBoolean: true},
 		{Name: "innodb_support_xa", IsBoolean: true},
 		{Name: "innodb_table_locks", IsBoolean: true},
 		{Name: "innodb_tmpdir"},
-		{Name: "join_buffer_size", SupportSetVar: true},
+		{Name: "join_buffer_size"},
 		{Name: "keep_files_on_create", IsBoolean: true},
 		{Name: "lc_messages"},
 		{Name: "long_query_time"},
@@ -125,21 +115,21 @@ var (
 		{Name: "query_cache_type"},
 		{Name: "query_cache_wlock_invalidate", IsBoolean: true},
 		{Name: "query_prealloc_size"},
-		{Name: "sql_buffer_result", IsBoolean: true, SupportSetVar: true},
+		{Name: "sql_buffer_result", IsBoolean: true},
 		{Name: "transaction_alloc_block_size"},
 		{Name: "wait_timeout"},
 	}
 
 	NotSupported = []SystemVariable{
 		{Name: "audit_log_read_buffer_size"},
-		{Name: "auto_increment_increment", SupportSetVar: true},
-		{Name: "auto_increment_offset", SupportSetVar: true},
+		{Name: "auto_increment_increment"},
+		{Name: "auto_increment_offset"},
 		{Name: "binlog_direct_non_transactional_updates"},
 		{Name: "binlog_row_image"},
 		{Name: "binlog_rows_query_log_events"},
 		{Name: "innodb_ft_enable_stopword"},
 		{Name: "innodb_ft_user_stopword_table"},
-		{Name: "max_points_in_geometry", SupportSetVar: true},
+		{Name: "max_points_in_geometry"},
 		{Name: "max_sp_recursion_depth"},
 		{Name: "myisam_repair_threads"},
 		{Name: "myisam_sort_buffer_size"},
@@ -173,47 +163,49 @@ var (
 	}
 	UseReservedConn = []SystemVariable{
 		{Name: "default_week_format"},
-		{Name: "end_markers_in_json", IsBoolean: true, SupportSetVar: true},
-		{Name: "eq_range_index_dive_limit", SupportSetVar: true},
+		{Name: "end_markers_in_json", IsBoolean: true},
+		{Name: "eq_range_index_dive_limit"},
 		{Name: "explicit_defaults_for_timestamp"},
-		{Name: "foreign_key_checks", IsBoolean: true, SupportSetVar: true},
-		{Name: "group_concat_max_len", SupportSetVar: true},
+		{Name: "foreign_key_checks", IsBoolean: true},
+		{Name: "group_concat_max_len"},
 		{Name: "information_schema_stats_expiry"},
-		{Name: "max_heap_table_size", SupportSetVar: true},
-		{Name: "max_seeks_for_key", SupportSetVar: true},
+		{Name: "max_heap_table_size"},
+		{Name: "max_seeks_for_key"},
 		{Name: "max_tmp_tables"},
 		{Name: "min_examined_row_limit"},
 		{Name: "old_passwords"},
-		{Name: "optimizer_prune_level", SupportSetVar: true},
-		{Name: "optimizer_search_depth", SupportSetVar: true},
-		{Name: "optimizer_switch", SupportSetVar: true},
+		{Name: "optimizer_prune_level"},
+		{Name: "optimizer_search_depth"},
+		{Name: "optimizer_switch"},
 		{Name: "optimizer_trace"},
 		{Name: "optimizer_trace_features"},
 		{Name: "optimizer_trace_limit"},
 		{Name: "optimizer_trace_max_mem_size"},
+		{Name: "transaction_isolation"},
+		{Name: "tx_isolation"},
 		{Name: "optimizer_trace_offset"},
 		{Name: "parser_max_mem_size"},
 		{Name: "profiling", IsBoolean: true},
 		{Name: "profiling_history_size"},
 		{Name: "query_alloc_block_size"},
-		{Name: "range_alloc_block_size", SupportSetVar: true},
-		{Name: "range_optimizer_max_mem_size", SupportSetVar: true},
-		{Name: "read_buffer_size", SupportSetVar: true},
-		{Name: "read_rnd_buffer_size", SupportSetVar: true},
+		{Name: "range_alloc_block_size"},
+		{Name: "range_optimizer_max_mem_size"},
+		{Name: "read_buffer_size"},
+		{Name: "read_rnd_buffer_size"},
 		{Name: "show_create_table_verbosity", IsBoolean: true},
 		{Name: "show_old_temporals", IsBoolean: true},
-		{Name: "sort_buffer_size", SupportSetVar: true},
-		{Name: "sql_big_selects", IsBoolean: true, SupportSetVar: true},
-		{Name: "sql_mode", SupportSetVar: true},
+		{Name: "sort_buffer_size"},
+		{Name: "sql_big_selects", IsBoolean: true},
+		{Name: "sql_mode"},
 		{Name: "sql_notes", IsBoolean: true},
 		{Name: "sql_quote_show_create", IsBoolean: true},
-		{Name: "sql_safe_updates", IsBoolean: true, SupportSetVar: true},
+		{Name: "sql_safe_updates", IsBoolean: true},
 		{Name: "sql_warnings", IsBoolean: true},
 		{Name: "time_zone"},
-		{Name: "tmp_table_size", SupportSetVar: true},
+		{Name: "tmp_table_size"},
 		{Name: "transaction_prealloc_size"},
-		{Name: "unique_checks", IsBoolean: true, SupportSetVar: true},
-		{Name: "updatable_views_with_limit", IsBoolean: true, SupportSetVar: true},
+		{Name: "unique_checks", IsBoolean: true},
+		{Name: "updatable_views_with_limit", IsBoolean: true},
 	}
 	CheckAndIgnore = []SystemVariable{
 		// TODO: Most of these settings should be moved into SysSetOpAware, and change Vitess behaviour.
@@ -231,17 +223,17 @@ var (
 		{Name: "collation_database"},
 		{Name: "collation_server"},
 		{Name: "completion_type"},
-		{Name: "div_precision_increment", SupportSetVar: true},
+		{Name: "div_precision_increment"},
 		{Name: "innodb_lock_wait_timeout"},
 		{Name: "interactive_timeout"},
 		{Name: "lc_time_names"},
-		{Name: "lock_wait_timeout", SupportSetVar: true},
+		{Name: "lock_wait_timeout"},
 		{Name: "max_allowed_packet"},
-		{Name: "max_error_count", SupportSetVar: true},
-		{Name: "max_execution_time", SupportSetVar: true},
-		{Name: "max_join_size", SupportSetVar: true},
-		{Name: "max_length_for_sort_data", SupportSetVar: true},
-		{Name: "max_sort_length", SupportSetVar: true},
+		{Name: "max_error_count"},
+		{Name: "max_execution_time"},
+		{Name: "max_join_size"},
+		{Name: "max_length_for_sort_data"},
+		{Name: "max_sort_length"},
 		{Name: "max_user_connections"},
 		{Name: "net_read_timeout"},
 		{Name: "net_retry_count"},
@@ -250,7 +242,7 @@ var (
 		{Name: "session_track_state_change", IsBoolean: true},
 		{Name: "session_track_system_variables"},
 		{Name: "session_track_transaction_info"},
-		{Name: "sql_auto_is_null", IsBoolean: true, SupportSetVar: true},
+		{Name: "sql_auto_is_null", IsBoolean: true},
 		{Name: "version_tokens_session"},
 	}
 )
@@ -266,25 +258,5 @@ func GetInterestingVariables() []string {
 	res = append(res, Version.Name)
 	res = append(res, VersionComment.Name)
 	res = append(res, Socket.Name)
-
-	for _, variable := range UseReservedConn {
-		if variable.SupportSetVar {
-			res = append(res, variable.Name)
-		}
-	}
 	return res
-}
-
-var vitessAwareVariableNames map[string]struct{}
-var vitessAwareInit sync.Once
-
-func IsVitessAware(sysv string) bool {
-	vitessAwareInit.Do(func() {
-		vitessAwareVariableNames = make(map[string]struct{}, len(VitessAware))
-		for _, v := range VitessAware {
-			vitessAwareVariableNames[v.Name] = struct{}{}
-		}
-	})
-	_, found := vitessAwareVariableNames[sysv]
-	return found
 }

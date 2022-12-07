@@ -18,25 +18,18 @@ package buffer
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"strings"
 	"testing"
-
-	"github.com/spf13/pflag"
 
 	"vitess.io/vitess/go/stats"
 )
 
 func TestVariables(t *testing.T) {
-	fs := pflag.NewFlagSet("vtgate_buffer_variables_test", pflag.ContinueOnError)
-	registerFlags(fs)
-	if err := fs.Parse(nil); err != nil {
-		t.Errorf("failed to parse with default values: %v", err)
-	}
-
-	fs.Set("buffer_size", "23")
+	flag.Set("buffer_size", "23")
 	defer func() {
-		fs.Set("buffer_size", "1")
+		flag.Set("buffer_size", "1")
 	}()
 
 	// Create new buffer which will the flags.

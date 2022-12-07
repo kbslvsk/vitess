@@ -3,9 +3,6 @@ package plancontext
 import (
 	"strings"
 
-	"vitess.io/vitess/go/vt/log"
-	vschemapb "vitess.io/vitess/go/vt/proto/vschema"
-
 	"vitess.io/vitess/go/mysql/collations"
 	"vitess.io/vitess/go/vt/key"
 	querypb "vitess.io/vitess/go/vt/proto/query"
@@ -41,37 +38,24 @@ type VSchema interface {
 
 	// ErrorIfShardedF will return an error if the keyspace is sharded,
 	// and produce a warning if the vtgate if configured to do so
-	ErrorIfShardedF(keyspace *vindexes.Keyspace, warn, errFmt string, params ...any) error
+	ErrorIfShardedF(keyspace *vindexes.Keyspace, warn, errFmt string, params ...interface{}) error
 
 	// WarnUnshardedOnly is used when a feature is only supported in unsharded mode.
 	// This will let the user know that they are using something
 	// that could become a problem if they move to a sharded keyspace
-	WarnUnshardedOnly(format string, params ...any)
+	WarnUnshardedOnly(format string, params ...interface{})
 
 	// PlannerWarning records warning created during planning.
 	PlannerWarning(message string)
 
 	// ForeignKeyMode returns the foreign_key flag value
 	ForeignKeyMode() string
-
-	// GetVSchema returns the latest cached vindexes.VSchema
-	GetVSchema() *vindexes.VSchema
-
-	// GetSrvVschema returns the latest cached vschema.SrvVSchema
-	GetSrvVschema() *vschemapb.SrvVSchema
-	// FindRoutedShard looks up shard routing rules for a shard
-	FindRoutedShard(keyspace, shard string) (string, error)
-
-	// IsShardRoutingEnabled returns true if partial shard routing is enabled
-	IsShardRoutingEnabled() bool
 }
 
 // PlannerNameToVersion returns the numerical representation of the planner
 func PlannerNameToVersion(s string) (PlannerVersion, bool) {
-	deprecationMessage := "The V3 planner is deprecated and will be removed in V17 of Vitess"
 	switch strings.ToLower(s) {
 	case "v3":
-		log.Warning(deprecationMessage)
 		return querypb.ExecuteOptions_V3, true
 	case "gen4":
 		return querypb.ExecuteOptions_Gen4, true
@@ -82,7 +66,6 @@ func PlannerNameToVersion(s string) (PlannerVersion, bool) {
 	case "gen4fallback":
 		return querypb.ExecuteOptions_Gen4WithFallback, true
 	case "gen4comparev3":
-		log.Warning(deprecationMessage)
 		return querypb.ExecuteOptions_Gen4CompareV3, true
 	}
 	return 0, false

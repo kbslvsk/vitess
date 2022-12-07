@@ -31,10 +31,9 @@ type PlanningContext struct {
 	// e.g. [FROM tblA JOIN tblB ON a.colA = b.colB] will be rewritten to [FROM tblB WHERE :a_colA = b.colB],
 	// if we assume that tblB is on the RHS of the join. This last predicate in the WHERE clause is added to the
 	// map below
-	JoinPredicates     map[sqlparser.Expr][]sqlparser.Expr
-	SkipPredicates     map[sqlparser.Expr]any
-	PlannerVersion     querypb.ExecuteOptions_PlannerVersion
-	RewriteDerivedExpr bool
+	JoinPredicates map[sqlparser.Expr][]sqlparser.Expr
+	SkipPredicates map[sqlparser.Expr]interface{}
+	PlannerVersion querypb.ExecuteOptions_PlannerVersion
 }
 
 func NewPlanningContext(reservedVars *sqlparser.ReservedVars, semTable *semantics.SemTable, vschema VSchema, version querypb.ExecuteOptions_PlannerVersion) *PlanningContext {
@@ -43,7 +42,7 @@ func NewPlanningContext(reservedVars *sqlparser.ReservedVars, semTable *semantic
 		SemTable:       semTable,
 		VSchema:        vschema,
 		JoinPredicates: map[sqlparser.Expr][]sqlparser.Expr{},
-		SkipPredicates: map[sqlparser.Expr]any{},
+		SkipPredicates: map[sqlparser.Expr]interface{}{},
 		PlannerVersion: version,
 	}
 	return ctx

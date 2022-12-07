@@ -57,10 +57,6 @@ func (topo *TopoProcess) Setup(topoFlavor string, cluster *LocalProcessCluster) 
 	case "consul":
 		return topo.SetupConsul(cluster)
 	default:
-		// We still rely on the etcd v2 API for things like mkdir.
-		// If this ENV var is not set then some tests may fail with etcd 3.4+
-		// where the v2 API is disabled by default in both the client and server.
-		os.Setenv("ETCDCTL_API", "2")
 		return topo.SetupEtcd()
 	}
 }
@@ -103,7 +99,6 @@ func (topo *TopoProcess) SetupEtcd() (err error) {
 	topo.exit = make(chan error)
 	go func() {
 		topo.exit <- topo.proc.Wait()
-		close(topo.exit)
 	}()
 
 	timeout := time.Now().Add(60 * time.Second)
@@ -135,8 +130,8 @@ func (topo *TopoProcess) SetupZookeeper(cluster *LocalProcessCluster) (err error
 
 	topo.proc = exec.Command(
 		topo.Binary,
-		"--log_dir", topo.LogDirectory,
-		"--zk.cfg", fmt.Sprintf("1@%v:%s", host, topo.ZKPorts),
+		"-log_dir", topo.LogDirectory,
+		"-zk.cfg", fmt.Sprintf("1@%v:%s", host, topo.ZKPorts),
 		"init",
 	)
 
@@ -228,7 +223,6 @@ func (topo *TopoProcess) SetupConsul(cluster *LocalProcessCluster) (err error) {
 	topo.exit = make(chan error)
 	go func() {
 		topo.exit <- topo.proc.Wait()
-		close(topo.exit)
 	}()
 
 	timeout := time.Now().Add(60 * time.Second)
@@ -257,8 +251,8 @@ func (topo *TopoProcess) TearDown(Cell string, originalVtRoot string, currentRoo
 		}
 		topo.proc = exec.Command(
 			topo.Binary,
-			"--log_dir", topo.LogDirectory,
-			"--zk.cfg", fmt.Sprintf("1@%v:%s", topo.Host, topo.ZKPorts),
+			"-log_dir", topo.LogDirectory,
+			"-zk.cfg", fmt.Sprintf("1@%v:%s", topo.Host, topo.ZKPorts),
 			cmd,
 		)
 
@@ -291,9 +285,8 @@ func (topo *TopoProcess) TearDown(Cell string, originalVtRoot string, currentRoo
 
 		case <-time.After(10 * time.Second):
 			topo.proc.Process.Kill()
-			err := <-topo.exit
 			topo.proc = nil
-			return err
+			return <-topo.exit
 		}
 	}
 
@@ -306,17 +299,15 @@ func (topo *TopoProcess) IsHealthy() bool {
 	if err != nil {
 		return false
 	}
-	defer resp.Body.Close()
-	return resp.StatusCode == 200
+	if resp.StatusCode == 200 {
+		return true
+	}
+	return false
 }
 
 func (topo *TopoProcess) removeTopoDirectories(Cell string) {
-	if err := topo.ManageTopoDir("rmdir", "/vitess/global"); err != nil {
-		log.Errorf("Failed to remove global topo directory: %v", err)
-	}
-	if err := topo.ManageTopoDir("rmdir", "/vitess/"+Cell); err != nil {
-		log.Errorf("Failed to remove local topo directory: %v", err)
-	}
+	_ = topo.ManageTopoDir("rmdir", "/vitess/global")
+	_ = topo.ManageTopoDir("rmdir", "/vitess/"+Cell)
 }
 
 // ManageTopoDir creates global and zone in etcd2
@@ -326,17 +317,11 @@ func (topo *TopoProcess) ManageTopoDir(command string, directory string) (err er
 	if command == "mkdir" {
 		req, _ := http.NewRequest("PUT", url, payload)
 		req.Header.Add("content-type", "application/json")
-		resp, err := http.DefaultClient.Do(req)
-		if err == nil {
-			defer resp.Body.Close()
-		}
+		_, err = http.DefaultClient.Do(req)
 		return err
 	} else if command == "rmdir" {
 		req, _ := http.NewRequest("DELETE", url+"?dir=true", payload)
-		resp, err := http.DefaultClient.Do(req)
-		if err == nil {
-			defer resp.Body.Close()
-		}
+		_, err = http.DefaultClient.Do(req)
 		return err
 	} else {
 		return nil

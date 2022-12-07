@@ -17,12 +17,11 @@ limitations under the License.
 package servenv
 
 import (
+	"flag"
 	"fmt"
 	"runtime"
 	"strconv"
 	"time"
-
-	"github.com/spf13/pflag"
 
 	"vitess.io/vitess/go/stats"
 )
@@ -35,13 +34,9 @@ var (
 	buildGitBranch        = ""
 	jenkinsBuildNumberStr = ""
 
-	// version registers the command line flag to expose build info.
-	version bool
+	// Version registers the command line flag to expose build info.
+	Version = flag.Bool("version", false, "print binary version")
 )
-
-func registerVersionFlag(fs *pflag.FlagSet) {
-	fs.BoolVarP(&version, "version", "v", version, "print binary version")
-}
 
 // AppVersion is the struct to store build info.
 var AppVersion versionInfo
@@ -91,8 +86,8 @@ func (v *versionInfo) String() string {
 }
 
 func (v *versionInfo) MySQLVersion() string {
-	if mySQLServerVersion != "" {
-		return mySQLServerVersion
+	if *MySQLServerVersion != "" {
+		return *MySQLServerVersion
 	}
 	return "5.7.9-vitess-" + v.version
 }
@@ -141,6 +136,4 @@ func init() {
 		fmt.Sprintf("%v", AppVersion.jenkinsBuildNumber),
 	}
 	stats.NewGaugesWithMultiLabels("BuildInformation", "build information exposed via label", buildLabels).Set(buildValues, 1)
-
-	OnParse(registerVersionFlag)
 }

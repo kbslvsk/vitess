@@ -5,7 +5,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-	http://www.apache.org/licenses/LICENSE-2.0
+    http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"sync"
 	"testing"
 	"time"
 
@@ -77,8 +76,8 @@ var (
 )
 
 const (
-	testThreshold   = 5
-	applyConfigWait = 15 * time.Second // time after which we're sure the throttler has refreshed config and tablets
+	testThreshold     = 5
+	throttlerInitWait = 10 * time.Second
 )
 
 func TestMain(m *testing.M) {
@@ -97,15 +96,15 @@ func TestMain(m *testing.M) {
 
 		// Set extra tablet args for lock timeout
 		clusterInstance.VtTabletExtraArgs = []string{
-			"--lock_tables_timeout", "5s",
-			"--watch_replication_stream",
-			"--enable_replication_reporter",
-			"--enable-lag-throttler",
-			"--throttle_metrics_query", "show global status like 'threads_running'",
-			"--throttle_metrics_threshold", fmt.Sprintf("%d", testThreshold),
-			"--throttle_check_as_check_self",
-			"--heartbeat_enable",
-			"--heartbeat_interval", "250ms",
+			"-lock_tables_timeout", "5s",
+			"-watch_replication_stream",
+			"-enable_replication_reporter",
+			"-enable-lag-throttler",
+			"-throttle_metrics_query", "show global status like 'threads_running'",
+			"-throttle_metrics_threshold", fmt.Sprintf("%d", testThreshold),
+			"-throttle_check_as_check_self",
+			"-heartbeat_enable",
+			"-heartbeat_interval", "250ms",
 		}
 		// We do not need semiSync for this test case.
 		clusterInstance.EnableSemiSync = false
@@ -132,6 +131,8 @@ func TestMain(m *testing.M) {
 		}
 
 		vtgateInstance := clusterInstance.NewVtgateInstance()
+		// set the gateway we want to use
+		vtgateInstance.GatewayImplementation = "tabletgateway"
 		// Start vtgate
 		if err := vtgateInstance.Setup(); err != nil {
 			return 1
@@ -149,8 +150,7 @@ func TestMain(m *testing.M) {
 }
 
 func throttleCheck(tablet *cluster.Vttablet) (*http.Response, error) {
-	resp, err := httpClient.Get(fmt.Sprintf("http://localhost:%d/%s", tablet.HTTPPort, checkAPIPath))
-	return resp, err
+	return httpClient.Head(fmt.Sprintf("http://localhost:%d/%s", tablet.HTTPPort, checkAPIPath))
 }
 
 func throttleCheckSelf(tablet *cluster.Vttablet) (*http.Response, error) {
@@ -160,65 +160,64 @@ func throttleCheckSelf(tablet *cluster.Vttablet) (*http.Response, error) {
 func TestThrottlerThresholdOK(t *testing.T) {
 	defer cluster.PanicHandler(t)
 
-	t.Run("immediately", func(t *testing.T) {
+	{
 		resp, err := throttleCheck(primaryTablet)
-		require.NoError(t, err)
-		defer resp.Body.Close()
+		assert.NoError(t, err)
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
-	})
-	t.Run("after long wait", func(t *testing.T) {
-		time.Sleep(applyConfigWait)
+	}
+}
+
+func TestThrottlerAfterMetricsCollected(t *testing.T) {
+	defer cluster.PanicHandler(t)
+
+	time.Sleep(throttlerInitWait)
+	// By this time metrics will have been collected. We expect no lag, and something like:
+	// {"StatusCode":200,"Value":0.282278,"Threshold":1,"Message":""}
+	{
 		resp, err := throttleCheck(primaryTablet)
-		require.NoError(t, err)
-		defer resp.Body.Close()
+		assert.NoError(t, err)
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
-	})
+	}
+	{
+		resp, err := throttleCheckSelf(primaryTablet)
+		assert.NoError(t, err)
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+	}
 }
 
 func TestThreadsRunning(t *testing.T) {
 	defer cluster.PanicHandler(t)
 
-	sleepDuration := 10 * time.Second
-	var wg sync.WaitGroup
+	sleepSeconds := 6
 	for i := 0; i < testThreshold; i++ {
-		// generate different Sleep() calls, all at minimum sleepDuration
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			vtgateExec(t, fmt.Sprintf("select sleep(%d)", int(sleepDuration.Seconds())+i), "")
-		}(i)
+		go vtgateExec(t, fmt.Sprintf("select sleep(%d)", sleepSeconds), "")
 	}
 	t.Run("exceeds threshold", func(t *testing.T) {
-		time.Sleep(sleepDuration / 2)
-		// by this time we will have testThreshold+1 threads_running, and we should hit the threshold
+		time.Sleep(3 * time.Second)
+		// by this time we will have +1 threads_running, and we should hit the threshold
 		// {"StatusCode":429,"Value":2,"Threshold":2,"Message":"Threshold exceeded"}
 		{
 			resp, err := throttleCheck(primaryTablet)
-			require.NoError(t, err)
-			defer resp.Body.Close()
+			assert.NoError(t, err)
 			assert.Equal(t, http.StatusTooManyRequests, resp.StatusCode)
 		}
 		{
 			resp, err := throttleCheckSelf(primaryTablet)
-			require.NoError(t, err)
-			defer resp.Body.Close()
+			assert.NoError(t, err)
 			assert.Equal(t, http.StatusTooManyRequests, resp.StatusCode)
 		}
 	})
-	t.Run("wait for queries to terminate", func(t *testing.T) {
-		wg.Wait()
-	})
 	t.Run("restored below threshold", func(t *testing.T) {
+		time.Sleep(time.Duration(sleepSeconds) * time.Second * 2) // * 2 since we have two planner executing the select sleep(6) query
+		// Restore
 		{
 			resp, err := throttleCheck(primaryTablet)
-			require.NoError(t, err)
-			defer resp.Body.Close()
+			assert.NoError(t, err)
 			assert.Equal(t, http.StatusOK, resp.StatusCode)
 		}
 		{
 			resp, err := throttleCheckSelf(primaryTablet)
-			require.NoError(t, err)
-			defer resp.Body.Close()
+			assert.NoError(t, err)
 			assert.Equal(t, http.StatusOK, resp.StatusCode)
 		}
 	})
@@ -229,7 +228,7 @@ func vtgateExec(t *testing.T, query string, expectError string) *sqltypes.Result
 
 	ctx := context.Background()
 	conn, err := mysql.Connect(ctx, &vtParams)
-	require.NoError(t, err)
+	require.Nil(t, err)
 	defer conn.Close()
 
 	qr, err := conn.ExecuteFetch(query, 1000, true)

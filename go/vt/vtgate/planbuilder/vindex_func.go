@@ -19,8 +19,6 @@ package planbuilder
 import (
 	"fmt"
 
-	"vitess.io/vitess/go/vt/vtgate/planbuilder/plancontext"
-
 	"vitess.io/vitess/go/vt/vtgate/semantics"
 
 	vtrpcpb "vitess.io/vitess/go/vt/proto/vtrpc"
@@ -73,7 +71,7 @@ func newVindexFunc(alias sqlparser.TableName, vindex vindexes.SingleColumn) (*vi
 	}
 
 	for _, colName := range colnames {
-		t.addColumn(sqlparser.NewIdentifierCI(colName), &column{origin: vf})
+		t.addColumn(sqlparser.NewColIdent(colName), &column{origin: vf})
 	}
 	t.isAuthoritative = true
 
@@ -109,7 +107,7 @@ func (vf *vindexFunc) Wireup(logicalPlan, *jointab) error {
 }
 
 // WireupGen4 implements the logicalPlan interface
-func (vf *vindexFunc) WireupGen4(*plancontext.PlanningContext) error {
+func (vf *vindexFunc) WireupGen4(*semantics.SemTable) error {
 	return nil
 }
 
@@ -163,8 +161,15 @@ func (vf *vindexFunc) SupplyProjection(expr *sqlparser.AliasedExpr, reuse bool) 
 		}
 	}
 
+	var name string
+	if expr.As.IsEmpty() {
+		name = sqlparser.String(colName)
+	} else {
+		name = expr.As.String()
+	}
+
 	vf.eVindexFunc.Fields = append(vf.eVindexFunc.Fields, &querypb.Field{
-		Name: expr.ColumnName(),
+		Name: name,
 		Type: querypb.Type_VARBINARY,
 	})
 	vf.eVindexFunc.Cols = append(vf.eVindexFunc.Cols, enum)

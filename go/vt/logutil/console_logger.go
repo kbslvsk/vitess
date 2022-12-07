@@ -36,22 +36,22 @@ func NewConsoleLogger() *ConsoleLogger {
 }
 
 // Infof is part of the Logger interface
-func (cl *ConsoleLogger) Infof(format string, v ...any) {
+func (cl *ConsoleLogger) Infof(format string, v ...interface{}) {
 	cl.InfoDepth(1, fmt.Sprintf(format, v...))
 }
 
 // Warningf is part of the Logger interface
-func (cl *ConsoleLogger) Warningf(format string, v ...any) {
+func (cl *ConsoleLogger) Warningf(format string, v ...interface{}) {
 	cl.WarningDepth(1, fmt.Sprintf(format, v...))
 }
 
 // Errorf is part of the Logger interface
-func (cl *ConsoleLogger) Errorf(format string, v ...any) {
+func (cl *ConsoleLogger) Errorf(format string, v ...interface{}) {
 	cl.ErrorDepth(1, fmt.Sprintf(format, v...))
 }
 
 // Errorf2 is part of the Logger interface
-func (cl *ConsoleLogger) Errorf2(err error, format string, v ...any) {
+func (cl *ConsoleLogger) Errorf2(err error, format string, v ...interface{}) {
 	cl.ErrorDepth(1, fmt.Sprintf(format+": %+v", append(v, err)))
 }
 
@@ -61,7 +61,7 @@ func (cl *ConsoleLogger) Error(err error) {
 }
 
 // Printf is part of the Logger interface
-func (cl *ConsoleLogger) Printf(format string, v ...any) {
+func (cl *ConsoleLogger) Printf(format string, v ...interface{}) {
 	fmt.Printf(format, v...)
 }
 

@@ -32,11 +32,8 @@ import (
 	"testing"
 	"time"
 
-	"vitess.io/vitess/go/vt/sqlparser"
-
 	"vitess.io/vitess/go/mysql"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"vitess.io/vitess/go/cache"
@@ -56,7 +53,9 @@ import (
 func TestStrictMode(t *testing.T) {
 	db := fakesqldb.New(t)
 	defer db.Close()
-	schematest.AddDefaultQueries(db)
+	for query, result := range schematest.Queries() {
+		db.AddQuery(query, result)
+	}
 
 	// Test default behavior.
 	config := tabletenv.NewDefaultConfig()
@@ -99,7 +98,9 @@ func TestStrictMode(t *testing.T) {
 func TestGetPlanPanicDuetoEmptyQuery(t *testing.T) {
 	db := fakesqldb.New(t)
 	defer db.Close()
-	schematest.AddDefaultQueries(db)
+	for query, result := range schematest.Queries() {
+		db.AddQuery(query, result)
+	}
 	qe := newTestQueryEngine(10*time.Second, true, newDBConfigs(db))
 	qe.se.Open()
 	qe.Open()
@@ -107,8 +108,8 @@ func TestGetPlanPanicDuetoEmptyQuery(t *testing.T) {
 
 	ctx := context.Background()
 	logStats := tabletenv.NewLogStats(ctx, "GetPlanStats")
-	_, err := qe.GetPlan(ctx, logStats, "", false)
-	require.EqualError(t, err, "Query was empty")
+	_, err := qe.GetPlan(ctx, logStats, "", false, false /* inReservedConn */)
+	require.EqualError(t, err, "query was empty")
 }
 
 func addSchemaEngineQueries(db *fakesqldb.DB) {
@@ -131,7 +132,9 @@ func addSchemaEngineQueries(db *fakesqldb.DB) {
 func TestGetMessageStreamPlan(t *testing.T) {
 	db := fakesqldb.New(t)
 	defer db.Close()
-	schematest.AddDefaultQueries(db)
+	for query, result := range schematest.Queries() {
+		db.AddQuery(query, result)
+	}
 
 	addSchemaEngineQueries(db)
 
@@ -161,20 +164,23 @@ func TestGetMessageStreamPlan(t *testing.T) {
 }
 
 func assertPlanCacheSize(t *testing.T, qe *QueryEngine, expected int) {
-	t.Helper()
 	var size int
 	qe.plans.Wait()
-	qe.plans.ForEach(func(_ any) bool {
+	qe.plans.ForEach(func(_ interface{}) bool {
 		size++
 		return true
 	})
-	require.Equal(t, expected, size, "expected query plan cache to contain %d entries, found %d", expected, size)
+	if size != expected {
+		t.Fatalf("expected query plan cache to contain %d entries, found %d", expected, size)
+	}
 }
 
 func TestQueryPlanCache(t *testing.T) {
 	db := fakesqldb.New(t)
 	defer db.Close()
-	schematest.AddDefaultQueries(db)
+	for query, result := range schematest.Queries() {
+		db.AddQuery(query, result)
+	}
 
 	firstQuery := "select * from test_table_01"
 	secondQuery := "select * from test_table_02"
@@ -189,19 +195,24 @@ func TestQueryPlanCache(t *testing.T) {
 	ctx := context.Background()
 	logStats := tabletenv.NewLogStats(ctx, "GetPlanStats")
 	if cache.DefaultConfig.LFU {
-		// this cache capacity is in bytes
-		qe.SetQueryPlanCacheCap(528)
+		qe.SetQueryPlanCacheCap(1024)
 	} else {
-		// this cache capacity is in number of elements
 		qe.SetQueryPlanCacheCap(1)
 	}
-	firstPlan, err := qe.GetPlan(ctx, logStats, firstQuery, false)
-	require.NoError(t, err)
-	require.NotNil(t, firstPlan, "plan should not be nil")
-	secondPlan, err := qe.GetPlan(ctx, logStats, secondQuery, false)
-	fmt.Println(secondPlan.CachedSize(true))
-	require.NoError(t, err)
-	require.NotNil(t, secondPlan, "plan should not be nil")
+	firstPlan, err := qe.GetPlan(ctx, logStats, firstQuery, false, false /* inReservedConn */)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstPlan == nil {
+		t.Fatalf("plan should not be nil")
+	}
+	secondPlan, err := qe.GetPlan(ctx, logStats, secondQuery, false, false /* inReservedConn */)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondPlan == nil {
+		t.Fatalf("plan should not be nil")
+	}
 	expvar.Do(func(kv expvar.KeyValue) {
 		_ = kv.Value.String()
 	})
@@ -212,7 +223,9 @@ func TestQueryPlanCache(t *testing.T) {
 func TestNoQueryPlanCache(t *testing.T) {
 	db := fakesqldb.New(t)
 	defer db.Close()
-	schematest.AddDefaultQueries(db)
+	for query, result := range schematest.Queries() {
+		db.AddQuery(query, result)
+	}
 
 	firstQuery := "select * from test_table_01"
 	db.AddQuery("select * from test_table_01 where 1 != 1", &sqltypes.Result{})
@@ -226,7 +239,7 @@ func TestNoQueryPlanCache(t *testing.T) {
 	ctx := context.Background()
 	logStats := tabletenv.NewLogStats(ctx, "GetPlanStats")
 	qe.SetQueryPlanCacheCap(1024)
-	firstPlan, err := qe.GetPlan(ctx, logStats, firstQuery, true)
+	firstPlan, err := qe.GetPlan(ctx, logStats, firstQuery, true, false /* inReservedConn */)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,10 +253,11 @@ func TestNoQueryPlanCache(t *testing.T) {
 func TestNoQueryPlanCacheDirective(t *testing.T) {
 	db := fakesqldb.New(t)
 	defer db.Close()
-	schematest.AddDefaultQueries(db)
+	for query, result := range schematest.Queries() {
+		db.AddQuery(query, result)
+	}
 
 	firstQuery := "select /*vt+ SKIP_QUERY_PLAN_CACHE=1 */ * from test_table_01"
-	db.AddQuery("select * from test_table_01 where 1 != 1", &sqltypes.Result{})
 	db.AddQuery("select /*vt+ SKIP_QUERY_PLAN_CACHE=1 */ * from test_table_01 where 1 != 1", &sqltypes.Result{})
 	db.AddQuery("select /*vt+ SKIP_QUERY_PLAN_CACHE=1 */ * from test_table_02 where 1 != 1", &sqltypes.Result{})
 
@@ -255,7 +269,7 @@ func TestNoQueryPlanCacheDirective(t *testing.T) {
 	ctx := context.Background()
 	logStats := tabletenv.NewLogStats(ctx, "GetPlanStats")
 	qe.SetQueryPlanCacheCap(1024)
-	firstPlan, err := qe.GetPlan(ctx, logStats, firstQuery, false)
+	firstPlan, err := qe.GetPlan(ctx, logStats, firstQuery, false, false /* inReservedConn */)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +283,9 @@ func TestNoQueryPlanCacheDirective(t *testing.T) {
 func TestStatsURL(t *testing.T) {
 	db := fakesqldb.New(t)
 	defer db.Close()
-	schematest.AddDefaultQueries(db)
+	for query, result := range schematest.Queries() {
+		db.AddQuery(query, result)
+	}
 	query := "select * from test_table_01"
 	db.AddQuery("select * from test_table_01 where 1 != 1", &sqltypes.Result{})
 	qe := newTestQueryEngine(1*time.Second, true, newDBConfigs(db))
@@ -279,7 +295,7 @@ func TestStatsURL(t *testing.T) {
 	// warm up cache
 	ctx := context.Background()
 	logStats := tabletenv.NewLogStats(ctx, "GetPlanStats")
-	qe.GetPlan(ctx, logStats, query, false)
+	qe.GetPlan(ctx, logStats, query, false, false /* inReservedConn */)
 
 	request, _ := http.NewRequest("GET", "/debug/tablet_plans", nil)
 	response := httptest.NewRecorder()
@@ -334,16 +350,16 @@ func runConsolidatedQuery(t *testing.T, sql string) *QueryEngine {
 func TestConsolidationsUIRedaction(t *testing.T) {
 	// Reset to default redaction state.
 	defer func() {
-		streamlog.SetRedactDebugUIQueries(false)
+		*streamlog.RedactDebugUIQueries = false
 	}()
 
 	request, _ := http.NewRequest("GET", "/debug/consolidations", nil)
 
 	sql := "select * from test_db_01 where col = 'secret'"
-	redactedSQL := "select * from test_db_01 where col = :col"
+	redactedSQL := "select * from test_db_01 where col = :redacted1"
 
 	// First with the redaction off
-	streamlog.SetRedactDebugUIQueries(false)
+	*streamlog.RedactDebugUIQueries = false
 	unRedactedResponse := httptest.NewRecorder()
 	qe := runConsolidatedQuery(t, sql)
 
@@ -353,7 +369,7 @@ func TestConsolidationsUIRedaction(t *testing.T) {
 	}
 
 	// Now with the redaction on
-	streamlog.SetRedactDebugUIQueries(true)
+	*streamlog.RedactDebugUIQueries = true
 	redactedResponse := httptest.NewRecorder()
 	qe.handleHTTPConsolidations(redactedResponse, request)
 
@@ -370,7 +386,9 @@ func BenchmarkPlanCacheThroughput(b *testing.B) {
 	db := fakesqldb.New(b)
 	defer db.Close()
 
-	schematest.AddDefaultQueries(db)
+	for query, result := range schematest.Queries() {
+		db.AddQuery(query, result)
+	}
 
 	db.AddQueryPattern(".*", &sqltypes.Result{})
 
@@ -384,7 +402,7 @@ func BenchmarkPlanCacheThroughput(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		query := fmt.Sprintf("SELECT (a, b, c) FROM test_table_%d", rand.Intn(500))
-		_, err := qe.GetPlan(ctx, logStats, query, false)
+		_, err := qe.GetPlan(ctx, logStats, query, false, false /* inReservedConn */)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -415,7 +433,7 @@ func benchmarkPlanCache(b *testing.B, db *fakesqldb.DB, lfu bool, par int) {
 
 		for pb.Next() {
 			query := fmt.Sprintf("SELECT (a, b, c) FROM test_table_%d", rand.Intn(500))
-			_, err := qe.GetPlan(ctx, logStats, query, false)
+			_, err := qe.GetPlan(ctx, logStats, query, false, false /* inReservedConn */)
 			require.NoErrorf(b, err, "bad query: %s", query)
 		}
 	})
@@ -425,7 +443,9 @@ func BenchmarkPlanCacheContention(b *testing.B) {
 	db := fakesqldb.New(b)
 	defer db.Close()
 
-	schematest.AddDefaultQueries(db)
+	for query, result := range schematest.Queries() {
+		db.AddQuery(query, result)
+	}
 
 	db.AddQueryPattern(".*", &sqltypes.Result{})
 
@@ -452,7 +472,9 @@ func TestPlanCachePollution(t *testing.T) {
 	db := fakesqldb.New(t)
 	defer db.Close()
 
-	schematest.AddDefaultQueries(db)
+	for query, result := range schematest.Queries() {
+		db.AddQuery(query, result)
+	}
 
 	db.AddQueryPattern(".*", &sqltypes.Result{})
 
@@ -541,7 +563,7 @@ func TestPlanCachePollution(t *testing.T) {
 			query := sample()
 
 			start := time.Now()
-			_, err := qe.GetPlan(ctx, logStats, query, false)
+			_, err := qe.GetPlan(ctx, logStats, query, false, false /* inReservedConn */)
 			require.NoErrorf(t, err, "bad query: %s", query)
 			stats.interval += time.Since(start)
 
@@ -570,141 +592,4 @@ func TestPlanCachePollution(t *testing.T) {
 	}()
 
 	wg.Wait()
-}
-
-func TestAddQueryStats(t *testing.T) {
-	testcases := []struct {
-		name                      string
-		planType                  planbuilder.PlanType
-		tableName                 string
-		queryCount                int64
-		duration                  time.Duration
-		mysqlTime                 time.Duration
-		rowsAffected              int64
-		rowsReturned              int64
-		errorCount                int64
-		expectedQueryCounts       string
-		expectedQueryTimes        string
-		expectedQueryRowsAffected string
-		expectedQueryRowsReturned string
-		expectedQueryRowCounts    string
-		expectedQueryErrorCounts  string
-	}{
-		{
-			name:                      "select query",
-			planType:                  planbuilder.PlanSelect,
-			tableName:                 "A",
-			queryCount:                1,
-			duration:                  10,
-			rowsAffected:              0,
-			rowsReturned:              15,
-			errorCount:                0,
-			expectedQueryCounts:       `{"A.Select": 1}`,
-			expectedQueryTimes:        `{"A.Select": 10}`,
-			expectedQueryRowsAffected: `{}`,
-			expectedQueryRowsReturned: `{"A.Select": 15}`,
-			expectedQueryRowCounts:    `{"A.Select": 0}`,
-			expectedQueryErrorCounts:  `{"A.Select": 0}`,
-		}, {
-			name:                      "select into query",
-			planType:                  planbuilder.PlanSelect,
-			tableName:                 "A",
-			queryCount:                1,
-			duration:                  10,
-			rowsAffected:              15,
-			rowsReturned:              0,
-			errorCount:                0,
-			expectedQueryCounts:       `{"A.Select": 1}`,
-			expectedQueryTimes:        `{"A.Select": 10}`,
-			expectedQueryRowsAffected: `{"A.Select": 15}`,
-			expectedQueryRowsReturned: `{"A.Select": 0}`,
-			expectedQueryRowCounts:    `{"A.Select": 15}`,
-			expectedQueryErrorCounts:  `{"A.Select": 0}`,
-		}, {
-			name:                      "error",
-			planType:                  planbuilder.PlanSelect,
-			tableName:                 "A",
-			queryCount:                1,
-			duration:                  10,
-			rowsAffected:              0,
-			rowsReturned:              0,
-			errorCount:                1,
-			expectedQueryCounts:       `{"A.Select": 1}`,
-			expectedQueryTimes:        `{"A.Select": 10}`,
-			expectedQueryRowsAffected: `{}`,
-			expectedQueryRowsReturned: `{"A.Select": 0}`,
-			expectedQueryRowCounts:    `{"A.Select": 0}`,
-			expectedQueryErrorCounts:  `{"A.Select": 1}`,
-		}, {
-			name:                      "insert query",
-			planType:                  planbuilder.PlanInsert,
-			tableName:                 "A",
-			queryCount:                1,
-			duration:                  10,
-			rowsAffected:              15,
-			rowsReturned:              0,
-			errorCount:                0,
-			expectedQueryCounts:       `{"A.Insert": 1}`,
-			expectedQueryTimes:        `{"A.Insert": 10}`,
-			expectedQueryRowsAffected: `{"A.Insert": 15}`,
-			expectedQueryRowsReturned: `{}`,
-			expectedQueryRowCounts:    `{"A.Insert": 15}`,
-			expectedQueryErrorCounts:  `{"A.Insert": 0}`,
-		},
-	}
-
-	t.Parallel()
-	for _, testcase := range testcases {
-		t.Run(testcase.name, func(t *testing.T) {
-			config := tabletenv.NewDefaultConfig()
-			config.DB = newDBConfigs(fakesqldb.New(t))
-			env := tabletenv.NewEnv(config, "TestAddQueryStats_"+testcase.name)
-			se := schema.NewEngine(env)
-			qe := NewQueryEngine(env, se)
-			qe.AddStats(testcase.planType, testcase.tableName, testcase.queryCount, testcase.duration, testcase.mysqlTime, testcase.rowsAffected, testcase.rowsReturned, testcase.errorCount)
-			assert.Equal(t, testcase.expectedQueryCounts, qe.queryCounts.String())
-			assert.Equal(t, testcase.expectedQueryTimes, qe.queryTimes.String())
-			assert.Equal(t, testcase.expectedQueryRowsAffected, qe.queryRowsAffected.String())
-			assert.Equal(t, testcase.expectedQueryRowsReturned, qe.queryRowsReturned.String())
-			assert.Equal(t, testcase.expectedQueryRowCounts, qe.queryRowCounts.String())
-			assert.Equal(t, testcase.expectedQueryErrorCounts, qe.queryErrorCounts.String())
-		})
-	}
-}
-
-func TestPlanPoolUnsafe(t *testing.T) {
-	tcases := []struct {
-		name, query, err string
-	}{
-		{
-			"get_lock named locks are unsafe with server-side connection pooling",
-			"select get_lock('foo', 10) from dual",
-			"SelectLockFunc not allowed without reserved connection",
-		}, {
-			"setting system variables must happen inside reserved connections",
-			"set sql_safe_updates = false",
-			"Set not allowed without reserved connection",
-		}, {
-			"setting system variables must happen inside reserved connections",
-			"set @@sql_safe_updates = false",
-			"Set not allowed without reserved connection",
-		}, {
-			"setting system variables must happen inside reserved connections",
-			"set @udv = false",
-			"Set not allowed without reserved connection",
-		},
-	}
-	for _, tcase := range tcases {
-		t.Run(tcase.name, func(t *testing.T) {
-			statement, err := sqlparser.Parse(tcase.query)
-			require.NoError(t, err)
-			plan, err := planbuilder.Build(statement, map[string]*schema.Table{}, "dbName")
-			// Plan building will not fail, but it will mark that reserved connection is needed.
-			// checking plan is valid will fail.
-			require.NoError(t, err)
-			require.True(t, plan.NeedsReservedConn)
-			err = isValid(plan.PlanID, false, false)
-			require.EqualError(t, err, tcase.err)
-		})
-	}
 }

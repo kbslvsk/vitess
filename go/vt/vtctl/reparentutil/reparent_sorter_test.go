@@ -122,11 +122,11 @@ func TestReparentSorter(t *testing.T) {
 		},
 	}
 
-	durability, err := GetDurabilityPolicy("none")
+	err := SetDurabilityPolicy("none")
 	require.NoError(t, err)
 	for _, testcase := range testcases {
 		t.Run(testcase.name, func(t *testing.T) {
-			err := sortTabletsForReparent(testcase.tablets, testcase.positions, durability)
+			err := sortTabletsForReparent(testcase.tablets, testcase.positions)
 			if testcase.containsErr != "" {
 				require.EqualError(t, err, testcase.containsErr)
 			} else {

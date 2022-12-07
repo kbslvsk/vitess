@@ -32,7 +32,7 @@ func TestToNative(t *testing.T) {
 	testcases := []struct {
 		convert *converter
 		in      sqltypes.Value
-		out     any
+		out     interface{}
 	}{{
 		convert: &converter{},
 		in:      sqltypes.TestValue(sqltypes.Int32, "1"),

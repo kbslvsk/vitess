@@ -19,23 +19,24 @@ package planbuilder
 import (
 	"vitess.io/vitess/go/vt/sqlparser"
 	"vitess.io/vitess/go/vt/vtgate/engine"
-	"vitess.io/vitess/go/vt/vtgate/planbuilder/operators"
 	"vitess.io/vitess/go/vt/vtgate/planbuilder/plancontext"
+
+	"vitess.io/vitess/go/vt/vtgate/planbuilder/physical"
 )
 
-func transformSubQueryPlan(ctx *plancontext.PlanningContext, op *operators.SubQueryOp) (logicalPlan, error) {
-	innerPlan, err := transformToLogicalPlan(ctx, op.Inner, false)
+func transformSubQueryPlan(ctx *plancontext.PlanningContext, op *physical.SubQueryOp) (logicalPlan, error) {
+	innerPlan, err := transformToLogicalPlan(ctx, op.Inner)
 	if err != nil {
 		return nil, err
 	}
-	innerPlan, err = planHorizon(ctx, innerPlan, op.Extracted.Subquery.Select, true)
+	innerPlan, err = planHorizon(ctx, innerPlan, op.Extracted.Subquery.Select)
 	if err != nil {
 		return nil, err
 	}
 
 	argName := op.Extracted.GetArgName()
 	hasValuesArg := op.Extracted.GetHasValuesArg()
-	outerPlan, err := transformToLogicalPlan(ctx, op.Outer, false)
+	outerPlan, err := transformToLogicalPlan(ctx, op.Outer)
 
 	merged := mergeSubQueryOpPlan(ctx, innerPlan, outerPlan, op)
 	if merged != nil {
@@ -49,19 +50,19 @@ func transformSubQueryPlan(ctx *plancontext.PlanningContext, op *operators.SubQu
 	return plan, err
 }
 
-func transformCorrelatedSubQueryPlan(ctx *plancontext.PlanningContext, op *operators.CorrelatedSubQueryOp) (logicalPlan, error) {
-	outer, err := transformToLogicalPlan(ctx, op.Outer, false)
+func transformCorrelatedSubQueryPlan(ctx *plancontext.PlanningContext, op *physical.CorrelatedSubQueryOp) (logicalPlan, error) {
+	outer, err := transformToLogicalPlan(ctx, op.Outer)
 	if err != nil {
 		return nil, err
 	}
-	inner, err := transformToLogicalPlan(ctx, op.Inner, false)
+	inner, err := transformToLogicalPlan(ctx, op.Inner)
 	if err != nil {
 		return nil, err
 	}
-	return newSemiJoin(outer, inner, op.Vars, op.LHSColumns), nil
+	return newSemiJoin(outer, inner, op.Vars), nil
 }
 
-func mergeSubQueryOpPlan(ctx *plancontext.PlanningContext, inner, outer logicalPlan, n *operators.SubQueryOp) logicalPlan {
+func mergeSubQueryOpPlan(ctx *plancontext.PlanningContext, inner, outer logicalPlan, n *physical.SubQueryOp) logicalPlan {
 	iroute, ok := inner.(*routeGen4)
 	if !ok {
 		return nil

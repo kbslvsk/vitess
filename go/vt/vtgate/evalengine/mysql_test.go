@@ -25,7 +25,6 @@ import (
 	"strings"
 	"testing"
 
-	"vitess.io/vitess/go/mysql/collations"
 	"vitess.io/vitess/go/vt/sqlparser"
 )
 
@@ -46,27 +45,19 @@ func knownBadQuery(expr Expr) bool {
 
 var errKnownBadQuery = errors.New("this query is known to give bad results in MySQL")
 
-func convert(t *testing.T, query string, simplify bool) (Expr, error) {
+func testSingle(t *testing.T, query string) (EvalResult, error) {
 	stmt, err := sqlparser.Parse(query)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	astExpr := stmt.(*sqlparser.Select).SelectExprs[0].(*sqlparser.AliasedExpr).Expr
-	converted, err := TranslateEx(astExpr, LookupDefaultCollation(collations.CollationUtf8mb4ID), simplify)
+	converted, err := ConvertEx(astExpr, LookupDefaultCollation(255), true)
 	if err == nil {
 		if knownBadQuery(converted) {
-			return nil, errKnownBadQuery
+			return EvalResult{}, errKnownBadQuery
 		}
-		return converted, nil
-	}
-	return nil, err
-}
-
-func testSingle(t *testing.T, query string) (EvalResult, error) {
-	converted, err := convert(t, query, true)
-	if err == nil {
-		return EnvWithBindVars(nil, collations.CollationUtf8mb4ID).Evaluate(converted)
+		return EnvWithBindVars(nil, 255).Evaluate(converted)
 	}
 	return EvalResult{}, err
 }
@@ -126,7 +117,7 @@ func TestMySQLGolden(t *testing.T) {
 }
 
 func TestDebug1(t *testing.T) {
-	// Debu	g
-	eval, err := testSingle(t, `SELECT LCASE(-999999999999999999999999)`)
-	t.Logf("eval=%s err=%v coll=%s", eval.String(), err, collations.Local().LookupByID(eval.Collation()).Name())
+	// Debug
+	eval, err := testSingle(t, `SELECT -0.0 + -0.0e0`)
+	t.Logf("eval=%s err=%v", eval.Value(), err) // want value=""
 }

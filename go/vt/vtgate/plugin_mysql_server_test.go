@@ -17,7 +17,6 @@ limitations under the License.
 package vtgate
 
 import (
-	"context"
 	"crypto/tls"
 	"fmt"
 	"os"
@@ -30,6 +29,8 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"vitess.io/vitess/go/trace"
+
+	"context"
 
 	"vitess.io/vitess/go/mysql"
 	"vitess.io/vitess/go/sqltypes"
@@ -60,10 +61,6 @@ func (th *testHandler) ComPrepare(c *mysql.Conn, q string, b map[string]*querypb
 }
 
 func (th *testHandler) ComStmtExecute(c *mysql.Conn, prepare *mysql.PrepareData, callback func(*sqltypes.Result) error) error {
-	return nil
-}
-
-func (th *testHandler) ComBinlogDumpGTID(c *mysql.Conn, gtidSet mysql.GTIDSet) error {
 	return nil
 }
 
@@ -261,7 +258,11 @@ func TestInitTLSConfigWithServerCA(t *testing.T) {
 
 func testInitTLSConfig(t *testing.T, serverCA bool) {
 	// Create the certs.
-	root := t.TempDir()
+	root, err := os.MkdirTemp("", "TestInitTLSConfig")
+	if err != nil {
+		t.Fatalf("TempDir failed: %v", err)
+	}
+	defer os.RemoveAll(root)
 	tlstest.CreateCA(root)
 	tlstest.CreateCRL(root, tlstest.CA)
 	tlstest.CreateSignedCert(root, tlstest.CA, "01", "server", "server.example.com")

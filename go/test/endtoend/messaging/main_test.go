@@ -22,8 +22,13 @@ import (
 	"os"
 	"testing"
 
-	"vitess.io/vitess/go/test/endtoend/cluster"
+	"github.com/stretchr/testify/require"
+
+	"vitess.io/vitess/go/mysql"
+	"vitess.io/vitess/go/sqltypes"
 	_ "vitess.io/vitess/go/vt/vtgate/grpcvtgateconn"
+
+	"vitess.io/vitess/go/test/endtoend/cluster"
 )
 
 var (
@@ -97,8 +102,7 @@ var (
 	  "tables": {
 			"unsharded_message": {},
 			"vitess_message": {},
-			"vitess_message3": {},
-			"vitess_message4": {}
+			"vitess_message3": {}
 	  }
 	}`
 )
@@ -155,4 +159,11 @@ func TestMain(m *testing.M) {
 		os.Exit(exitcode)
 	}
 
+}
+
+func exec(t *testing.T, conn *mysql.Conn, query string) *sqltypes.Result {
+	t.Helper()
+	qr, err := conn.ExecuteFetch(query, 1000, true)
+	require.NoError(t, err)
+	return qr
 }

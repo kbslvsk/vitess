@@ -24,7 +24,6 @@ import (
 	"vitess.io/vitess/go/vt/topo"
 	"vitess.io/vitess/go/vt/vttablet/tmclient"
 
-	tabletmanagerdatapb "vitess.io/vitess/go/vt/proto/tabletmanagerdata"
 	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 )
 
@@ -42,13 +41,12 @@ func CompareSchemas(
 	excludeTables []string,
 	includeViews bool,
 ) (diffs []string, err error) {
-	req := &tabletmanagerdatapb.GetSchemaRequest{Tables: tables, ExcludeTables: excludeTables, IncludeViews: includeViews}
-	sourceSchema, err := GetSchema(ctx, ts, tmc, source, req)
+	sourceSchema, err := GetSchema(ctx, ts, tmc, source, tables, excludeTables, includeViews)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get schema from tablet %v. err: %v", source, err)
 	}
 
-	destSchema, err := GetSchema(ctx, ts, tmc, dest, req)
+	destSchema, err := GetSchema(ctx, ts, tmc, dest, tables, excludeTables, includeViews)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get schema from tablet %v. err: %v", dest, err)
 	}

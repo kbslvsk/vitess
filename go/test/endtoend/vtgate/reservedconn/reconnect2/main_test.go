@@ -23,13 +23,12 @@ import (
 	"os"
 	"testing"
 
-	"vitess.io/vitess/go/test/endtoend/utils"
-
 	"github.com/stretchr/testify/assert"
 
 	"github.com/stretchr/testify/require"
 
 	"vitess.io/vitess/go/mysql"
+	"vitess.io/vitess/go/sqltypes"
 	"vitess.io/vitess/go/test/endtoend/cluster"
 )
 
@@ -63,58 +62,43 @@ var (
 	`
 )
 
-var enableSettingsPool bool
-
 func TestMain(m *testing.M) {
 	defer cluster.PanicHandler(nil)
 	flag.Parse()
 
-	code := runAllTests(m)
-	if code != 0 {
-		os.Exit(code)
-	}
+	exitCode := func() int {
+		clusterInstance = cluster.NewCluster(cell, hostname)
+		defer clusterInstance.Teardown()
 
-	println("running with settings pool enabled")
-	// run again with settings pool enabled.
-	enableSettingsPool = true
-	code = runAllTests(m)
-	os.Exit(code)
-}
+		// Start topo server
+		if err := clusterInstance.StartTopo(); err != nil {
+			return 1
+		}
 
-func runAllTests(m *testing.M) int {
-	clusterInstance = cluster.NewCluster(cell, hostname)
-	defer clusterInstance.Teardown()
+		// Start keyspace
+		keyspace := &cluster.Keyspace{
+			Name:      keyspaceName,
+			SchemaSQL: sqlSchema,
+			VSchema:   vSchema,
+		}
+		clusterInstance.VtTabletExtraArgs = []string{"-queryserver-config-transaction-timeout", "5"}
+		if err := clusterInstance.StartKeyspace(*keyspace, []string{"-80", "80-"}, 1, true); err != nil {
+			return 1
+		}
 
-	// Start topo server
-	if err := clusterInstance.StartTopo(); err != nil {
-		return 1
-	}
+		// Start vtgate
+		clusterInstance.VtGateExtraArgs = []string{"-lock_heartbeat_time", "2s", "-enable_system_settings=true"}
+		if err := clusterInstance.StartVtgate(); err != nil {
+			return 1
+		}
 
-	// Start keyspace
-	keyspace := &cluster.Keyspace{
-		Name:      keyspaceName,
-		SchemaSQL: sqlSchema,
-		VSchema:   vSchema,
-	}
-	clusterInstance.VtTabletExtraArgs = []string{"--queryserver-config-transaction-timeout", "5"}
-	if enableSettingsPool {
-		clusterInstance.VtTabletExtraArgs = append(clusterInstance.VtTabletExtraArgs, "--queryserver-enable-settings-pool")
-	}
-	if err := clusterInstance.StartKeyspace(*keyspace, []string{"-80", "80-"}, 1, true); err != nil {
-		return 1
-	}
-
-	// Start vtgate
-	clusterInstance.VtGateExtraArgs = []string{"--lock_heartbeat_time", "2s"}
-	if err := clusterInstance.StartVtgate(); err != nil {
-		return 1
-	}
-
-	vtParams = mysql.ConnParams{
-		Host: clusterInstance.Hostname,
-		Port: clusterInstance.VtgateMySQLPort,
-	}
-	return m.Run()
+		vtParams = mysql.ConnParams{
+			Host: clusterInstance.Hostname,
+			Port: clusterInstance.VtgateMySQLPort,
+		}
+		return m.Run()
+	}()
+	os.Exit(exitCode)
 }
 
 func TestTabletChange(t *testing.T) {
@@ -122,18 +106,18 @@ func TestTabletChange(t *testing.T) {
 	require.NoError(t, err)
 	defer conn.Close()
 
-	utils.Exec(t, conn, "use @primary")
-	utils.Exec(t, conn, "set sql_mode = ''")
+	checkedExec(t, conn, "use @primary")
+	checkedExec(t, conn, "set sql_mode = ''")
 
 	// this will create reserved connection on primary on -80 and 80- shards.
-	utils.Exec(t, conn, "select * from test")
+	checkedExec(t, conn, "select * from test")
 
 	// Change Primary
-	err = clusterInstance.VtctlclientProcess.ExecuteCommand("PlannedReparentShard", "--", "--keyspace_shard", fmt.Sprintf("%s/%s", keyspaceName, "-80"))
+	err = clusterInstance.VtctlclientProcess.ExecuteCommand("PlannedReparentShard", "-keyspace_shard", fmt.Sprintf("%s/%s", keyspaceName, "-80"))
 	require.NoError(t, err)
 
 	// this should pass as there is a new primary tablet and is serving.
-	_, err = utils.ExecAllowError(t, conn, "select * from test")
+	_, err = exec(t, conn, "select * from test")
 	assert.NoError(t, err)
 }
 
@@ -142,18 +126,30 @@ func TestTabletChangeStreaming(t *testing.T) {
 	require.NoError(t, err)
 	defer conn.Close()
 
-	utils.Exec(t, conn, "set workload = olap")
-	utils.Exec(t, conn, "use @primary")
-	utils.Exec(t, conn, "set sql_mode = ''")
+	checkedExec(t, conn, "set workload = olap")
+	checkedExec(t, conn, "use @primary")
+	checkedExec(t, conn, "set sql_mode = ''")
 
 	// this will create reserved connection on primary on -80 and 80- shards.
-	utils.Exec(t, conn, "select * from test")
+	checkedExec(t, conn, "select * from test")
 
 	// Change Primary
-	err = clusterInstance.VtctlclientProcess.ExecuteCommand("PlannedReparentShard", "--", "--keyspace_shard", fmt.Sprintf("%s/%s", keyspaceName, "-80"))
+	err = clusterInstance.VtctlclientProcess.ExecuteCommand("PlannedReparentShard", "-keyspace_shard", fmt.Sprintf("%s/%s", keyspaceName, "-80"))
 	require.NoError(t, err)
 
 	// this should pass as there is a new primary tablet and is serving.
-	_, err = utils.ExecAllowError(t, conn, "select * from test")
+	_, err = exec(t, conn, "select * from test")
 	assert.NoError(t, err)
+}
+
+func exec(t *testing.T, conn *mysql.Conn, query string) (*sqltypes.Result, error) {
+	t.Helper()
+	return conn.ExecuteFetch(query, 1000, true)
+}
+
+func checkedExec(t *testing.T, conn *mysql.Conn, query string) *sqltypes.Result {
+	t.Helper()
+	qr, err := conn.ExecuteFetch(query, 1000, true)
+	require.NoError(t, err)
+	return qr
 }

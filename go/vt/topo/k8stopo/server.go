@@ -28,14 +28,11 @@ We follow these conventions within this package:
 package k8stopo
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-
-	"vitess.io/vitess/go/vt/servenv"
-
-	"github.com/spf13/pflag"
 
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/client-go/kubernetes"
@@ -50,22 +47,16 @@ import (
 	vttyped "vitess.io/vitess/go/vt/topo/k8stopo/client/clientset/versioned/typed/topo/v1beta1"
 )
 
-var kubeconfigPath, configContext, configNamespace string
-
-func init() {
-	servenv.RegisterFlagsForTopoBinaries(registerK8STopoFlags)
-}
-
-func registerK8STopoFlags(fs *pflag.FlagSet) {
+var (
 	// kubeconfigPath is a string that gives the location of a valid kubeconfig file
-	fs.StringVar(&kubeconfigPath, "topo_k8s_kubeconfig", kubeconfigPath, "Path to a valid kubeconfig file. When running as a k8s pod inside the same cluster you wish to use as the topo, you may omit this and the below arguments, and Vitess is capable of auto-discovering the correct values. https://kubernetes.io/docs/tasks/access-application-cluster/access-cluster/#accessing-the-api-from-a-pod")
+	kubeconfigPath = flag.String("topo_k8s_kubeconfig", "", "Path to a valid kubeconfig file. When running as a k8s pod inside the same cluster you wish to use as the topo, you may omit this and the below arguments, and Vitess is capable of auto-discovering the correct values. https://kubernetes.io/docs/tasks/access-application-cluster/access-cluster/#accessing-the-api-from-a-pod")
 
 	// configContext is a string that can be used to override the default context
-	fs.StringVar(&configContext, "topo_k8s_context", configContext, "The kubeconfig context to use, overrides the 'current-context' from the config")
+	configContext = flag.String("topo_k8s_context", "", "The kubeconfig context to use, overrides the 'current-context' from the config")
 
 	// configNamespace is a string that can be used to override the default namespace for objects
-	fs.StringVar(&configNamespace, "topo_k8s_namespace", configNamespace, "The kubernetes namespace to use for all objects. Default comes from the context or in-cluster config")
-}
+	configNamespace = flag.String("topo_k8s_namespace", "", "The kubernetes namespace to use for all objects. Default comes from the context or in-cluster config")
+)
 
 // Factory is the Kubernetes topo.Factory implementation.
 type Factory struct{}
@@ -123,7 +114,7 @@ func getKeyParents(key string) []string {
 	return parents
 }
 
-func indexByParent(obj any) ([]string, error) {
+func indexByParent(obj interface{}) ([]string, error) {
 	return getKeyParents(obj.(*vtv1beta1.VitessTopoNode).Data.Key), nil
 }
 
@@ -161,7 +152,7 @@ func NewServer(_, root string) (*Server, error) {
 	var err error
 	namespace := "default" //nolint
 
-	if kubeconfigPath == "" {
+	if *kubeconfigPath == "" {
 		log.Info("Creating new in-cluster Kubernetes config")
 
 		config, err = rest.InClusterConfig()
@@ -176,18 +167,18 @@ func NewServer(_, root string) (*Server, error) {
 		}
 		namespace = string(nsBytes)
 	} else {
-		log.Info("Creating new Kubernetes config from kubeconfig", kubeconfigPath)
+		log.Info("Creating new Kubernetes config from kubeconfig", *kubeconfigPath)
 
 		configOverrides := &clientcmd.ConfigOverrides{}
 
 		// respect the context flag
-		if configContext != "" {
-			configOverrides.CurrentContext = configContext
+		if *configContext != "" {
+			configOverrides.CurrentContext = *configContext
 			log.V(7).Info("Overriding Kubernetes config context with: ", configOverrides.CurrentContext)
 		}
 
 		configLoader := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
-			&clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfigPath},
+			&clientcmd.ClientConfigLoadingRules{ExplicitPath: *kubeconfigPath},
 			configOverrides,
 		)
 
@@ -204,8 +195,8 @@ func NewServer(_, root string) (*Server, error) {
 	}
 
 	// respect the namespace flag
-	if configNamespace != "" {
-		namespace = configNamespace
+	if *configNamespace != "" {
+		namespace = *configNamespace
 		log.V(7).Info("Overriding Kubernetes config namespace with: ", namespace)
 	}
 

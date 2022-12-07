@@ -43,8 +43,8 @@ const (
 
 // precedenceFor returns the precedence of an expression.
 //
-//   - NOTE: If you change anything here, update sql.y to keep them consistent.
-//     Also make sure to add the new constructs to random_expr.go so we have test coverage for the new expressions *
+// * NOTE: If you change anything here, update sql.y to keep them consistent.
+//   Also make sure to add the new constructs to random_expr.go so we have test coverage for the new expressions *
 func precedenceFor(in Expr) Precendence {
 	switch node := in.(type) {
 	case *OrExpr:
@@ -85,6 +85,8 @@ func precedenceFor(in Expr) Precendence {
 			return P4
 		case BangOp:
 			return P3
+		case BinaryOp:
+			return P2
 		}
 	case *IntervalExpr:
 		return P1

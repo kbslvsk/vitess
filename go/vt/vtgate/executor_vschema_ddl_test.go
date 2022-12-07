@@ -22,8 +22,6 @@ import (
 	"testing"
 	"time"
 
-	"vitess.io/vitess/go/test/utils"
-
 	"vitess.io/vitess/go/vt/callerid"
 	querypb "vitess.io/vitess/go/vt/proto/query"
 	vtrpcpb "vitess.io/vitess/go/vt/proto/vtrpc"
@@ -96,7 +94,7 @@ func waitForVschemaTables(t *testing.T, ks string, tables []string, executor *Ex
 	return nil
 }
 
-// nolint
+//nolint
 func waitForColVindexes(t *testing.T, ks, table string, names []string, executor *Executor) *vschemapb.SrvVSchema {
 	t.Helper()
 
@@ -132,11 +130,11 @@ func waitForColVindexes(t *testing.T, ks, table string, names []string, executor
 }
 
 func TestPlanExecutorAlterVSchemaKeyspace(t *testing.T) {
-	vschemaacl.AuthorizedDDLUsers = "%"
+	*vschemaacl.AuthorizedDDLUsers = "%"
 	defer func() {
-		vschemaacl.AuthorizedDDLUsers = ""
+		*vschemaacl.AuthorizedDDLUsers = ""
 	}()
-	executor, _, _, _ := createExecutorEnv()
+	executor, _, _, _ := createLegacyExecutorEnv()
 	session := NewSafeSession(&vtgatepb.Session{TargetString: "@primary", Autocommit: true})
 
 	vschemaUpdates := make(chan *vschemapb.SrvVSchema, 2)
@@ -160,11 +158,11 @@ func TestPlanExecutorAlterVSchemaKeyspace(t *testing.T) {
 }
 
 func TestPlanExecutorCreateVindexDDL(t *testing.T) {
-	vschemaacl.AuthorizedDDLUsers = "%"
+	*vschemaacl.AuthorizedDDLUsers = "%"
 	defer func() {
-		vschemaacl.AuthorizedDDLUsers = ""
+		*vschemaacl.AuthorizedDDLUsers = ""
 	}()
-	executor, _, _, _ := createExecutorEnv()
+	executor, _, _, _ := createLegacyExecutorEnv()
 	ks := "TestExecutor"
 
 	vschemaUpdates := make(chan *vschemapb.SrvVSchema, 4)
@@ -202,11 +200,11 @@ func TestPlanExecutorCreateVindexDDL(t *testing.T) {
 }
 
 func TestPlanExecutorDropVindexDDL(t *testing.T) {
-	vschemaacl.AuthorizedDDLUsers = "%"
+	*vschemaacl.AuthorizedDDLUsers = "%"
 	defer func() {
-		vschemaacl.AuthorizedDDLUsers = ""
+		*vschemaacl.AuthorizedDDLUsers = ""
 	}()
-	executor, _, _, _ := createExecutorEnv()
+	executor, _, _, _ := createLegacyExecutorEnv()
 	ks := "TestExecutor"
 
 	vschemaUpdates := make(chan *vschemapb.SrvVSchema, 4)
@@ -271,11 +269,11 @@ func TestPlanExecutorDropVindexDDL(t *testing.T) {
 }
 
 func TestPlanExecutorAddDropVschemaTableDDL(t *testing.T) {
-	vschemaacl.AuthorizedDDLUsers = "%"
+	*vschemaacl.AuthorizedDDLUsers = "%"
 	defer func() {
-		vschemaacl.AuthorizedDDLUsers = ""
+		*vschemaacl.AuthorizedDDLUsers = ""
 	}()
-	executor, sbc1, sbc2, sbclookup := createExecutorEnv()
+	executor, sbc1, sbc2, sbclookup := createLegacyExecutorEnv()
 	ks := KsTestUnsharded
 
 	vschemaUpdates := make(chan *vschemapb.SrvVSchema, 4)
@@ -328,11 +326,11 @@ func TestPlanExecutorAddDropVschemaTableDDL(t *testing.T) {
 }
 
 func TestExecutorAddSequenceDDL(t *testing.T) {
-	vschemaacl.AuthorizedDDLUsers = "%"
+	*vschemaacl.AuthorizedDDLUsers = "%"
 	defer func() {
-		vschemaacl.AuthorizedDDLUsers = ""
+		*vschemaacl.AuthorizedDDLUsers = ""
 	}()
-	executor, _, _, _ := createExecutorEnv()
+	executor, _, _, _ := createLegacyExecutorEnv()
 	ks := KsTestUnsharded
 
 	vschema := executor.vm.GetCurrentSrvVschema()
@@ -388,11 +386,11 @@ func TestExecutorAddSequenceDDL(t *testing.T) {
 }
 
 func TestExecutorAddDropVindexDDL(t *testing.T) {
-	vschemaacl.AuthorizedDDLUsers = "%"
+	*vschemaacl.AuthorizedDDLUsers = "%"
 	defer func() {
-		vschemaacl.AuthorizedDDLUsers = ""
+		*vschemaacl.AuthorizedDDLUsers = ""
 	}()
-	executor, sbc1, sbc2, sbclookup := createExecutorEnv() //nolint
+	executor, sbc1, sbc2, sbclookup := createLegacyExecutorEnv() //nolint
 	ks := "TestExecutor"
 	session := NewSafeSession(&vtgatepb.Session{TargetString: ks})
 	vschemaUpdates := make(chan *vschemapb.SrvVSchema, 4)
@@ -403,65 +401,95 @@ func TestExecutorAddDropVindexDDL(t *testing.T) {
 
 	vschema := <-vschemaUpdates
 	_, ok := vschema.Keyspaces[ks].Vindexes["test_hash"]
-	require.False(t, ok, "test_hash should not exist in original vschema")
+	if ok {
+		t.Fatalf("test_hash should not exist in original vschema")
+	}
 
 	// Create a new vindex implicitly with the statement
 	stmt := "alter vschema on test add vindex test_hash (id) using hash "
 	_, err := executor.Execute(context.Background(), "TestExecute", session, stmt, nil)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("error in %s: %v", stmt, err)
+	}
 
 	_, vindex := waitForVindex(t, ks, "test_hash", vschemaUpdates, executor)
-	require.Equal(t, "hash", vindex.Type)
+	if vindex.Type != "hash" {
+		t.Errorf("vindex type %s not hash", vindex.Type)
+	}
+
+	t.Skip("not yet planned")
 
 	_ = waitForColVindexes(t, ks, "test", []string{"test_hash"}, executor)
 	qr, err := executor.Execute(context.Background(), "TestExecute", session, "show vschema vindexes on TestExecutor.test", nil)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("error in show vschema vindexes on TestExecutor.test: %v", err)
+	}
 	wantqr := &sqltypes.Result{
 		Fields: buildVarCharFields("Columns", "Name", "Type", "Params", "Owner"),
 		Rows: [][]sqltypes.Value{
 			buildVarCharRow("id", "test_hash", "hash", "", ""),
 		},
+		RowsAffected: 1,
 	}
-	utils.MustMatch(t, wantqr, qr)
+	if !reflect.DeepEqual(qr, wantqr) {
+		t.Errorf("show vschema vindexes on TestExecutor.test:\n%+v, want\n%+v", qr, wantqr)
+	}
 
 	// Drop it
 	stmt = "alter vschema on test drop vindex test_hash"
 	_, err = executor.Execute(context.Background(), "TestExecute", session, stmt, nil)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("error in %s: %v", stmt, err)
+	}
 
 	_, _ = waitForVindex(t, ks, "test_hash", vschemaUpdates, executor)
 	_ = waitForColVindexes(t, ks, "test", []string{}, executor)
 	_, err = executor.Execute(context.Background(), "TestExecute", session, "show vschema vindexes on TestExecutor.test", nil)
-	require.EqualError(t, err, "table 'test' does not exist in keyspace 'TestExecutor'")
+	wantErr := "table `test` does not exist in keyspace `TestExecutor`"
+	if err == nil || err.Error() != wantErr {
+		t.Fatalf("expected error in show vschema vindexes on TestExecutor.test %v: got %v", wantErr, err)
+	}
 
 	// add it again using the same syntax
 	stmt = "alter vschema on test add vindex test_hash (id) using hash "
 	_, err = executor.Execute(context.Background(), "TestExecute", session, stmt, nil)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("error in %s: %v", stmt, err)
+	}
 
 	_, vindex = waitForVindex(t, ks, "test_hash", vschemaUpdates, executor)
-	require.Equal(t, "hash", vindex.Type)
+	if vindex.Type != "hash" {
+		t.Errorf("vindex type %s not hash", vindex.Type)
+	}
 
 	_ = waitForColVindexes(t, ks, "test", []string{"test_hash"}, executor)
 
 	qr, err = executor.Execute(context.Background(), "TestExecute", session, "show vschema vindexes on TestExecutor.test", nil)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("error in show vschema vindexes on TestExecutor.test: %v", err)
+	}
 	wantqr = &sqltypes.Result{
 		Fields: buildVarCharFields("Columns", "Name", "Type", "Params", "Owner"),
 		Rows: [][]sqltypes.Value{
 			buildVarCharRow("id", "test_hash", "hash", "", ""),
 		},
-		RowsAffected: 0,
+		RowsAffected: 1,
 	}
-	utils.MustMatch(t, wantqr, qr)
+	if !reflect.DeepEqual(qr, wantqr) {
+		t.Errorf("show vschema vindexes on TestExecutor.test:\n%+v, want\n%+v", qr, wantqr)
+	}
 
 	// add another
 	stmt = "alter vschema on test add vindex test_lookup (c1,c2) using lookup with owner=`test`, from=`c1,c2`, table=test_lookup, to=keyspace_id"
 	_, err = executor.Execute(context.Background(), "TestExecute", session, stmt, nil)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("error in %s: %v", stmt, err)
+	}
 
 	vschema, vindex = waitForVindex(t, ks, "test_lookup", vschemaUpdates, executor)
-	require.Equal(t, "lookup", vindex.Type)
+	if vindex.Type != "lookup" {
+		t.Errorf("vindex type %s not hash", vindex.Type)
+	}
 
 	if table, ok := vschema.Keyspaces[ks].Tables["test"]; ok {
 		if len(table.ColumnVindexes) != 2 {
@@ -475,22 +503,31 @@ func TestExecutorAddDropVindexDDL(t *testing.T) {
 	}
 
 	qr, err = executor.Execute(context.Background(), "TestExecute", session, "show vschema vindexes on TestExecutor.test", nil)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("error in show vschema vindexes on TestExecutor.test: %v", err)
+	}
 	wantqr = &sqltypes.Result{
 		Fields: buildVarCharFields("Columns", "Name", "Type", "Params", "Owner"),
 		Rows: [][]sqltypes.Value{
 			buildVarCharRow("id", "test_hash", "hash", "", ""),
 			buildVarCharRow("c1, c2", "test_lookup", "lookup", "from=c1,c2; table=test_lookup; to=keyspace_id", "test"),
 		},
+		RowsAffected: 2,
 	}
-	utils.MustMatch(t, wantqr, qr)
+	if !reflect.DeepEqual(qr, wantqr) {
+		t.Errorf("show vschema vindexes on TestExecutor.test:\n%+v, want\n%+v", qr, wantqr)
+	}
 
 	stmt = "alter vschema on test add vindex test_hash_id2 (id2) using hash"
 	_, err = executor.Execute(context.Background(), "TestExecute", session, stmt, nil)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("error in %s: %v", stmt, err)
+	}
 
 	vschema, vindex = waitForVindex(t, ks, "test_hash_id2", vschemaUpdates, executor)
-	require.Equal(t, "hash", vindex.Type)
+	if vindex.Type != "hash" {
+		t.Errorf("vindex type %s not hash", vindex.Type)
+	}
 
 	if table, ok := vschema.Keyspaces[ks].Tables["test"]; ok {
 		if len(table.ColumnVindexes) != 3 {
@@ -504,7 +541,9 @@ func TestExecutorAddDropVindexDDL(t *testing.T) {
 	}
 
 	qr, err = executor.Execute(context.Background(), "TestExecute", session, "show vschema vindexes on TestExecutor.test", nil)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("error in show vschema vindexes on TestExecutor.test: %v", err)
+	}
 	wantqr = &sqltypes.Result{
 		Fields: buildVarCharFields("Columns", "Name", "Type", "Params", "Owner"),
 		Rows: [][]sqltypes.Value{
@@ -512,32 +551,40 @@ func TestExecutorAddDropVindexDDL(t *testing.T) {
 			buildVarCharRow("c1, c2", "test_lookup", "lookup", "from=c1,c2; table=test_lookup; to=keyspace_id", "test"),
 			buildVarCharRow("id2", "test_hash_id2", "hash", "", ""),
 		},
+		RowsAffected: 3,
 	}
-	utils.MustMatch(t, wantqr, qr)
+	if !reflect.DeepEqual(qr, wantqr) {
+		t.Errorf("show vschema vindexes on TestExecutor.test:\n%+v, want\n%+v", qr, wantqr)
+	}
 
 	// drop one
 	stmt = "alter vschema on test drop vindex test_lookup"
 	_, err = executor.Execute(context.Background(), "TestExecute", session, stmt, nil)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("error in %s: %v", stmt, err)
+	}
 
 	// wait for up to 50ms for it to disappear
 	deadline := time.Now().Add(50 * time.Millisecond)
 	for {
 		qr, err = executor.Execute(context.Background(), "TestExecute", session, "show vschema vindexes on TestExecutor.test", nil)
-		require.NoError(t, err)
+		if err != nil {
+			t.Fatalf("error in show vschema vindexes on TestExecutor.test: %v", err)
+		}
 		wantqr = &sqltypes.Result{
 			Fields: buildVarCharFields("Columns", "Name", "Type", "Params", "Owner"),
 			Rows: [][]sqltypes.Value{
 				buildVarCharRow("id", "test_hash", "hash", "", ""),
 				buildVarCharRow("id2", "test_hash_id2", "hash", "", ""),
 			},
+			RowsAffected: 2,
 		}
 		if reflect.DeepEqual(qr, wantqr) {
 			break
 		}
 
 		if time.Now().After(deadline) {
-			require.Fail(t, "timed out waiting for test_lookup vindex to be removed")
+			t.Errorf("timed out waiting for test_lookup vindex to be removed")
 		}
 		time.Sleep(1 * time.Millisecond)
 	}
@@ -545,71 +592,120 @@ func TestExecutorAddDropVindexDDL(t *testing.T) {
 	// use the newly created vindex on a new table
 	stmt = "alter vschema on test2 add vindex test_hash (id)"
 	_, err = executor.Execute(context.Background(), "TestExecute", session, stmt, nil)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("error in %s: %v", stmt, err)
+	}
 
 	vschema, vindex = waitForVindex(t, ks, "test_hash", vschemaUpdates, executor)
-	require.Equal(t, "hash", vindex.Type)
+	if vindex.Type != "hash" {
+		t.Errorf("vindex type %s not hash", vindex.Type)
+	}
 
-	table, ok := vschema.Keyspaces[ks].Tables["test2"]
-	require.Truef(t, ok, "table test2 not defined in vschema")
-	require.Len(t, table.ColumnVindexes, 1)
-	require.Equal(t, "test_hash", table.ColumnVindexes[0].Name)
+	if table, ok := vschema.Keyspaces[ks].Tables["test2"]; ok {
+		if len(table.ColumnVindexes) != 1 {
+			t.Fatalf("table vindexes want 1 got %d", len(table.ColumnVindexes))
+		}
+		if table.ColumnVindexes[0].Name != "test_hash" {
+			t.Fatalf("table vindexes didn't contain test_hash")
+		}
+	} else {
+		t.Fatalf("table test2 not defined in vschema")
+	}
 
 	// create an identical vindex definition on a different table
 	stmt = "alter vschema on test2 add vindex test_lookup (c1,c2) using lookup with owner=`test`, from=`c1,c2`, table=test_lookup, to=keyspace_id"
 	_, err = executor.Execute(context.Background(), "TestExecute", session, stmt, nil)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("error in %s: %v", stmt, err)
+	}
 
 	vschema, vindex = waitForVindex(t, ks, "test_lookup", vschemaUpdates, executor)
-	require.Equal(t, "lookup", vindex.Type)
+	if vindex.Type != "lookup" {
+		t.Errorf("vindex type %s not hash", vindex.Type)
+	}
 
-	table, ok = vschema.Keyspaces[ks].Tables["test2"]
-	require.Truef(t, ok, "table test2 not defined in vschema")
-	require.Len(t, table.ColumnVindexes, 2)
-	require.Equal(t, "test_lookup", table.ColumnVindexes[1].Name)
+	if table, ok := vschema.Keyspaces[ks].Tables["test2"]; ok {
+		if len(table.ColumnVindexes) != 2 {
+			t.Fatalf("table vindexes want 1 got %d", len(table.ColumnVindexes))
+		}
+		if table.ColumnVindexes[1].Name != "test_lookup" {
+			t.Fatalf("table vindexes didn't contain test_lookup")
+		}
+	} else {
+		t.Fatalf("table test2 not defined in vschema")
+	}
 
 	qr, err = executor.Execute(context.Background(), "TestExecute", session, "show vschema vindexes on TestExecutor.test2", nil)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatalf("error in show vschema vindexes on TestExecutor.test2: %v", err)
+	}
 	wantqr = &sqltypes.Result{
 		Fields: buildVarCharFields("Columns", "Name", "Type", "Params", "Owner"),
 		Rows: [][]sqltypes.Value{
 			buildVarCharRow("id", "test_hash", "hash", "", ""),
 			buildVarCharRow("c1, c2", "test_lookup", "lookup", "from=c1,c2; table=test_lookup; to=keyspace_id", "test"),
 		},
+		RowsAffected: 2,
 	}
-	utils.MustMatch(t, wantqr, qr)
+	if !reflect.DeepEqual(qr, wantqr) {
+		t.Errorf("show vschema vindexes on TestExecutor.test:\n%+v, want\n%+v", qr, wantqr)
+	}
 
 	stmt = "alter vschema on test2 add vindex nonexistent (c1,c2)"
 	_, err = executor.Execute(context.Background(), "TestExecute", session, stmt, nil)
-	require.EqualError(t, err, "vindex nonexistent does not exist in keyspace TestExecutor")
+	wantErr = "vindex nonexistent does not exist in keyspace TestExecutor"
+	if err == nil || err.Error() != wantErr {
+		t.Errorf("got %v want err %s", err, wantErr)
+	}
 
 	stmt = "alter vschema on test2 add vindex test_hash (c1,c2) using lookup"
 	_, err = executor.Execute(context.Background(), "TestExecute", session, stmt, nil)
-	require.EqualError(t, err, "vindex test_hash defined with type hash not lookup")
+	wantErr = "vindex test_hash defined with type hash not lookup"
+	if err == nil || err.Error() != wantErr {
+		t.Errorf("got %v want err %s", err, wantErr)
+	}
 
 	stmt = "alter vschema on test2 add vindex test_lookup (c1,c2) using lookup with owner=xyz"
 	_, err = executor.Execute(context.Background(), "TestExecute", session, stmt, nil)
-	require.EqualError(t, err, "vindex test_lookup defined with owner test not xyz")
+	wantErr = "vindex test_lookup defined with owner test not xyz"
+	if err == nil || err.Error() != wantErr {
+		t.Errorf("got %v want err %s", err, wantErr)
+	}
 
 	stmt = "alter vschema on test2 add vindex test_lookup (c1,c2) using lookup with owner=`test`, foo=bar"
 	_, err = executor.Execute(context.Background(), "TestExecute", session, stmt, nil)
-	require.EqualError(t, err, "vindex test_lookup defined with different parameters")
+	wantErr = "vindex test_lookup defined with different parameters"
+	if err == nil || err.Error() != wantErr {
+		t.Errorf("got %v want err %s", err, wantErr)
+	}
 
 	stmt = "alter vschema on nonexistent drop vindex test_lookup"
 	_, err = executor.Execute(context.Background(), "TestExecute", session, stmt, nil)
-	require.EqualError(t, err, "table TestExecutor.nonexistent not defined in vschema")
+	wantErr = "table TestExecutor.nonexistent not defined in vschema"
+	if err == nil || err.Error() != wantErr {
+		t.Errorf("got %v want err %s", err, wantErr)
+	}
 
 	stmt = "alter vschema on nonexistent drop vindex test_lookup"
 	_, err = executor.Execute(context.Background(), "TestExecute", NewSafeSession(&vtgatepb.Session{TargetString: "InvalidKeyspace"}), stmt, nil)
-	require.EqualError(t, err, "Unknown database 'InvalidKeyspace' in vschema")
+	wantErr = "table InvalidKeyspace.nonexistent not defined in vschema"
+	if err == nil || err.Error() != wantErr {
+		t.Errorf("got %v want err %s", err, wantErr)
+	}
 
 	stmt = "alter vschema on nowhere.nohow drop vindex test_lookup"
 	_, err = executor.Execute(context.Background(), "TestExecute", session, stmt, nil)
-	require.EqualError(t, err, "Unknown database 'nowhere' in vschema")
+	wantErr = "table nowhere.nohow not defined in vschema"
+	if err == nil || err.Error() != wantErr {
+		t.Errorf("got %v want err %s", err, wantErr)
+	}
 
 	stmt = "alter vschema on test drop vindex test_lookup"
 	_, err = executor.Execute(context.Background(), "TestExecute", session, stmt, nil)
-	require.EqualError(t, err, "vindex test_lookup not defined in table TestExecutor.test")
+	wantErr = "vindex test_lookup not defined in table TestExecutor.test"
+	if err == nil || err.Error() != wantErr {
+		t.Errorf("got %v want err %s", err, wantErr)
+	}
 
 	// no queries should have gone to any tablets
 	wantCount := []int64{0, 0, 0}
@@ -618,12 +714,14 @@ func TestExecutorAddDropVindexDDL(t *testing.T) {
 		sbc2.ExecCount.Get(),
 		sbclookup.ExecCount.Get(),
 	}
-	utils.MustMatch(t, wantCount, gotCount)
+	if !reflect.DeepEqual(gotCount, wantCount) {
+		t.Errorf("Exec %s: %v, want %v", "", gotCount, wantCount)
+	}
 }
 
 func TestPlanExecutorVindexDDLACL(t *testing.T) {
 	//t.Skip("not yet planned")
-	executor, _, _, _ := createExecutorEnv()
+	executor, _, _, _ := createLegacyExecutorEnv()
 	ks := "TestExecutor"
 	session := NewSafeSession(&vtgatepb.Session{TargetString: ks})
 
@@ -639,7 +737,7 @@ func TestPlanExecutorVindexDDLACL(t *testing.T) {
 	require.EqualError(t, err, `User 'blueUser' is not authorized to perform vschema operations`)
 
 	// test when all users are enabled
-	vschemaacl.AuthorizedDDLUsers = "%"
+	*vschemaacl.AuthorizedDDLUsers = "%"
 	vschemaacl.Init()
 	_, err = executor.Execute(ctxRedUser, "TestExecute", session, stmt, nil)
 	if err != nil {
@@ -652,7 +750,7 @@ func TestPlanExecutorVindexDDLACL(t *testing.T) {
 	}
 
 	// test when only one user is enabled
-	vschemaacl.AuthorizedDDLUsers = "orangeUser, blueUser, greenUser"
+	*vschemaacl.AuthorizedDDLUsers = "orangeUser, blueUser, greenUser"
 	vschemaacl.Init()
 	_, err = executor.Execute(ctxRedUser, "TestExecute", session, stmt, nil)
 	require.EqualError(t, err, `User 'redUser' is not authorized to perform vschema operations`)
@@ -664,5 +762,5 @@ func TestPlanExecutorVindexDDLACL(t *testing.T) {
 	}
 
 	// restore the disallowed state
-	vschemaacl.AuthorizedDDLUsers = ""
+	*vschemaacl.AuthorizedDDLUsers = ""
 }

@@ -32,7 +32,7 @@ import (
 	"vitess.io/vitess/go/vt/proto/vtrpc"
 )
 
-func deleteShard(ctx context.Context, ts *topo.Server, keyspace string, shard string, recursive bool, evenIfServing bool, force bool) (err error) {
+func deleteShard(ctx context.Context, ts *topo.Server, keyspace string, shard string, recursive bool, evenIfServing bool) error {
 	span, ctx := trace.NewSpan(ctx, "VtctldServer.deleteShard")
 	defer span.Finish()
 
@@ -40,35 +40,6 @@ func deleteShard(ctx context.Context, ts *topo.Server, keyspace string, shard st
 	span.Annotate("shard", shard)
 	span.Annotate("recursive", recursive)
 	span.Annotate("even_if_serving", evenIfServing)
-	span.Annotate("force", force)
-
-	lctx, unlock, lerr := ts.LockShard(ctx, keyspace, shard, "DeleteShard")
-	switch {
-	case lerr == nil:
-		// We locked the shard, all good
-		ctx = lctx
-	case !force:
-		return fmt.Errorf("failed to lock %s/%s; if you really want to delete this shard, re-run with Force=true: %w", keyspace, shard, lerr)
-	default:
-		// Failed to lock, but force=true. Warn and continue
-		log.Warningf("%s: failed to lock shard %s/%s for deletion, but force=true, proceeding anyway ...", lerr, keyspace, shard)
-	}
-
-	if unlock != nil {
-		defer func() {
-			// Attempting to unlock a shard we successfully deleted results in
-			// ts.unlockShard returning an error, which can make the overall
-			// RPC _seem_ like it failed.
-			//
-			// So, we do this extra checking to allow for specifically this
-			// scenario to result in "success."
-			origErr := err
-			unlock(&err)
-			if origErr == nil && topo.IsErrType(err, topo.NoNode) {
-				err = nil
-			}
-		}()
-	}
 
 	// Read the Shard object. If it's not in the topo, try to clean up the topo
 	// anyway.
@@ -77,8 +48,7 @@ func deleteShard(ctx context.Context, ts *topo.Server, keyspace string, shard st
 		if topo.IsErrType(err, topo.NoNode) {
 			log.Infof("Shard %v/%v doesn't seem to exist; cleaning up any potential leftover topo data", keyspace, shard)
 
-			_ = ts.DeleteShard(ctx, keyspace, shard)
-			return nil
+			return ts.DeleteShard(ctx, keyspace, shard)
 		}
 
 		return err
@@ -101,8 +71,7 @@ func deleteShard(ctx context.Context, ts *topo.Server, keyspace string, shard st
 	}
 
 	for _, cell := range cells {
-		err = deleteShardCell(ctx, ts, keyspace, shard, cell, recursive)
-		if err != nil {
+		if err := deleteShardCell(ctx, ts, keyspace, shard, cell, recursive); err != nil {
 			return err
 		}
 	}
@@ -115,8 +84,7 @@ func deleteShard(ctx context.Context, ts *topo.Server, keyspace string, shard st
 		}
 	}
 
-	err = ts.DeleteShard(ctx, keyspace, shard)
-	return err
+	return ts.DeleteShard(ctx, keyspace, shard)
 }
 
 // deleteShardCell is the per-cell helper function for deleteShard, and is

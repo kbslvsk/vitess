@@ -24,11 +24,12 @@ import (
 	"strings"
 	"testing"
 
-	"vitess.io/vitess/go/test/endtoend/utils"
+	"github.com/google/go-cmp/cmp"
 
 	"github.com/stretchr/testify/require"
 
 	"vitess.io/vitess/go/mysql"
+	"vitess.io/vitess/go/sqltypes"
 	"vitess.io/vitess/go/test/endtoend/cluster"
 )
 
@@ -93,16 +94,16 @@ func TestMain(m *testing.M) {
 			return 1
 		}
 
-		vtParams = clusterInstance.GetVTParams(KeyspaceName)
+		vtParams = mysql.ConnParams{
+			Host: clusterInstance.Hostname,
+			Port: clusterInstance.VtgateMySQLPort,
+		}
 		return m.Run()
 	}()
 	os.Exit(exitCode)
 }
 
 func TestScatterErrsAsWarns(t *testing.T) {
-	if clusterInstance.HasPartialKeyspaces {
-		t.Skip("test kills primary on source shard, but query will be on target shard so it will be skipped")
-	}
 	oltp, err := mysql.Connect(context.Background(), &vtParams)
 	require.NoError(t, err)
 	defer oltp.Close()
@@ -111,10 +112,10 @@ func TestScatterErrsAsWarns(t *testing.T) {
 	require.NoError(t, err)
 	defer olap.Close()
 
-	utils.Exec(t, oltp, `insert into t1(id1, id2) values (1, 1), (2, 2), (3, 3), (4, 4), (5, 5)`)
+	checkedExec(t, oltp, `insert into t1(id1, id2) values (1, 1), (2, 2), (3, 3), (4, 4), (5, 5)`)
 	defer func() {
-		utils.Exec(t, oltp, "use @primary")
-		utils.Exec(t, oltp, `delete from t1`)
+		checkedExec(t, oltp, "use @primary")
+		checkedExec(t, oltp, `delete from t1`)
 	}()
 
 	query1 := `select /*vt+ SCATTER_ERRORS_AS_WARNINGS */ id1 from t1`
@@ -136,26 +137,43 @@ func TestScatterErrsAsWarns(t *testing.T) {
 	for _, mode := range modes {
 		t.Run(mode.m, func(t *testing.T) {
 			// connection setup
-			utils.Exec(t, mode.conn, "use @replica")
-			utils.Exec(t, mode.conn, fmt.Sprintf("set workload = %s", mode.m))
+			checkedExec(t, mode.conn, "use @replica")
+			checkedExec(t, mode.conn, fmt.Sprintf("set workload = %s", mode.m))
 
-			utils.AssertMatches(t, mode.conn, query1, `[[INT64(4)]]`)
+			assertMatches(t, mode.conn, query1, `[[INT64(4)]]`)
 			assertContainsOneOf(t, mode.conn, showQ, "no valid tablet", "no healthy tablet", "mysql.sock: connect: no such file or directory")
-			utils.AssertMatches(t, mode.conn, query2, `[[INT64(4)]]`)
+			assertMatches(t, mode.conn, query2, `[[INT64(4)]]`)
 			assertContainsOneOf(t, mode.conn, showQ, "no valid tablet", "no healthy tablet", "mysql.sock: connect: no such file or directory")
 
 			// invalid_field should throw error and not warning
-			_, err = mode.conn.ExecuteFetch("SELECT /*vt+ PLANNER=Gen4 SCATTER_ERRORS_AS_WARNINGS */ invalid_field from t1;", 1, false)
+			_, err = mode.conn.ExecuteFetch("SELECT /*vt+ SCATTER_ERRORS_AS_WARNINGS */ invalid_field from t1;", 1, false)
 			require.Error(t, err)
 			serr := mysql.NewSQLErrorFromError(err).(*mysql.SQLError)
-			require.Equal(t, 1054, serr.Number(), serr.Error())
+			require.Equal(t, 1054, serr.Number())
 		})
+	}
+}
+
+func checkedExec(t *testing.T, conn *mysql.Conn, query string) *sqltypes.Result {
+	t.Helper()
+	qr, err := conn.ExecuteFetch(query, 1000, true)
+	require.NoError(t, err)
+	return qr
+}
+
+func assertMatches(t *testing.T, conn *mysql.Conn, query, expected string) {
+	t.Helper()
+	qr := checkedExec(t, conn, query)
+	got := fmt.Sprintf("%v", qr.Rows)
+	diff := cmp.Diff(expected, got)
+	if diff != "" {
+		t.Errorf("Query: %s (-want +got):\n%s\n%s", query, diff, got)
 	}
 }
 
 func assertContainsOneOf(t *testing.T, conn *mysql.Conn, query string, expected ...string) {
 	t.Helper()
-	qr := utils.Exec(t, conn, query)
+	qr := checkedExec(t, conn, query)
 	got := fmt.Sprintf("%v", qr.Rows)
 	for _, s := range expected {
 		if strings.Contains(got, s) {

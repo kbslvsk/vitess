@@ -42,7 +42,7 @@ import (
 // /debug/status request. fragment is parsed and executed with the
 // html/template package. Functions registered with AddStatusFuncs
 // may be used in the template.
-func AddStatusPart(banner, fragment string, f func() any) {
+func AddStatusPart(banner, fragment string, f func() interface{}) {
 	globalStatus.addStatusPart(banner, fragment, f)
 }
 
@@ -130,7 +130,7 @@ type statusPage struct {
 type section struct {
 	Banner   string
 	Fragment string
-	F        func() any
+	F        func() interface{}
 }
 
 func newStatusPage(name string) *statusPage {
@@ -173,7 +173,7 @@ func (sp *statusPage) addStatusFuncs(fmap template.FuncMap) {
 	}
 }
 
-func (sp *statusPage) addStatusPart(banner, fragment string, f func() any) {
+func (sp *statusPage) addStatusPart(banner, fragment string, f func() interface{}) {
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
 
@@ -189,7 +189,7 @@ func (sp *statusPage) addStatusPart(banner, fragment string, f func() any) {
 		secs[len(secs)-1] = section{
 			Banner:   banner,
 			Fragment: "<code>bad status template: {{.}}</code>",
-			F:        func() any { return err },
+			F:        func() interface{} { return err },
 		}
 	}
 	sp.tmpl, _ = sp.reparse(secs)
@@ -197,7 +197,7 @@ func (sp *statusPage) addStatusPart(banner, fragment string, f func() any) {
 }
 
 func (sp *statusPage) addStatusSection(banner string, f func() string) {
-	sp.addStatusPart(banner, `{{.}}`, func() any { return f() })
+	sp.addStatusPart(banner, `{{.}}`, func() interface{} { return f() })
 }
 
 func (sp *statusPage) statusHandler(w http.ResponseWriter, r *http.Request) {

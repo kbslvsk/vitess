@@ -17,29 +17,28 @@
 set -u
 
 external=${EXTERNAL_DB:-0}
-web_port=${WEB_PORT:-'8080'}
-config=${VTORC_CONFIG:-/vt/vtorc/config.json}
+config=${VTORC_CONFIG:-/vt/orchestrator/config.json}
 # Copy config directory
-cp -R /script/vtorc /vt
+cp -R /script/orchestrator /vt
 # Update credentials
 if [ $external = 1 ] ; then
     # Terrible substitution but we don't have jq in this image
     # This can be overridden by passing VTORC_CONFIG env variable
     echo "Updating $config..."
-    cp /vt/vtorc/default.json /vt/vtorc/tmp.json
-    sed  -i '/MySQLTopologyUser/c\  \"MySQLTopologyUser\" : \"'"$DB_USER"'\",' /vt/vtorc/tmp.json
-    sed  -i '/MySQLTopologyPassword/c\  \"MySQLTopologyPassword\" : \"'"$DB_PASS"'\",' /vt/vtorc/tmp.json
-    sed  -i '/MySQLReplicaUser/c\  \"MySQLReplicaUser\" : \"'"$DB_USER"'\",' /vt/vtorc/tmp.json
-    sed  -i '/MySQLReplicaPassword/c\  \"MySQLReplicaPassword\" : \"'"$DB_PASS"'\",' /vt/vtorc/tmp.json
-    cat /vt/vtorc/tmp.json
-    cp /vt/vtorc/tmp.json /vt/vtorc/config.json
+    cp /vt/orchestrator/default.json /vt/orchestrator/tmp.json
+    sed  -i '/MySQLTopologyUser/c\  \"MySQLTopologyUser\" : \"'"$DB_USER"'\",' /vt/orchestrator/tmp.json
+    sed  -i '/MySQLTopologyPassword/c\  \"MySQLTopologyPassword\" : \"'"$DB_PASS"'\",' /vt/orchestrator/tmp.json
+    sed  -i '/MySQLReplicaUser/c\  \"MySQLReplicaUser\" : \"'"$DB_USER"'\",' /vt/orchestrator/tmp.json
+    sed  -i '/MySQLReplicaPassword/c\  \"MySQLReplicaPassword\" : \"'"$DB_PASS"'\",' /vt/orchestrator/tmp.json
+    cat /vt/orchestrator/tmp.json
+    cp /vt/orchestrator/tmp.json /vt/orchestrator/config.json
 else
-    cp /vt/vtorc/default.json /vt/vtorc/config.json
+    cp /vt/orchestrator/default.json /vt/orchestrator/config.json
 fi
 
 echo "Starting vtorc..."
 exec /vt/bin/vtorc \
 $TOPOLOGY_FLAGS \
---logtostderr=true \
---port $web_port \
---config $config
+-logtostderr=true \
+-orc_web_dir=/vt/web/orchestrator \
+-config $config

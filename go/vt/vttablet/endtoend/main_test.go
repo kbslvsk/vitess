@@ -315,13 +315,6 @@ var tableACLConfig = `{
       "readers": ["dev"],
       "writers": ["dev"],
       "admins": ["dev"]
-    },
-    {
-      "name": "vitess_settings",
-      "table_names_or_prefixes": ["temp"],
-      "readers": ["dev"],
-      "writers": ["dev"],
-      "admins": ["dev"]
     }
   ]
 }`

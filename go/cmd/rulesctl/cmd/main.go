@@ -1,9 +1,10 @@
 package cmd
 
 import (
-	"github.com/spf13/cobra"
+	"flag"
+	"os"
 
-	_flag "vitess.io/vitess/go/internal/flag"
+	"github.com/spf13/cobra"
 )
 
 var configFile string
@@ -13,7 +14,10 @@ func Main() *cobra.Command {
 		Use:  "rulesctl",
 		Args: cobra.NoArgs,
 		PreRun: func(cmd *cobra.Command, args []string) {
-			_flag.TrickGlog()
+			tmp := os.Args
+			os.Args = os.Args[0:1]
+			flag.Parse()
+			os.Args = tmp
 		},
 		Run: func(cmd *cobra.Command, _ []string) { cmd.Help() },
 	}

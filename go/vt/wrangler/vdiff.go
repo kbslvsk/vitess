@@ -17,10 +17,10 @@ limitations under the License.
 package wrangler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -56,20 +56,17 @@ import (
 	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 )
 
-// At most how many samples we should show for row differences in the final report
-const maxVDiffReportSampleRows = 10
-
 // DiffReport is the summary of differences for one table.
 type DiffReport struct {
-	ProcessedRows        int
-	MatchingRows         int
-	MismatchedRows       int
-	ExtraRowsSource      int
-	ExtraRowsSourceDiffs []*RowDiff
-	ExtraRowsTarget      int
-	ExtraRowsTargetDiffs []*RowDiff
-	MismatchedRowsSample []*DiffMismatch
-	TableName            string
+	ProcessedRows         int
+	MatchingRows          int
+	MismatchedRows        int
+	ExtraRowsSource       int
+	ExtraRowsSourceSample []*RowDiff
+	ExtraRowsTarget       int
+	ExtraRowsTargetSample []*RowDiff
+	MismatchedRowsSample  []*DiffMismatch
+	TableName             string
 }
 
 // DiffMismatch is a sample of row diffs between source and target.
@@ -102,15 +99,13 @@ type vdiff struct {
 	workflow       string
 	targetKeyspace string
 	tables         []string
-	sourceTimeZone string
-	targetTimeZone string
 }
 
 // compareColInfo contains the metadata for a column of the table being diffed
 type compareColInfo struct {
-	colIndex  int                  // index of the column in the filter's select
-	collation collations.Collation // is the collation of the column, if any
-	isPK      bool                 // is this column part of the primary key
+	colIndex          int  // index of the column in the filter's select
+	weightStringIndex int  // index of the weight_string() requested for each text column
+	isPK              bool // is this column part of the primary key
 }
 
 // tableDiffer performs a diff for one table in the workflow.
@@ -156,8 +151,7 @@ type shardStreamer struct {
 
 // VDiff reports differences between the sources and targets of a vreplication workflow.
 func (wr *Wrangler) VDiff(ctx context.Context, targetKeyspace, workflowName, sourceCell, targetCell, tabletTypesStr string,
-	filteredReplicationWaitTime time.Duration, format string, maxRows int64, tables string, debug, onlyPks bool,
-	maxExtraRowsToCompare int) (map[string]*DiffReport, error) {
+	filteredReplicationWaitTime time.Duration, format string, maxRows int64, tables string, debug, onlyPks bool) (map[string]*DiffReport, error) {
 	log.Infof("Starting VDiff for %s.%s, sourceCell %s, targetCell %s, tabletTypes %s, timeout %s",
 		targetKeyspace, workflowName, sourceCell, targetCell, tabletTypesStr, filteredReplicationWaitTime.String())
 	// Assign defaults to sourceCell and targetCell if not specified.
@@ -186,10 +180,6 @@ func (wr *Wrangler) VDiff(ctx context.Context, targetKeyspace, workflowName, sou
 		wr.Logger().Errorf("buildTrafficSwitcher: %v", err)
 		return nil, err
 	}
-	if ts.frozen {
-		return nil, fmt.Errorf("invalid VDiff run: writes have been already been switched for workflow %s.%s",
-			targetKeyspace, workflowName)
-	}
 	if err := ts.validate(ctx); err != nil {
 		ts.Logger().Errorf("validate: %v", err)
 		return nil, err
@@ -210,8 +200,6 @@ func (wr *Wrangler) VDiff(ctx context.Context, targetKeyspace, workflowName, sou
 		workflow:       workflowName,
 		targetKeyspace: targetKeyspace,
 		tables:         includeTables,
-		sourceTimeZone: ts.sourceTimeZone,
-		targetTimeZone: ts.targetTimeZone,
 	}
 	for shard, source := range ts.Sources() {
 		df.sources[shard] = &shardStreamer{
@@ -230,8 +218,7 @@ func (wr *Wrangler) VDiff(ctx context.Context, targetKeyspace, workflowName, sou
 		oneFilter = bls.Filter
 		break
 	}
-	req := &tabletmanagerdatapb.GetSchemaRequest{}
-	schm, err := schematools.GetSchema(ctx, wr.ts, wr.tmc, oneTarget.GetPrimary().Alias, req)
+	schm, err := schematools.GetSchema(ctx, wr.ts, wr.tmc, oneTarget.GetPrimary().Alias, nil, nil, false)
 	if err != nil {
 		return nil, vterrors.Wrap(err, "GetSchema")
 	}
@@ -242,17 +229,11 @@ func (wr *Wrangler) VDiff(ctx context.Context, targetKeyspace, workflowName, sou
 	if err := df.selectTablets(ctx, ts); err != nil {
 		return nil, vterrors.Wrap(err, "selectTablets")
 	}
-	defer func() {
-		// We use a new context as we want to reset the state even
-		// when the parent context has timed out or been canceled.
-		log.Infof("Restarting the %q VReplication workflow on target tablets in keyspace %q", df.workflow, df.targetKeyspace)
-		restartCtx, restartCancel := context.WithTimeout(context.Background(), DefaultActionTimeout)
-		defer restartCancel()
-		if err := df.restartTargets(restartCtx); err != nil {
-			wr.Logger().Errorf("Could not restart workflow %q on target tablets in keyspace %q: %v, please restart it manually",
-				df.workflow, df.targetKeyspace, err)
+	defer func(ctx context.Context) {
+		if err := df.restartTargets(ctx); err != nil {
+			wr.Logger().Errorf("Could not restart workflow %s: %v, please restart it manually", workflowName, err)
 		}
-	}()
+	}(ctx)
 
 	// Perform the diffs.
 	// We need a cancelable context to abort all running streams
@@ -273,43 +254,11 @@ func (wr *Wrangler) VDiff(ctx context.Context, targetKeyspace, workflowName, sou
 			return nil, err
 		}
 		// Perform the diff of source and target streams.
-		dr, err := td.diff(ctx, &rowsToCompare, debug, onlyPks, maxExtraRowsToCompare)
+		dr, err := td.diff(ctx, &rowsToCompare, debug, onlyPks)
 		if err != nil {
 			return nil, vterrors.Wrap(err, "diff")
 		}
 		dr.TableName = table
-		// If the only difference is the order in which the rows were returned
-		// by MySQL on each side then we'll have the same number of extras on
-		// both sides. If that's the case, then let's see if the extra rows on
-		// both sides are actually different.
-		if (dr.ExtraRowsSource == dr.ExtraRowsTarget) && (dr.ExtraRowsSource <= maxExtraRowsToCompare) {
-			for i := range dr.ExtraRowsSourceDiffs {
-				foundMatch := false
-				for j := range dr.ExtraRowsTargetDiffs {
-					if reflect.DeepEqual(dr.ExtraRowsSourceDiffs[i], dr.ExtraRowsTargetDiffs[j]) {
-						dr.ExtraRowsSourceDiffs = append(dr.ExtraRowsSourceDiffs[:i], dr.ExtraRowsSourceDiffs[i+1:]...)
-						dr.ExtraRowsSource--
-						dr.ExtraRowsTargetDiffs = append(dr.ExtraRowsTargetDiffs[:j], dr.ExtraRowsTargetDiffs[j+1:]...)
-						dr.ExtraRowsTarget--
-						dr.ProcessedRows--
-						dr.MatchingRows++
-						foundMatch = true
-						break
-					}
-				}
-				// If we didn't find a match then the tables are in fact different and we can short circuit the second pass
-				if !foundMatch {
-					break
-				}
-			}
-		}
-		// We can now trim the extra rows diffs on both sides to the maxVDiffReportSampleRows value
-		if len(dr.ExtraRowsSourceDiffs) > maxVDiffReportSampleRows {
-			dr.ExtraRowsSourceDiffs = dr.ExtraRowsSourceDiffs[:maxVDiffReportSampleRows-1]
-		}
-		if len(dr.ExtraRowsTargetDiffs) > maxVDiffReportSampleRows {
-			dr.ExtraRowsTargetDiffs = dr.ExtraRowsTargetDiffs[:maxVDiffReportSampleRows-1]
-		}
 		diffReports[table] = dr
 	}
 	if format == "json" {
@@ -327,11 +276,11 @@ func (wr *Wrangler) VDiff(ctx context.Context, targetKeyspace, workflowName, sou
 			wr.Logger().Printf("\tMismatchedRows: %v\n", dr.MismatchedRows)
 			wr.Logger().Printf("\tExtraRowsSource: %v\n", dr.ExtraRowsSource)
 			wr.Logger().Printf("\tExtraRowsTarget: %v\n", dr.ExtraRowsTarget)
-			for i, rs := range dr.ExtraRowsSourceDiffs {
+			for i, rs := range dr.ExtraRowsSourceSample {
 				wr.Logger().Printf("\tSample extra row in source %v:\n", i)
 				formatSampleRow(wr.Logger(), rs, debug)
 			}
-			for i, rs := range dr.ExtraRowsTargetDiffs {
+			for i, rs := range dr.ExtraRowsTargetSample {
 				wr.Logger().Printf("\tSample extra row in target %v:\n", i)
 				formatSampleRow(wr.Logger(), rs, debug)
 			}
@@ -366,6 +315,12 @@ func (df *vdiff) diffTable(ctx context.Context, wr *Wrangler, table string, td *
 		}
 	}()
 
+	defer func() {
+		log.Errorf("restarting targets for workflow %s in keyspace %s", df.workflow, df.targetKeyspace)
+		if err := df.restartTargets(ctx); err != nil {
+			log.Errorf("Error restarting targets for workflow %s in keyspace %s", df.workflow, df.targetKeyspace)
+		}
+	}()
 	// Stop the targets and record their source positions.
 	if err := df.stopTargets(ctx); err != nil {
 		return vterrors.Wrap(err, "stopTargets")
@@ -400,7 +355,7 @@ func (df *vdiff) buildVDiffPlan(ctx context.Context, filter *binlogdatapb.Filter
 		query := rule.Filter
 		if rule.Filter == "" || key.IsKeyRange(rule.Filter) {
 			buf := sqlparser.NewTrackedBuffer(nil)
-			buf.Myprintf("select * from %v", sqlparser.NewIdentifierCS(table.Name))
+			buf.Myprintf("select * from %v", sqlparser.NewTableIdent(table.Name))
 			query = buf.String()
 		}
 		include := true
@@ -458,71 +413,11 @@ func findPKs(table *tabletmanagerdatapb.TableDefinition, targetSelect *sqlparser
 			return nil, fmt.Errorf("column %v not found in table %v", pk, table.Name)
 		}
 		orderby = append(orderby, &sqlparser.Order{
-			Expr:      &sqlparser.ColName{Name: sqlparser.NewIdentifierCI(pk)},
+			Expr:      &sqlparser.ColName{Name: sqlparser.NewColIdent(pk)},
 			Direction: sqlparser.AscOrder,
 		})
 	}
 	return orderby, nil
-}
-
-// If SourceTimeZone is defined in the BinlogSource, the VReplication workflow would have converted the datetime
-// columns expecting the source to have been in the SourceTimeZone and target in TargetTimeZone. We need to do the reverse
-// conversion in VDiff before comparing to the source
-func (df *vdiff) adjustForSourceTimeZone(targetSelectExprs sqlparser.SelectExprs, fields map[string]querypb.Type) sqlparser.SelectExprs {
-	if df.sourceTimeZone == "" {
-		return targetSelectExprs
-	}
-	log.Infof("source time zone specified: %s", df.sourceTimeZone)
-	var newSelectExprs sqlparser.SelectExprs
-	var modified bool
-	for _, expr := range targetSelectExprs {
-		converted := false
-		switch selExpr := expr.(type) {
-		case *sqlparser.AliasedExpr:
-			if colAs, ok := selExpr.Expr.(*sqlparser.ColName); ok {
-				var convertTZFuncExpr *sqlparser.FuncExpr
-				colName := colAs.Name.Lowered()
-				fieldType := fields[colName]
-				if fieldType == querypb.Type_DATETIME {
-					convertTZFuncExpr = &sqlparser.FuncExpr{
-						Name: sqlparser.NewIdentifierCI("convert_tz"),
-						Exprs: sqlparser.SelectExprs{
-							expr,
-							&sqlparser.AliasedExpr{Expr: sqlparser.NewStrLiteral(df.targetTimeZone)},
-							&sqlparser.AliasedExpr{Expr: sqlparser.NewStrLiteral(df.sourceTimeZone)},
-						},
-					}
-					log.Infof("converting datetime column %s using convert_tz()", colName)
-					newSelectExprs = append(newSelectExprs, &sqlparser.AliasedExpr{Expr: convertTZFuncExpr, As: colAs.Name})
-					converted = true
-					modified = true
-				}
-			}
-		}
-		if !converted { // not datetime
-			newSelectExprs = append(newSelectExprs, expr)
-		}
-	}
-	if modified { // at least one datetime was found
-		log.Infof("Found datetime columns when SourceTimeZone was set, resetting target SelectExprs after convert_tz()")
-		return newSelectExprs
-	}
-	return targetSelectExprs
-}
-
-func getColumnNameForSelectExpr(selectExpression sqlparser.SelectExpr) (string, error) {
-	aliasedExpr := selectExpression.(*sqlparser.AliasedExpr)
-	expr := aliasedExpr.Expr
-	var colname string
-	switch t := expr.(type) {
-	case *sqlparser.ColName:
-		colname = t.Name.Lowered()
-	case *sqlparser.FuncExpr: // only in case datetime was converted using convert_tz()
-		colname = aliasedExpr.As.Lowered()
-	default:
-		return "", fmt.Errorf("found target SelectExpr which was neither ColName or FuncExpr: %+v", aliasedExpr)
-	}
-	return colname, nil
 }
 
 // buildTablePlan builds one tableDiffer.
@@ -547,7 +442,7 @@ func (df *vdiff) buildTablePlan(table *tabletmanagerdatapb.TableDefinition, quer
 		case *sqlparser.StarExpr:
 			// If it's a '*' expression, expand column list from the schema.
 			for _, fld := range table.Fields {
-				aliased := &sqlparser.AliasedExpr{Expr: &sqlparser.ColName{Name: sqlparser.NewIdentifierCI(fld.Name)}}
+				aliased := &sqlparser.AliasedExpr{Expr: &sqlparser.ColName{Name: sqlparser.NewColIdent(fld.Name)}}
 				sourceSelect.SelectExprs = append(sourceSelect.SelectExprs, aliased)
 				targetSelect.SelectExprs = append(targetSelect.SelectExprs, aliased)
 			}
@@ -567,16 +462,11 @@ func (df *vdiff) buildTablePlan(table *tabletmanagerdatapb.TableDefinition, quer
 			targetSelect.SelectExprs = append(targetSelect.SelectExprs, &sqlparser.AliasedExpr{Expr: targetCol})
 
 			// Check if it's an aggregate expression
-			if expr, ok := selExpr.Expr.(sqlparser.AggrFunc); ok {
-				switch fname := strings.ToLower(expr.AggrName()); fname {
+			if expr, ok := selExpr.Expr.(*sqlparser.FuncExpr); ok {
+				switch fname := expr.Name.Lowered(); fname {
 				case "count", "sum":
-					// this will only work as long as aggregates can be pushed down to tablets
-					// this won't work: "select count(*) from (select id from t limit 1)"
-					// since vreplication only handles simple tables (no joins/derived tables) this is fine for now
-					// but will need to be revisited when we add such support to vreplication
-					aggregateFuncType := "sum"
 					aggregates = append(aggregates, &engine.AggregateParams{
-						Opcode: engine.SupportedAggregates[aggregateFuncType],
+						Opcode: engine.SupportedAggregates[fname],
 						Col:    len(sourceSelect.SelectExprs) - 1,
 					})
 				}
@@ -585,24 +475,26 @@ func (df *vdiff) buildTablePlan(table *tabletmanagerdatapb.TableDefinition, quer
 			return nil, fmt.Errorf("unexpected: %v", sqlparser.String(statement))
 		}
 	}
-
 	fields := make(map[string]querypb.Type)
 	for _, field := range table.Fields {
 		fields[strings.ToLower(field.Name)] = field.Type
 	}
 
-	targetSelect.SelectExprs = df.adjustForSourceTimeZone(targetSelect.SelectExprs, fields)
 	// Start with adding all columns for comparison.
 	td.compareCols = make([]compareColInfo, len(sourceSelect.SelectExprs))
 	for i := range td.compareCols {
-		td.compareCols[i].colIndex = i
-		colname, err := getColumnNameForSelectExpr(targetSelect.SelectExprs[i])
-		if err != nil {
-			return nil, err
-		}
-		_, ok := fields[colname]
+		colname := targetSelect.SelectExprs[i].(*sqlparser.AliasedExpr).Expr.(*sqlparser.ColName).Name.Lowered()
+		typ, ok := fields[colname]
 		if !ok {
 			return nil, fmt.Errorf("column %v not found in table %v", colname, table.Name)
+		}
+		td.compareCols[i].colIndex = i
+		if sqltypes.IsText(typ) {
+			// For text columns, we need to additionally pull their weight string values for lexical comparisons.
+			sourceSelect.SelectExprs = append(sourceSelect.SelectExprs, wrapWeightString(sourceSelect.SelectExprs[i]))
+			targetSelect.SelectExprs = append(targetSelect.SelectExprs, wrapWeightString(targetSelect.SelectExprs[i]))
+			// Update the column number to point at the weight_string column instead.
+			td.compareCols[i].weightStringIndex = len(sourceSelect.SelectExprs) - 1
 		}
 	}
 
@@ -612,7 +504,7 @@ func (df *vdiff) buildTablePlan(table *tabletmanagerdatapb.TableDefinition, quer
 	targetSelect.From = sqlparser.TableExprs{
 		&sqlparser.AliasedTableExpr{
 			Expr: &sqlparser.TableName{
-				Name: sqlparser.NewIdentifierCS(table.Name),
+				Name: sqlparser.NewTableIdent(table.Name),
 			},
 		},
 	}
@@ -665,12 +557,10 @@ func newMergeSorter(participants map[string]*shardStreamer, comparePKs []compare
 	ob := make([]engine.OrderByParams, 0, len(comparePKs))
 	for _, cpk := range comparePKs {
 		weightStringCol := -1
-		// if the collation is nil or unknown, use binary collation to compare as bytes
-		if cpk.collation == nil {
-			ob = append(ob, engine.OrderByParams{Col: cpk.colIndex, WeightStringCol: weightStringCol, CollationID: collations.CollationBinaryID})
-		} else {
-			ob = append(ob, engine.OrderByParams{Col: cpk.colIndex, WeightStringCol: weightStringCol, CollationID: cpk.collation.ID()})
+		if cpk.weightStringIndex != cpk.colIndex {
+			weightStringCol = cpk.weightStringIndex
 		}
+		ob = append(ob, engine.OrderByParams{Col: cpk.colIndex, WeightStringCol: weightStringCol})
 	}
 	return &engine.MergeSort{
 		Primitives: prims,
@@ -906,19 +796,9 @@ func (df *vdiff) syncTargets(ctx context.Context, filteredReplicationWaitTime ti
 // restartTargets restarts the stopped target vreplication streams.
 func (df *vdiff) restartTargets(ctx context.Context) error {
 	return df.forAll(df.targets, func(shard string, target *shardStreamer) error {
-		query := fmt.Sprintf("update _vt.vreplication set state='Running', message='', stop_pos='' where db_name=%s and workflow=%s",
-			encodeString(target.primary.DbName()), encodeString(df.ts.WorkflowName()))
-		log.Infof("Restarting the %q VReplication workflow on %q using %q", df.ts.WorkflowName(), target.primary.Alias, query)
-		var err error
-		// Let's retry a few times if we get a retryable error.
-		for i := 1; i <= 3; i++ {
-			_, err = df.ts.TabletManagerClient().VReplicationExec(ctx, target.primary.Tablet, query)
-			if err == nil || !mysql.IsEphemeralError(err) {
-				break
-			}
-			log.Warningf("Encountered the following error while restarting the %q VReplication workflow on %q, will retry (attempt #%d): %v",
-				df.ts.WorkflowName(), target.primary.Alias, i, err)
-		}
+		query := fmt.Sprintf("update _vt.vreplication set state='Running', message='', stop_pos='' where db_name=%s and workflow=%s", encodeString(target.primary.DbName()), encodeString(df.ts.WorkflowName()))
+		log.Infof("restarting target replication with %s", query)
+		_, err := df.ts.TabletManagerClient().VReplicationExec(ctx, target.primary.Tablet, query)
 		return err
 	})
 }
@@ -957,10 +837,10 @@ func newPrimitiveExecutor(ctx context.Context, prim engine.Primitive) *primitive
 		prim:     prim,
 		resultch: make(chan *sqltypes.Result, 1),
 	}
-	vcursor := &contextVCursor{}
+	vcursor := &contextVCursor{ctx: ctx}
 	go func() {
 		defer close(pe.resultch)
-		pe.err = vcursor.StreamExecutePrimitive(ctx, pe.prim, make(map[string]*querypb.BindVariable), true, func(qr *sqltypes.Result) error {
+		pe.err = vcursor.StreamExecutePrimitive(pe.prim, make(map[string]*querypb.BindVariable), true, func(qr *sqltypes.Result) error {
 			select {
 			case pe.resultch <- qr:
 			case <-ctx.Done():
@@ -1003,7 +883,7 @@ func (pe *primitiveExecutor) drain(ctx context.Context) (int, error) {
 //-----------------------------------------------------------------
 // shardStreamer
 
-func (sm *shardStreamer) StreamExecute(ctx context.Context, vcursor engine.VCursor, bindVars map[string]*querypb.BindVariable, wantfields bool, callback func(*sqltypes.Result) error) error {
+func (sm *shardStreamer) StreamExecute(vcursor engine.VCursor, bindVars map[string]*querypb.BindVariable, wantfields bool, callback func(*sqltypes.Result) error) error {
 	for result := range sm.result {
 		if err := callback(result); err != nil {
 			return err
@@ -1013,7 +893,7 @@ func (sm *shardStreamer) StreamExecute(ctx context.Context, vcursor engine.VCurs
 }
 
 // humanInt formats large integers to a value easier to the eye: 100000=100k 1e12=1b 234000000=234m ...
-func humanInt(n int64) string { // nolint
+func humanInt(n int64) string {
 	var val float64
 	var unit string
 	switch true {
@@ -1038,7 +918,7 @@ func humanInt(n int64) string { // nolint
 //-----------------------------------------------------------------
 // tableDiffer
 
-func (td *tableDiffer) diff(ctx context.Context, rowsToCompare *int64, debug, onlyPks bool, maxExtraRowsToCompare int) (*DiffReport, error) {
+func (td *tableDiffer) diff(ctx context.Context, rowsToCompare *int64, debug, onlyPks bool) (*DiffReport, error) {
 	sourceExecutor := newPrimitiveExecutor(ctx, td.sourcePrimitive)
 	targetExecutor := newPrimitiveExecutor(ctx, td.targetPrimitive)
 	dr := &DiffReport{}
@@ -1080,7 +960,7 @@ func (td *tableDiffer) diff(ctx context.Context, rowsToCompare *int64, debug, on
 			if err != nil {
 				return nil, vterrors.Wrap(err, "unexpected error generating diff")
 			}
-			dr.ExtraRowsTargetDiffs = append(dr.ExtraRowsTargetDiffs, diffRow)
+			dr.ExtraRowsTargetSample = append(dr.ExtraRowsTargetSample, diffRow)
 
 			// drain target, update count
 			count, err := targetExecutor.drain(ctx)
@@ -1098,7 +978,7 @@ func (td *tableDiffer) diff(ctx context.Context, rowsToCompare *int64, debug, on
 			if err != nil {
 				return nil, vterrors.Wrap(err, "unexpected error generating diff")
 			}
-			dr.ExtraRowsSourceDiffs = append(dr.ExtraRowsSourceDiffs, diffRow)
+			dr.ExtraRowsSourceSample = append(dr.ExtraRowsTargetSample, diffRow)
 
 			count, err := sourceExecutor.drain(ctx)
 			if err != nil {
@@ -1117,23 +997,23 @@ func (td *tableDiffer) diff(ctx context.Context, rowsToCompare *int64, debug, on
 		case err != nil:
 			return nil, err
 		case c < 0:
-			if dr.ExtraRowsSource < maxExtraRowsToCompare {
+			if dr.ExtraRowsSource < 10 {
 				diffRow, err := td.genRowDiff(td.sourceExpression, sourceRow, debug, onlyPks)
 				if err != nil {
 					return nil, vterrors.Wrap(err, "unexpected error generating diff")
 				}
-				dr.ExtraRowsSourceDiffs = append(dr.ExtraRowsSourceDiffs, diffRow)
+				dr.ExtraRowsSourceSample = append(dr.ExtraRowsTargetSample, diffRow)
 			}
 			dr.ExtraRowsSource++
 			advanceTarget = false
 			continue
 		case c > 0:
-			if dr.ExtraRowsTarget < maxExtraRowsToCompare {
+			if dr.ExtraRowsTarget < 10 {
 				diffRow, err := td.genRowDiff(td.targetExpression, targetRow, debug, onlyPks)
 				if err != nil {
 					return nil, vterrors.Wrap(err, "unexpected error generating diff")
 				}
-				dr.ExtraRowsTargetDiffs = append(dr.ExtraRowsTargetDiffs, diffRow)
+				dr.ExtraRowsTargetSample = append(dr.ExtraRowsTargetSample, diffRow)
 			}
 			dr.ExtraRowsTarget++
 			advanceSource = false
@@ -1141,14 +1021,13 @@ func (td *tableDiffer) diff(ctx context.Context, rowsToCompare *int64, debug, on
 		}
 
 		// c == 0
-		// Compare the non-pk values.
+		// Compare non-pk values.
 		c, err = td.compare(sourceRow, targetRow, td.compareCols, true)
 		switch {
 		case err != nil:
 			return nil, err
 		case c != 0:
-			// We don't do a second pass to compare mismatched rows so we can cap the slice here
-			if dr.MismatchedRows < maxVDiffReportSampleRows {
+			if dr.MismatchedRows < 10 {
 				sourceDiffRow, err := td.genRowDiff(td.targetExpression, sourceRow, debug, onlyPks)
 				if err != nil {
 					return nil, vterrors.Wrap(err, "unexpected error generating diff")
@@ -1172,16 +1051,29 @@ func (td *tableDiffer) compare(sourceRow, targetRow []sqltypes.Value, cols []com
 			continue
 		}
 		compareIndex := col.colIndex
+		// This detects if we are using weight_string() to compare this (text) column.
+		// If either source or target weight_string is null we fallback to a byte compare for text columns
+		if !sourceRow[col.weightStringIndex].IsNull() && sourceRow[col.colIndex].IsText() &&
+			!targetRow[col.weightStringIndex].IsNull() && targetRow[col.colIndex].IsText() &&
+			col.weightStringIndex > col.colIndex {
+			compareIndex = col.weightStringIndex
+		}
 		var c int
 		var err error
-		var collationID collations.ID
-		// if the collation is nil or unknown, use binary collation to compare as bytes
-		if col.collation == nil {
-			collationID = collations.CollationBinaryID
+		if sourceRow[compareIndex].IsText() && targetRow[compareIndex].IsText() {
+			srowBytes, err := sourceRow[compareIndex].ToBytes()
+			if err != nil {
+				return 0, err
+			}
+			trowBytes, err := targetRow[compareIndex].ToBytes()
+			if err != nil {
+				return 0, err
+			}
+			c = bytes.Compare(srowBytes, trowBytes)
 		} else {
-			collationID = col.collation.ID()
+			// TODO(king-11) make collation aware
+			c, err = evalengine.NullsafeCompare(sourceRow[compareIndex], targetRow[compareIndex], collations.Unknown)
 		}
-		c, err = evalengine.NullsafeCompare(sourceRow[compareIndex], targetRow[compareIndex], collationID)
 		if err != nil {
 			return 0, err
 		}
@@ -1261,21 +1153,27 @@ func (td *tableDiffer) genDebugQueryDiff(sel *sqlparser.Select, row []sqltypes.V
 //-----------------------------------------------------------------
 // contextVCursor
 
-// contextVCursor satisfies VCursor interface
+// contextVCursor satisfies VCursor, but only implements Context().
+// MergeSort only requires Context to be implemented.
 type contextVCursor struct {
 	engine.VCursor
+	ctx context.Context
 }
 
 func (vc *contextVCursor) ConnCollation() collations.ID {
 	return collations.CollationBinaryID
 }
 
-func (vc *contextVCursor) ExecutePrimitive(ctx context.Context, primitive engine.Primitive, bindVars map[string]*querypb.BindVariable, wantfields bool) (*sqltypes.Result, error) {
-	return primitive.TryExecute(ctx, vc, bindVars, wantfields)
+func (vc *contextVCursor) ExecutePrimitive(primitive engine.Primitive, bindVars map[string]*querypb.BindVariable, wantfields bool) (*sqltypes.Result, error) {
+	return primitive.TryExecute(vc, bindVars, wantfields)
 }
 
-func (vc *contextVCursor) StreamExecutePrimitive(ctx context.Context, primitive engine.Primitive, bindVars map[string]*querypb.BindVariable, wantfields bool, callback func(*sqltypes.Result) error) error {
-	return primitive.TryStreamExecute(ctx, vc, bindVars, wantfields, callback)
+func (vc *contextVCursor) StreamExecutePrimitive(primitive engine.Primitive, bindVars map[string]*querypb.BindVariable, wantfields bool, callback func(*sqltypes.Result) error) error {
+	return primitive.TryStreamExecute(vc, bindVars, wantfields, callback)
+}
+
+func (vc *contextVCursor) Context() context.Context {
+	return vc.ctx
 }
 
 //-----------------------------------------------------------------
@@ -1312,6 +1210,19 @@ func removeExprKeyrange(node sqlparser.Expr) sqlparser.Expr {
 func isFuncKeyrange(expr sqlparser.Expr) bool {
 	funcExpr, ok := expr.(*sqlparser.FuncExpr)
 	return ok && funcExpr.Name.EqualString("in_keyrange")
+}
+
+func wrapWeightString(expr sqlparser.SelectExpr) *sqlparser.AliasedExpr {
+	return &sqlparser.AliasedExpr{
+		Expr: &sqlparser.FuncExpr{
+			Name: sqlparser.NewColIdent("weight_string"),
+			Exprs: []sqlparser.SelectExpr{
+				&sqlparser.AliasedExpr{
+					Expr: expr.(*sqlparser.AliasedExpr).Expr,
+				},
+			},
+		},
+	}
 }
 
 func formatSampleRow(logger logutil.Logger, rd *RowDiff, debug bool) {

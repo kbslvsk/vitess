@@ -23,7 +23,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"math/rand"
 	"os"
 	"sort"
@@ -31,23 +30,16 @@ import (
 	"time"
 
 	"github.com/olekukonko/tablewriter"
-	"github.com/spf13/pflag"
 
-	"vitess.io/vitess/go/acl"
 	"vitess.io/vitess/go/vt/concurrency"
-	"vitess.io/vitess/go/vt/grpccommon"
 	"vitess.io/vitess/go/vt/log"
 	"vitess.io/vitess/go/vt/logutil"
-	"vitess.io/vitess/go/vt/servenv"
 	"vitess.io/vitess/go/vt/sqlparser"
 	"vitess.io/vitess/go/vt/vitessdriver"
 	"vitess.io/vitess/go/vt/vterrors"
 	"vitess.io/vitess/go/vt/vtgate/vtgateconn"
 
 	vtrpcpb "vitess.io/vitess/go/vt/proto/vtrpc"
-
-	// Include deprecation warnings for soon-to-be-unsupported flag invocations.
-	_flag "vitess.io/vitess/go/internal/flag"
 )
 
 var (
@@ -60,24 +52,23 @@ in the form of :v1, :v2, etc.
 
 Examples:
 
-  $ vtclient --server vtgate:15991 "SELECT * FROM messages"
+  $ vtclient -server vtgate:15991 "SELECT * FROM messages"
 
-  $ vtclient --server vtgate:15991 --target '@primary' --bind_variables '[ 12345, 1, "msg 12345" ]' "INSERT INTO messages (page,time_created_ns,message) VALUES (:v1, :v2, :v3)"
+  $ vtclient -server vtgate:15991 -target '@primary' -bind_variables '[ 12345, 1, "msg 12345" ]' "INSERT INTO messages (page,time_created_ns,message) VALUES (:v1, :v2, :v3)"
 
 `
-	server        string
-	streaming     bool
-	targetString  string
-	jsonOutput    bool
-	useRandom     bool
-	bindVariables *bindvars
-
-	timeout  = 30 * time.Second
-	parallel = 1
-	count    = 1
-	minSeqID = 0
-	maxSeqID = 0
-	qps      = 0
+	server        = flag.String("server", "", "vtgate server to connect to")
+	timeout       = flag.Duration("timeout", 30*time.Second, "timeout for queries")
+	streaming     = flag.Bool("streaming", false, "use a streaming query")
+	bindVariables = newBindvars("bind_variables", "bind variables as a json list")
+	targetString  = flag.String("target", "", "keyspace:shard@tablet_type")
+	jsonOutput    = flag.Bool("json", false, "Output JSON instead of human-readable table")
+	parallel      = flag.Int("parallel", 1, "DMLs only: Number of threads executing the same query in parallel. Useful for simple load testing.")
+	count         = flag.Int("count", 1, "DMLs only: Number of times each thread executes the query. Useful for simple, sustained load testing.")
+	minSeqID      = flag.Int("min_sequence_id", 0, "min sequence ID to generate. When max_sequence_id > min_sequence_id, for each query, a number is generated in [min_sequence_id, max_sequence_id) and attached to the end of the bind variables.")
+	maxSeqID      = flag.Int("max_sequence_id", 0, "max sequence ID.")
+	useRandom     = flag.Bool("use_random_sequence", false, "use random sequence for generating [min_sequence_id, max_sequence_id)")
+	qps           = flag.Int("qps", 0, "queries per second to throttle each thread at.")
 )
 
 var (
@@ -85,30 +76,14 @@ var (
 )
 
 func init() {
-	_flag.SetUsage(flag.CommandLine, _flag.UsageOptions{
-		Epilogue: func(w io.Writer) { fmt.Fprint(w, usage) },
-	})
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage of %s:\n", os.Args[0])
+		flag.PrintDefaults()
+		fmt.Fprint(os.Stderr, usage)
+	}
 }
 
-func registerFlags(fs *pflag.FlagSet) {
-	fs.StringVar(&server, "server", server, "vtgate server to connect to")
-	fs.DurationVar(&timeout, "timeout", timeout, "timeout for queries")
-	fs.BoolVar(&streaming, "streaming", streaming, "use a streaming query")
-	fs.StringVar(&targetString, "target", targetString, "keyspace:shard@tablet_type")
-	fs.BoolVar(&jsonOutput, "json", jsonOutput, "Output JSON instead of human-readable table")
-	fs.IntVar(&parallel, "parallel", parallel, "DMLs only: Number of threads executing the same query in parallel. Useful for simple load testing.")
-	fs.IntVar(&count, "count", count, "DMLs only: Number of times each thread executes the query. Useful for simple, sustained load testing.")
-	fs.IntVar(&minSeqID, "min_sequence_id", minSeqID, "min sequence ID to generate. When max_sequence_id > min_sequence_id, for each query, a number is generated in [min_sequence_id, max_sequence_id) and attached to the end of the bind variables.")
-	fs.IntVar(&maxSeqID, "max_sequence_id", maxSeqID, "max sequence ID.")
-	fs.BoolVar(&useRandom, "use_random_sequence", useRandom, "use random sequence for generating [min_sequence_id, max_sequence_id)")
-	fs.IntVar(&qps, "qps", qps, "queries per second to throttle each thread at.")
-
-	acl.RegisterFlags(fs)
-
-	bindVariables = newBindvars(fs, "bind_variables", "bind variables as a json list")
-}
-
-type bindvars []any
+type bindvars []interface{}
 
 func (bv *bindvars) String() string {
 	b, err := json.Marshal(bv)
@@ -139,18 +114,13 @@ func (bv *bindvars) Set(s string) (err error) {
 }
 
 // For internal flag compatibility
-func (bv *bindvars) Get() any {
+func (bv *bindvars) Get() interface{} {
 	return bv
 }
 
-// Type is part of the pflag.Value interface. bindvars.Set() expects all numbers as float64.
-func (bv *bindvars) Type() string {
-	return "float64"
-}
-
-func newBindvars(fs *pflag.FlagSet, name, usage string) *bindvars {
+func newBindvars(name, usage string) *bindvars {
 	var bv bindvars
-	fs.Var(&bv, name, usage)
+	flag.Var(&bv, name, usage)
 	return &bv
 }
 
@@ -158,7 +128,7 @@ func main() {
 	defer logutil.Flush()
 
 	qr, err := run()
-	if jsonOutput && qr != nil {
+	if *jsonOutput && qr != nil {
 		data, err := json.MarshalIndent(qr, "", "  ")
 		if err != nil {
 			log.Exitf("cannot marshal data: %v", err)
@@ -175,32 +145,26 @@ func main() {
 }
 
 func run() (*results, error) {
-	fs := pflag.NewFlagSet("vtclient", pflag.ExitOnError)
-	grpccommon.RegisterFlags(fs)
-	log.RegisterFlags(fs)
-	logutil.RegisterFlags(fs)
-	servenv.RegisterMySQLServerFlags(fs)
-	registerFlags(fs)
-	_flag.Parse(fs)
-	args := _flag.Args()
+	flag.Parse()
+	args := flag.Args()
 
 	if len(args) == 0 {
-		pflag.Usage()
+		flag.Usage()
 		return nil, errors.New("no arguments provided. See usage above")
 	}
 	if len(args) > 1 {
 		return nil, errors.New("no additional arguments after the query allowed")
 	}
 
-	if maxSeqID > minSeqID {
+	if *maxSeqID > *minSeqID {
 		go func() {
-			if useRandom {
+			if *useRandom {
 				rand.Seed(time.Now().UnixNano())
 				for {
-					seqChan <- rand.Intn(maxSeqID-minSeqID) + minSeqID
+					seqChan <- rand.Intn(*maxSeqID-*minSeqID) + *minSeqID
 				}
 			} else {
-				for i := minSeqID; i < maxSeqID; i++ {
+				for i := *minSeqID; i < *maxSeqID; i++ {
 					seqChan <- i
 				}
 			}
@@ -208,10 +172,10 @@ func run() (*results, error) {
 	}
 
 	c := vitessdriver.Configuration{
-		Protocol:  vtgateconn.GetVTGateProtocol(),
-		Address:   server,
-		Target:    targetString,
-		Streaming: streaming,
+		Protocol:  *vtgateconn.VtgateProtocol,
+		Address:   *server,
+		Target:    *targetString,
+		Streaming: *streaming,
 	}
 	db, err := vitessdriver.OpenWithConfiguration(c)
 	if err != nil {
@@ -220,15 +184,15 @@ func run() (*results, error) {
 
 	log.Infof("Sending the query...")
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 	return execMulti(ctx, db, args[0])
 }
 
-func prepareBindVariables() []any {
-	bv := make([]any, 0, len(*bindVariables)+1)
+func prepareBindVariables() []interface{} {
+	bv := make([]interface{}, 0, len(*bindVariables)+1)
 	bv = append(bv, (*bindVariables)...)
-	if maxSeqID > minSeqID {
+	if *maxSeqID > *minSeqID {
 		bv = append(bv, <-seqChan)
 	}
 	return bv
@@ -240,10 +204,10 @@ func execMulti(ctx context.Context, db *sql.DB, sql string) (*results, error) {
 	wg := sync.WaitGroup{}
 	isDML := sqlparser.IsDML(sql)
 
-	isThrottled := qps > 0
+	isThrottled := *qps > 0
 
 	start := time.Now()
-	for i := 0; i < parallel; i++ {
+	for i := 0; i < *parallel; i++ {
 		wg.Add(1)
 
 		go func() {
@@ -251,11 +215,11 @@ func execMulti(ctx context.Context, db *sql.DB, sql string) (*results, error) {
 
 			var ticker *time.Ticker
 			if isThrottled {
-				tickDuration := time.Second / time.Duration(qps)
+				tickDuration := time.Second / time.Duration(*qps)
 				ticker = time.NewTicker(tickDuration)
 			}
 
-			for j := 0; j < count; j++ {
+			for j := 0; j < *count; j++ {
 				var qr *results
 				var err error
 				if isDML {
@@ -263,7 +227,7 @@ func execMulti(ctx context.Context, db *sql.DB, sql string) (*results, error) {
 				} else {
 					qr, err = execNonDml(ctx, db, sql)
 				}
-				if count == 1 && parallel == 1 {
+				if *count == 1 && *parallel == 1 {
 					all = qr
 				} else {
 					all.merge(qr)
@@ -297,7 +261,7 @@ func execDml(ctx context.Context, db *sql.DB, sql string) (*results, error) {
 		return nil, vterrors.Wrap(err, "BEGIN failed")
 	}
 
-	result, err := tx.ExecContext(ctx, sql, []any(prepareBindVariables())...)
+	result, err := tx.ExecContext(ctx, sql, []interface{}(prepareBindVariables())...)
 	if err != nil {
 		return nil, vterrors.Wrap(err, "failed to execute DML")
 	}
@@ -318,7 +282,7 @@ func execDml(ctx context.Context, db *sql.DB, sql string) (*results, error) {
 
 func execNonDml(ctx context.Context, db *sql.DB, sql string) (*results, error) {
 	start := time.Now()
-	rows, err := db.QueryContext(ctx, sql, []any(prepareBindVariables())...)
+	rows, err := db.QueryContext(ctx, sql, []interface{}(prepareBindVariables())...)
 	if err != nil {
 		return nil, vterrors.Wrap(err, "client error")
 	}
@@ -334,7 +298,7 @@ func execNonDml(ctx context.Context, db *sql.DB, sql string) (*results, error) {
 
 	// get the rows
 	for rows.Next() {
-		row := make([]any, len(cols))
+		row := make([]interface{}, len(cols))
 		for i := range row {
 			var col string
 			row[i] = &col

@@ -18,52 +18,39 @@ limitations under the License.
 package main
 
 import (
-	"context"
+	"flag"
 	"fmt"
 	"os"
 	"time"
 
-	"github.com/spf13/pflag"
+	"context"
 
-	"vitess.io/vitess/go/acl"
 	"vitess.io/vitess/go/cmd"
 	"vitess.io/vitess/go/exit"
 	"vitess.io/vitess/go/flagutil"
 	"vitess.io/vitess/go/mysql"
+	"vitess.io/vitess/go/netutil"
 	"vitess.io/vitess/go/vt/dbconfigs"
 	"vitess.io/vitess/go/vt/log"
 	"vitess.io/vitess/go/vt/logutil"
 	"vitess.io/vitess/go/vt/mysqlctl"
-	"vitess.io/vitess/go/vt/servenv"
 )
 
 var (
-	mysqlPort   = 3306
-	tabletUID   = uint(41983)
-	mysqlSocket string
+	port        = flag.Int("port", 6612, "vttablet port")
+	mysqlPort   = flag.Int("mysql_port", 3306, "mysql port")
+	tabletUID   = flag.Uint("tablet_uid", 41983, "tablet uid")
+	mysqlSocket = flag.String("mysql_socket", "", "path to the mysql socket")
+
+	// Reason for nolint : Being used in line 246 (tabletAddr = netutil.JoinHostPort("localhost", int32(*port))
+	tabletAddr string //nolint
 )
 
-func init() {
-	servenv.RegisterDefaultFlags()
-	servenv.RegisterDefaultSocketFileFlags()
-	servenv.RegisterFlags()
-	servenv.RegisterServiceMapFlag()
-	// mysqlctl only starts and stops mysql, only needs dba.
-	dbconfigs.RegisterFlags(dbconfigs.Dba)
-	servenv.OnParse(func(fs *pflag.FlagSet) {
-		fs.IntVar(&mysqlPort, "mysql_port", mysqlPort, "MySQL port")
-		fs.UintVar(&tabletUID, "tablet_uid", tabletUID, "Tablet UID")
-		fs.StringVar(&mysqlSocket, "mysql_socket", mysqlSocket, "Path to the mysqld socket file")
-
-		acl.RegisterFlags(fs)
-	})
-}
-
-func initConfigCmd(subFlags *pflag.FlagSet, args []string) error {
-	_ = subFlags.Parse(args)
+func initConfigCmd(subFlags *flag.FlagSet, args []string) error {
+	subFlags.Parse(args)
 
 	// Generate my.cnf from scratch and use it to find mysqld.
-	mysqld, cnf, err := mysqlctl.CreateMysqldAndMycnf(uint32(tabletUID), mysqlSocket, int32(mysqlPort))
+	mysqld, cnf, err := mysqlctl.CreateMysqldAndMycnf(uint32(*tabletUID), *mysqlSocket, int32(*mysqlPort))
 	if err != nil {
 		return fmt.Errorf("failed to initialize mysql config: %v", err)
 	}
@@ -74,13 +61,13 @@ func initConfigCmd(subFlags *pflag.FlagSet, args []string) error {
 	return nil
 }
 
-func initCmd(subFlags *pflag.FlagSet, args []string) error {
-	waitTime := subFlags.Duration("wait_time", 5*time.Minute, "How long to wait for mysqld startup")
-	initDBSQLFile := subFlags.String("init_db_sql_file", "", "Path to .sql file to run after mysqld initiliaztion")
-	_ = subFlags.Parse(args)
+func initCmd(subFlags *flag.FlagSet, args []string) error {
+	waitTime := subFlags.Duration("wait_time", 5*time.Minute, "how long to wait for startup")
+	initDBSQLFile := subFlags.String("init_db_sql_file", "", "path to .sql file to run after mysql_install_db")
+	subFlags.Parse(args)
 
 	// Generate my.cnf from scratch and use it to find mysqld.
-	mysqld, cnf, err := mysqlctl.CreateMysqldAndMycnf(uint32(tabletUID), mysqlSocket, int32(mysqlPort))
+	mysqld, cnf, err := mysqlctl.CreateMysqldAndMycnf(uint32(*tabletUID), *mysqlSocket, int32(*mysqlPort))
 	if err != nil {
 		return fmt.Errorf("failed to initialize mysql config: %v", err)
 	}
@@ -94,11 +81,11 @@ func initCmd(subFlags *pflag.FlagSet, args []string) error {
 	return nil
 }
 
-func reinitConfigCmd(subFlags *pflag.FlagSet, args []string) error {
-	_ = subFlags.Parse(args)
+func reinitConfigCmd(subFlags *flag.FlagSet, args []string) error {
+	subFlags.Parse(args)
 
 	// There ought to be an existing my.cnf, so use it to find mysqld.
-	mysqld, cnf, err := mysqlctl.OpenMysqldAndMycnf(uint32(tabletUID))
+	mysqld, cnf, err := mysqlctl.OpenMysqldAndMycnf(uint32(*tabletUID))
 	if err != nil {
 		return fmt.Errorf("failed to find mysql config: %v", err)
 	}
@@ -110,12 +97,12 @@ func reinitConfigCmd(subFlags *pflag.FlagSet, args []string) error {
 	return nil
 }
 
-func shutdownCmd(subFlags *pflag.FlagSet, args []string) error {
-	waitTime := subFlags.Duration("wait_time", 5*time.Minute, "How long to wait for mysqld shutdown")
-	_ = subFlags.Parse(args)
+func shutdownCmd(subFlags *flag.FlagSet, args []string) error {
+	waitTime := subFlags.Duration("wait_time", 5*time.Minute, "how long to wait for shutdown")
+	subFlags.Parse(args)
 
 	// There ought to be an existing my.cnf, so use it to find mysqld.
-	mysqld, cnf, err := mysqlctl.OpenMysqldAndMycnf(uint32(tabletUID))
+	mysqld, cnf, err := mysqlctl.OpenMysqldAndMycnf(uint32(*tabletUID))
 	if err != nil {
 		return fmt.Errorf("failed to find mysql config: %v", err)
 	}
@@ -129,14 +116,14 @@ func shutdownCmd(subFlags *pflag.FlagSet, args []string) error {
 	return nil
 }
 
-func startCmd(subFlags *pflag.FlagSet, args []string) error {
-	waitTime := subFlags.Duration("wait_time", 5*time.Minute, "How long to wait for mysqld startup")
+func startCmd(subFlags *flag.FlagSet, args []string) error {
+	waitTime := subFlags.Duration("wait_time", 5*time.Minute, "how long to wait for startup")
 	var mysqldArgs flagutil.StringListValue
 	subFlags.Var(&mysqldArgs, "mysqld_args", "List of comma-separated flags to pass additionally to mysqld")
-	_ = subFlags.Parse(args)
+	subFlags.Parse(args)
 
 	// There ought to be an existing my.cnf, so use it to find mysqld.
-	mysqld, cnf, err := mysqlctl.OpenMysqldAndMycnf(uint32(tabletUID))
+	mysqld, cnf, err := mysqlctl.OpenMysqldAndMycnf(uint32(*tabletUID))
 	if err != nil {
 		return fmt.Errorf("failed to find mysql config: %v", err)
 	}
@@ -150,13 +137,13 @@ func startCmd(subFlags *pflag.FlagSet, args []string) error {
 	return nil
 }
 
-func teardownCmd(subFlags *pflag.FlagSet, args []string) error {
-	waitTime := subFlags.Duration("wait_time", 5*time.Minute, "How long to wait for mysqld shutdown")
-	force := subFlags.Bool("force", false, "Remove the root directory even if mysqld shutdown fails")
-	_ = subFlags.Parse(args)
+func teardownCmd(subFlags *flag.FlagSet, args []string) error {
+	waitTime := subFlags.Duration("wait_time", 5*time.Minute, "how long to wait for shutdown")
+	force := subFlags.Bool("force", false, "will remove the root directory even if mysqld shutdown fails")
+	subFlags.Parse(args)
 
 	// There ought to be an existing my.cnf, so use it to find mysqld.
-	mysqld, cnf, err := mysqlctl.OpenMysqldAndMycnf(uint32(tabletUID))
+	mysqld, cnf, err := mysqlctl.OpenMysqldAndMycnf(uint32(*tabletUID))
 	if err != nil {
 		return fmt.Errorf("failed to find mysql config: %v", err)
 	}
@@ -170,8 +157,8 @@ func teardownCmd(subFlags *pflag.FlagSet, args []string) error {
 	return nil
 }
 
-func positionCmd(subFlags *pflag.FlagSet, args []string) error {
-	_ = subFlags.Parse(args)
+func positionCmd(subFlags *flag.FlagSet, args []string) error {
+	subFlags.Parse(args)
 	if len(args) < 3 {
 		return fmt.Errorf("not enough arguments for position operation")
 	}
@@ -207,23 +194,23 @@ func positionCmd(subFlags *pflag.FlagSet, args []string) error {
 
 type command struct {
 	name   string
-	method func(*pflag.FlagSet, []string) error
+	method func(*flag.FlagSet, []string) error
 	params string
 	help   string
 }
 
 var commands = []command{
-	{"init", initCmd, "[--wait_time=5m] [--init_db_sql_file=]",
+	{"init", initCmd, "[-wait_time=5m] [-init_db_sql_file=]",
 		"Initializes the directory structure and starts mysqld"},
 	{"init_config", initConfigCmd, "",
 		"Initializes the directory structure, creates my.cnf file, but does not start mysqld"},
 	{"reinit_config", reinitConfigCmd, "",
 		"Reinitializes my.cnf file with new server_id"},
-	{"teardown", teardownCmd, "[--wait_time=5m] [--force]",
+	{"teardown", teardownCmd, "[-wait_time=5m] [-force]",
 		"Shuts mysqld down, and removes the directory"},
-	{"start", startCmd, "[--wait_time=5m]",
+	{"start", startCmd, "[-wait_time=5m]",
 		"Starts mysqld on an already 'init'-ed directory"},
-	{"shutdown", shutdownCmd, "[--wait_time=5m]",
+	{"shutdown", shutdownCmd, "[-wait_time=5m]",
 		"Shuts down mysqld, does not remove any file"},
 
 	{"position", positionCmd,
@@ -235,52 +222,49 @@ func main() {
 	defer exit.Recover()
 	defer logutil.Flush()
 
-	fs := pflag.NewFlagSet("mysqlctl", pflag.ExitOnError)
-	log.RegisterFlags(fs)
-	logutil.RegisterFlags(fs)
-	pflag.Usage = func() {
-		w := os.Stderr
-		fmt.Fprintf(w, "Usage: %s [global-flags] <command> -- [command-flags]\n", os.Args[0])
-		fmt.Fprintf(w, "\nThe commands are listed below. Use '%s <command> -- {-h, --help}' for command help.\n\n", os.Args[0])
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: %s [global parameters] command [command parameters]\n", os.Args[0])
+
+		fmt.Fprintf(os.Stderr, "\nThe global optional parameters are:\n")
+		flag.PrintDefaults()
+
+		fmt.Fprintf(os.Stderr, "\nThe commands are listed below. Use '%s <command> -h' for more help.\n\n", os.Args[0])
 		for _, cmd := range commands {
-			fmt.Fprintf(w, "  %s", cmd.name)
+			fmt.Fprintf(os.Stderr, "  %s", cmd.name)
 			if cmd.params != "" {
-				fmt.Fprintf(w, " %s", cmd.params)
+				fmt.Fprintf(os.Stderr, " %s", cmd.params)
 			}
-			fmt.Fprintf(w, "\n")
+			fmt.Fprintf(os.Stderr, "\n")
 		}
-		fmt.Fprintf(w, "\nGlobal flags:\n")
-		pflag.PrintDefaults()
+		fmt.Fprintf(os.Stderr, "\n")
 	}
-	args := servenv.ParseFlagsWithArgs("mysqlctl")
 
 	if cmd.IsRunningAsRoot() {
 		fmt.Fprintln(os.Stderr, "mysqlctl cannot be ran as root. Please run as a different user")
 		exit.Return(1)
 	}
+	dbconfigs.RegisterFlags(dbconfigs.Dba)
+	flag.Parse()
 
-	action := args[0]
+	tabletAddr = netutil.JoinHostPort("localhost", int32(*port))
+
+	action := flag.Arg(0)
 	for _, cmd := range commands {
 		if cmd.name == action {
-			subFlags := pflag.NewFlagSet(action, pflag.ExitOnError)
+			subFlags := flag.NewFlagSet(action, flag.ExitOnError)
 			subFlags.Usage = func() {
-				w := os.Stderr
-				fmt.Fprintf(w, "Usage: %s %s %s\n\n", os.Args[0], cmd.name, cmd.params)
-				fmt.Fprintf(w, cmd.help)
-				fmt.Fprintf(w, "\n\n")
+				fmt.Fprintf(os.Stderr, "Usage: %s %s %s\n\n", os.Args[0], cmd.name, cmd.params)
+				fmt.Fprintf(os.Stderr, "%s\n\n", cmd.help)
 				subFlags.PrintDefaults()
 			}
-			// This is logged and we want sentence capitalization and punctuation.
-			pflag.ErrHelp = fmt.Errorf("\nSee %s --help for more information.", os.Args[0]) // nolint:revive
-			if err := cmd.method(subFlags, args[1:]); err != nil {
-				log.Errorf("%v\n", err)
-				subFlags.Usage()
+
+			if err := cmd.method(subFlags, flag.Args()[1:]); err != nil {
+				log.Error(err)
 				exit.Return(1)
 			}
 			return
 		}
 	}
-	log.Errorf("invalid action: %v\n\n", action)
-	pflag.Usage()
+	log.Errorf("invalid action: %v", action)
 	exit.Return(1)
 }

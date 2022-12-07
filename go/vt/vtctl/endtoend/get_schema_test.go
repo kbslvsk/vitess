@@ -17,7 +17,6 @@ import (
 	"vitess.io/vitess/go/vt/vtctl"
 	"vitess.io/vitess/go/vt/vtctl/grpcvtctldserver/testutil"
 	"vitess.io/vitess/go/vt/vttablet/tmclient"
-	"vitess.io/vitess/go/vt/vttablet/tmclienttest"
 	"vitess.io/vitess/go/vt/wrangler"
 
 	querypb "vitess.io/vitess/go/vt/proto/query"
@@ -156,7 +155,7 @@ func TestGetSchema(t *testing.T) {
 	tmclient.RegisterTabletManagerClientFactory(t.Name(), func() tmclient.TabletManagerClient {
 		return &tmc
 	})
-	tmclienttest.SetProtocol("go.vt.vtctl.endtoend", t.Name())
+	*tmclient.TabletManagerProtocol = t.Name()
 
 	logger := logutil.NewMemoryLogger()
 
@@ -177,7 +176,7 @@ func TestGetSchema(t *testing.T) {
 	utils.MustMatch(t, sd, actual)
 
 	// reset for the next invocation, where we verify that passing
-	// --table_sizes_only does not include the create table statement or columns.
+	// -table_sizes_only does not include the create table statement or columns.
 	logger.Events = nil
 	sd = &tabletmanagerdatapb.SchemaDefinition{
 		TableDefinitions: []*tabletmanagerdatapb.TableDefinition{
@@ -202,7 +201,7 @@ func TestGetSchema(t *testing.T) {
 
 	err = vtctl.RunCommand(ctx, wrangler.New(logger, topo, &tmc), []string{
 		"GetSchema",
-		"--table_sizes_only",
+		"-table_sizes_only",
 		topoproto.TabletAliasString(tablet.Alias),
 	})
 	require.NoError(t, err)

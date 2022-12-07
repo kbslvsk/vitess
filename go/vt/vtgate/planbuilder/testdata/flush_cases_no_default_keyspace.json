@@ -27,12 +27,7 @@
             "Query": "flush local tables `user`, user_extra with read lock"
           }
         ]
-      },
-      "TablesUsed": [
-        "main.unsharded_a",
-        "user.user",
-        "user.user_extra"
-      ]
+      }
     }
   },
   {
@@ -68,11 +63,7 @@
             "Query": "flush local tables `user`"
           }
         ]
-      },
-      "TablesUsed": [
-        "main.unsharded",
-        "user.user"
-      ]
+      }
     }
   },
   {
@@ -94,10 +85,7 @@
         },
         "TargetDestination": "AllShards()",
         "Query": "flush tables a with read lock"
-      },
-      "TablesUsed": [
-        "main.a"
-      ]
+      }
     }
   },
   {
@@ -137,13 +125,7 @@
             "Query": "flush local tables `user`, user_extra with read lock"
           }
         ]
-      },
-      "TablesUsed": [
-        "main.unsharded_a",
-        "main_2.unsharded_tab",
-        "user.user",
-        "user.user_extra"
-      ]
+      }
     }
   }
 ]

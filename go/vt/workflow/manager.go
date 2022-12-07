@@ -17,14 +17,15 @@ limitations under the License.
 package workflow
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/url"
 	"sync"
 	"time"
 
-	gouuid "github.com/google/uuid"
+	"context"
+
+	gouuid "github.com/pborman/uuid"
 
 	"vitess.io/vitess/go/vt/log"
 	"vitess.io/vitess/go/vt/topo"
@@ -94,8 +95,6 @@ type Manager struct {
 	started chan struct{}
 	// workflows is a map from job UUID to runningWorkflow.
 	workflows map[string]*runningWorkflow
-	// sanitizeHTTPHeaders toggles sanitizeRequestHeader() behavior
-	sanitizeHTTPHeaders bool
 }
 
 // runningWorkflow holds information about a running workflow.
@@ -133,11 +132,6 @@ func NewManager(ts *topo.Server) *Manager {
 		started:     make(chan struct{}),
 		workflows:   make(map[string]*runningWorkflow),
 	}
-}
-
-// SetSanitizeHTTPHeaders - toggles m.sanitizeHTTPHeaders on/off
-func (m *Manager) SetSanitizeHTTPHeaders(to bool) {
-	m.sanitizeHTTPHeaders = to
 }
 
 // SetRedirectFunc sets the redirect function to use.
@@ -260,14 +254,9 @@ func (m *Manager) Create(ctx context.Context, factoryName string, args []string)
 		return "", fmt.Errorf("no factory named %v is registered", factoryName)
 	}
 
-	uuid, err := gouuid.NewUUID()
-	if err != nil {
-		return "", err
-	}
-
 	// Create the initial workflowpb.Workflow object.
 	w := &workflowpb.Workflow{
-		Uuid:        uuid.String(),
+		Uuid:        gouuid.NewUUID().String(),
 		CreateTime:  time.Now().UnixNano(),
 		FactoryName: factoryName,
 		State:       workflowpb.WorkflowState_NotStarted,

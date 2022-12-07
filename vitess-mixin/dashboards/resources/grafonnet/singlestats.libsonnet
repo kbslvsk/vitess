@@ -179,6 +179,27 @@ local prometheus = grafana.prometheus;
       )
     ),
 
+  vtworkerUp::
+    singlestat.new(
+      'vtworker',
+      datasource='%(dataSource)s' % config._config,
+      valueFontSize='50%',
+      valueName='current',
+    )
+    .addTarget(
+      prometheus.target(
+        |||
+          sum(
+            up{
+              %(vtworkerSelector)s
+            }
+          )
+        ||| % config._config,
+        instant=true,
+        intervalFactor=1
+      )
+    ),
+
   mysqlQPS::
     singlestat.new(
       'QPS - MySQL',

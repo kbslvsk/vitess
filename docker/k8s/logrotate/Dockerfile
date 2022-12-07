@@ -16,9 +16,9 @@ ARG DEBIAN_VER=stable-slim
 
 FROM debian:${DEBIAN_VER}
 
-COPY logrotate.conf /vt/logrotate.conf
+ADD logrotate.conf /vt/logrotate.conf
 
-COPY rotate.sh /vt/rotate.sh
+ADD rotate.sh /vt/rotate.sh
 
 RUN mkdir -p /vt && \
    apt-get update && \

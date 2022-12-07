@@ -93,11 +93,6 @@ func (mysqlGRFlavor) resetReplicationCommands(c *Conn) []string {
 	return []string{}
 }
 
-// resetReplicationParametersCommands is part of the Flavor interface.
-func (mysqlGRFlavor) resetReplicationParametersCommands(c *Conn) []string {
-	return []string{}
-}
-
 // setReplicationPositionCommands is disabled in mysqlGRFlavor
 func (mysqlGRFlavor) setReplicationPositionCommands(pos Position) []string {
 	return []string{}
@@ -156,32 +151,32 @@ func (mysqlGRFlavor) status(c *Conn) (ReplicationStatus, error) {
 		return res, nil
 	}
 
-	// Populate IOState from replication_connection_status
+	// Populate IOThreadRunning from replication_connection_status
 	query = fmt.Sprintf(`SELECT SERVICE_STATE
 		FROM performance_schema.replication_connection_status
 		WHERE CHANNEL_NAME='%s'`, chanel)
-	var connectionState ReplicationState
+	var ioThreadRunning bool
 	err = fetchStatusForGroupReplication(c, query, func(values []sqltypes.Value) error {
-		connectionState = ReplicationStatusToState(values[0].ToString())
+		ioThreadRunning = values[0].ToString() == "ON"
 		return nil
 	})
 	if err != nil {
 		return ReplicationStatus{}, err
 	}
-	res.IOState = connectionState
-	// Populate SQLState from replication_connection_status
-	var applierState ReplicationState
+	res.IOThreadRunning = ioThreadRunning
+	// Populate SQLThreadRunning from replication_connection_status
+	var sqlThreadRunning bool
 	query = fmt.Sprintf(`SELECT SERVICE_STATE
 		FROM performance_schema.replication_applier_status_by_coordinator
 		WHERE CHANNEL_NAME='%s'`, chanel)
 	err = fetchStatusForGroupReplication(c, query, func(values []sqltypes.Value) error {
-		applierState = ReplicationStatusToState(values[0].ToString())
+		sqlThreadRunning = values[0].ToString() == "ON"
 		return nil
 	})
 	if err != nil {
 		return ReplicationStatus{}, err
 	}
-	res.SQLState = applierState
+	res.SQLThreadRunning = sqlThreadRunning
 
 	// Collect lag information
 	// we use the difference between the last processed transaction's commit time
@@ -239,10 +234,6 @@ func (mysqlGRFlavor) primaryStatus(c *Conn) (PrimaryStatus, error) {
 	return mysqlFlavor{}.primaryStatus(c)
 }
 
-func (mysqlGRFlavor) baseShowTables() string {
-	return mysqlFlavor{}.baseShowTables()
-}
-
 func (mysqlGRFlavor) baseShowTablesWithSizes() string {
 	return TablesWithSize80
 }
@@ -250,22 +241,6 @@ func (mysqlGRFlavor) baseShowTablesWithSizes() string {
 // supportsCapability is part of the Flavor interface.
 func (mysqlGRFlavor) supportsCapability(serverVersion string, capability FlavorCapability) (bool, error) {
 	switch capability {
-	case InstantDDLFlavorCapability,
-		InstantExpandEnumCapability,
-		InstantAddLastColumnFlavorCapability,
-		InstantAddDropVirtualColumnFlavorCapability,
-		InstantChangeColumnDefaultFlavorCapability:
-		return ServerVersionAtLeast(serverVersion, 8, 0, 0)
-	case InstantAddDropColumnFlavorCapability:
-		return ServerVersionAtLeast(serverVersion, 8, 0, 29)
-	case TransactionalGtidExecutedFlavorCapability:
-		return ServerVersionAtLeast(serverVersion, 8, 0, 17)
-	case FastDropTableFlavorCapability:
-		return ServerVersionAtLeast(serverVersion, 8, 0, 23)
-	case MySQLJSONFlavorCapability:
-		return ServerVersionAtLeast(serverVersion, 5, 7, 0)
-	case MySQLUpgradeInServerFlavorCapability:
-		return ServerVersionAtLeast(serverVersion, 8, 0, 16)
 	case DynamicRedoLogCapacityFlavorCapability:
 		return ServerVersionAtLeast(serverVersion, 8, 0, 30)
 	default:

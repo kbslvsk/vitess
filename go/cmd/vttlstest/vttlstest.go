@@ -17,128 +17,119 @@ limitations under the License.
 package main
 
 import (
-	"github.com/spf13/cobra"
+	"flag"
+	"fmt"
+	"os"
 
 	"vitess.io/vitess/go/exit"
+	"vitess.io/vitess/go/vt/log"
 	"vitess.io/vitess/go/vt/logutil"
 	"vitess.io/vitess/go/vt/tlstest"
 )
 
-var (
-	root       = "."
-	parent     = "ca"
-	serial     = "01"
-	commonName string
+var doc = `
+vttlstest is a tool for generating test certificates and keys for TLS tests.
 
-	rootCmd = &cobra.Command{
-		Use:   "vttlstest",
-		Short: "vttlstest is a tool for generating test certificates, keys, and related artifacts for TLS tests.",
-		Long:  "vttlstest is a tool for generating test certificates, keys, and related artifacts for TLS tests.",
-	}
+To create a toplevel CA, use:
+  $ vttlstest -root /tmp CreateCA
 
-	createCACmd = &cobra.Command{
-		Use:                   "CreateCA [--root <dir>]",
-		DisableFlagsInUseLine: true,
-		Example:               "CreateCA --root /tmp",
-		Short:                 "Create certificate authority",
-		Long:                  "Create certificate authority",
-		Args:                  cobra.NoArgs,
-		Run:                   runCreateCA,
-	}
+To create an intermediate or leaf CA, use:
+  $ vttlstest -root /tmp CreateSignedCert servers
+  $ vttlstest -root /tmp CreateSignedCert -parent servers server
 
-	createIntermediateCACmd = &cobra.Command{
-		Use:                   "CreateIntermediateCA [--root <dir>] [--parent <name>] [--serial <serial>] [--common-name <CN>] <CA name>",
-		DisableFlagsInUseLine: true,
-		Example:               "CreateIntermediateCA --root /tmp --parent ca mail.mycoolsite.com",
-		Short:                 "Create intermediate certificate authority",
-		Long:                  "Create intermediate certificate authority",
-		Args:                  cobra.ExactArgs(1),
-		Run:                   runCreateIntermediateCA,
-	}
+To get help on a command, use:
+  $ vttlstest <command> -help
+`
 
-	createCRLCmd = &cobra.Command{
-		Use:                   "CreateCRL [--root <dir>] <server>",
-		DisableFlagsInUseLine: true,
-		Example:               "CreateCRL --root /tmp mail.mycoolsite.com",
-		Short:                 "Create certificate revocation list",
-		Long:                  "Create certificate revocation list",
-		Args:                  cobra.ExactArgs(1),
-		Run:                   runCreateCRL,
-	}
+type cmdFunc func(subFlags *flag.FlagSet, args []string)
 
-	createSignedCertCmd = &cobra.Command{
-		Use:                   "CreateSignedCert [--root <dir>] [--parent <name>] [--serial <serial>] [--common-name <CN>] <cert name>",
-		DisableFlagsInUseLine: true,
-		Example:               "CreateSignedCert --root /tmp --common-name mail.mysite.com --parent mail.mycoolsite.com postman1",
-		Short:                 "Create signed certificate",
-		Long:                  "Create signed certificate",
-		Args:                  cobra.ExactArgs(1),
-		Run:                   runCreateSignedCert,
-	}
-
-	revokeCertCmd = &cobra.Command{
-		Use:                   "RevokeCert [--root <dir>] [--parent <name>] <cert name>",
-		DisableFlagsInUseLine: true,
-		Example:               "RevokeCert --root /tmp --parent mail.mycoolsite.com postman1",
-		Short:                 "Revoke a certificate",
-		Long:                  "Revoke a certificate",
-		Args:                  cobra.ExactArgs(1),
-		Run:                   runRevokeCert,
-	}
-)
+var cmdMap map[string]cmdFunc
 
 func init() {
-	rootCmd.PersistentFlags().StringVar(&root, "root", root, "root directory for all artifacts")
-
-	rootCmd.AddCommand(createCACmd)
-	rootCmd.AddCommand(createIntermediateCACmd)
-	rootCmd.AddCommand(createCRLCmd)
-	rootCmd.AddCommand(createSignedCertCmd)
-	rootCmd.AddCommand(revokeCertCmd)
-
-	for _, cmd := range []*cobra.Command{createIntermediateCACmd, createSignedCertCmd} {
-		cmd.Flags().StringVar(&parent, "parent", parent, "Parent cert name to use. Use 'ca' for the toplevel CA.")
-		cmd.Flags().StringVar(&serial, "serial", serial, "Serial number for the certificate to create. Should be different for two certificates with the same parent.")
-		cmd.Flags().StringVar(&commonName, "common-name", commonName, "Common name for the certificate. If empty, uses the name.")
+	cmdMap = map[string]cmdFunc{
+		"CreateCA":         cmdCreateCA,
+		"CreateCRL":        cmdCreateCRL,
+		"CreateSignedCert": cmdCreateSignedCert,
+		"RevokeCert":       cmdRevokeCert,
 	}
-	revokeCertCmd.Flags().StringVar(&parent, "parent", parent, "Parent cert name to use. Use 'ca' for the toplevel CA.")
 }
 
-func runCreateCA(cmd *cobra.Command, args []string) {
-	tlstest.CreateCA(root)
-}
+var (
+	root = flag.String("root", ".", "root directory for certificates and keys")
+)
 
-func runCreateIntermediateCA(cmd *cobra.Command, args []string) {
-	name := args[0]
-	if commonName == "" {
-		commonName = name
+func cmdCreateCA(subFlags *flag.FlagSet, args []string) {
+	subFlags.Parse(args)
+	if subFlags.NArg() > 0 {
+		log.Fatalf("CreateCA command doesn't take any parameter")
 	}
 
-	tlstest.CreateIntermediateCA(root, parent, serial, name, commonName)
+	tlstest.CreateCA(*root)
 }
 
-func runCreateCRL(cmd *cobra.Command, args []string) {
-	ca := args[0]
-	tlstest.CreateCRL(root, ca)
-}
-
-func runCreateSignedCert(cmd *cobra.Command, args []string) {
-	name := args[0]
-	if commonName == "" {
-		commonName = name
+func cmdCreateCRL(subFlags *flag.FlagSet, args []string) {
+	subFlags.Parse(args)
+	if subFlags.NArg() != 1 {
+		log.Fatalf("CreateCRL command takes a single CA name as a parameter")
 	}
 
-	tlstest.CreateSignedCert(root, parent, serial, name, commonName)
+	ca := subFlags.Arg(0)
+	tlstest.CreateCRL(*root, ca)
 }
 
-func runRevokeCert(cmd *cobra.Command, args []string) {
-	name := args[0]
-	tlstest.RevokeCertAndRegenerateCRL(root, parent, name)
+func cmdRevokeCert(subFlags *flag.FlagSet, args []string) {
+	parent := subFlags.String("parent", "ca", "Parent cert name to use. Use 'ca' for the toplevel CA.")
+
+	subFlags.Parse(args)
+	if subFlags.NArg() != 1 {
+		log.Fatalf("RevokeCert command takes a single name as a parameter")
+	}
+
+	name := subFlags.Arg(0)
+	tlstest.RevokeCertAndRegenerateCRL(*root, *parent, name)
+}
+
+func cmdCreateSignedCert(subFlags *flag.FlagSet, args []string) {
+	parent := subFlags.String("parent", "ca", "Parent cert name to use. Use 'ca' for the toplevel CA.")
+	serial := subFlags.String("serial", "01", "Serial number for the certificate to create. Should be different for two certificates with the same parent.")
+	commonName := subFlags.String("common_name", "", "Common name for the certificate. If empty, uses the name.")
+
+	subFlags.Parse(args)
+	if subFlags.NArg() != 1 {
+		log.Fatalf("CreateSignedCert command takes a single name as a parameter")
+	}
+
+	name := subFlags.Arg(0)
+	if *commonName == "" {
+		*commonName = name
+	}
+
+	tlstest.CreateSignedCert(*root, *parent, *serial, name, *commonName)
 }
 
 func main() {
 	defer exit.Recover()
 	defer logutil.Flush()
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage of %v:\n", os.Args[0])
+		flag.PrintDefaults()
+		fmt.Fprint(os.Stderr, doc)
+	}
+	flag.Parse()
+	args := flag.Args()
+	if len(args) == 0 {
+		flag.Usage()
+		exit.Return(1)
+	}
 
-	cobra.CheckErr(rootCmd.Execute())
+	cmdName := args[0]
+	args = args[1:]
+	cmd, ok := cmdMap[cmdName]
+	if !ok {
+		log.Fatalf("Unknown command %v", cmdName)
+	}
+	subFlags := flag.NewFlagSet(cmdName, flag.ExitOnError)
+
+	// Run the command.
+	cmd(subFlags, args)
 }

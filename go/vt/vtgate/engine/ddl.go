@@ -17,8 +17,6 @@ limitations under the License.
 package engine
 
 import (
-	"context"
-
 	"vitess.io/vitess/go/sqltypes"
 	"vitess.io/vitess/go/vt/proto/query"
 	vtrpcpb "vitess.io/vitess/go/vt/proto/vtrpc"
@@ -50,7 +48,7 @@ type DDL struct {
 }
 
 func (ddl *DDL) description() PrimitiveDescription {
-	other := map[string]any{
+	other := map[string]interface{}{
 		"Query": ddl.SQL,
 	}
 	if ddl.CreateTempTable {
@@ -88,11 +86,11 @@ func (ddl *DDL) isOnlineSchemaDDL() bool {
 }
 
 // TryExecute implements the Primitive interface
-func (ddl *DDL) TryExecute(ctx context.Context, vcursor VCursor, bindVars map[string]*query.BindVariable, wantfields bool) (result *sqltypes.Result, err error) {
+func (ddl *DDL) TryExecute(vcursor VCursor, bindVars map[string]*query.BindVariable, wantfields bool) (result *sqltypes.Result, err error) {
 	if ddl.CreateTempTable {
 		vcursor.Session().HasCreatedTempTable()
 		vcursor.Session().NeedsReservedConn()
-		return vcursor.ExecutePrimitive(ctx, ddl.NormalDDL, bindVars, wantfields)
+		return vcursor.ExecutePrimitive(ddl.NormalDDL, bindVars, wantfields)
 	}
 
 	ddlStrategySetting, err := schema.ParseDDLStrategy(vcursor.Session().GetDDLStrategy())
@@ -106,18 +104,18 @@ func (ddl *DDL) TryExecute(ctx context.Context, vcursor VCursor, bindVars map[st
 		if !ddl.OnlineDDLEnabled {
 			return nil, schema.ErrOnlineDDLDisabled
 		}
-		return vcursor.ExecutePrimitive(ctx, ddl.OnlineDDL, bindVars, wantfields)
+		return vcursor.ExecutePrimitive(ddl.OnlineDDL, bindVars, wantfields)
 	default: // non online-ddl
 		if !ddl.DirectDDLEnabled {
 			return nil, schema.ErrDirectDDLDisabled
 		}
-		return vcursor.ExecutePrimitive(ctx, ddl.NormalDDL, bindVars, wantfields)
+		return vcursor.ExecutePrimitive(ddl.NormalDDL, bindVars, wantfields)
 	}
 }
 
 // TryStreamExecute implements the Primitive interface
-func (ddl *DDL) TryStreamExecute(ctx context.Context, vcursor VCursor, bindVars map[string]*query.BindVariable, wantfields bool, callback func(*sqltypes.Result) error) error {
-	results, err := ddl.TryExecute(ctx, vcursor, bindVars, wantfields)
+func (ddl *DDL) TryStreamExecute(vcursor VCursor, bindVars map[string]*query.BindVariable, wantfields bool, callback func(*sqltypes.Result) error) error {
+	results, err := ddl.TryExecute(vcursor, bindVars, wantfields)
 	if err != nil {
 		return err
 	}
@@ -125,6 +123,6 @@ func (ddl *DDL) TryStreamExecute(ctx context.Context, vcursor VCursor, bindVars 
 }
 
 // GetFields implements the Primitive interface
-func (ddl *DDL) GetFields(ctx context.Context, vcursor VCursor, bindVars map[string]*query.BindVariable) (*sqltypes.Result, error) {
+func (ddl *DDL) GetFields(vcursor VCursor, bindVars map[string]*query.BindVariable) (*sqltypes.Result, error) {
 	return nil, vterrors.Errorf(vtrpcpb.Code_INTERNAL, "[BUG] GetFields in not reachable")
 }

@@ -30,16 +30,16 @@ import (
 )
 
 type testPlanner struct {
-	panic       any
+	panic       interface{}
 	err         error
 	res         engine.Primitive
 	messWithAST func(sqlparser.Statement)
 	called      bool
 }
 
-var _ stmtPlanner = (*testPlanner)(nil).plan
+var _ selectPlanner = (*testPlanner)(nil).plan
 
-func (tp *testPlanner) plan(statement sqlparser.Statement, vars *sqlparser.ReservedVars, schema plancontext.VSchema) (*planResult, error) {
+func (tp *testPlanner) plan(statement sqlparser.Statement, vars *sqlparser.ReservedVars, schema plancontext.VSchema) (engine.Primitive, error) {
 	tp.called = true
 	if tp.panic != nil {
 		panic(tp.panic)
@@ -47,7 +47,7 @@ func (tp *testPlanner) plan(statement sqlparser.Statement, vars *sqlparser.Reser
 	if tp.messWithAST != nil {
 		tp.messWithAST(statement)
 	}
-	return newPlanResult(tp.res), tp.err
+	return tp.res, tp.err
 }
 
 func TestFallbackPlanner(t *testing.T) {

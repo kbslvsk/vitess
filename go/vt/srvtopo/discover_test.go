@@ -17,11 +17,12 @@ limitations under the License.
 package srvtopo
 
 import (
-	"context"
+	"flag"
 	"reflect"
 	"sort"
 	"testing"
-	"time"
+
+	"context"
 
 	"vitess.io/vitess/go/vt/topo/memorytopo"
 
@@ -50,14 +51,8 @@ func (a TargetArray) Less(i, j int) bool {
 func TestFindAllTargets(t *testing.T) {
 	ctx := context.Background()
 	ts := memorytopo.NewServer("cell1", "cell2")
-
-	srvTopoCacheRefresh = 0
-	srvTopoCacheTTL = 0
-	defer func() {
-		srvTopoCacheRefresh = 1 * time.Second
-		srvTopoCacheTTL = 1 * time.Second
-
-	}()
+	flag.Set("srv_topo_cache_refresh", "0s") // No caching values
+	flag.Set("srv_topo_cache_ttl", "0s")     // No caching values
 	rs := NewResilientServer(ts, "TestFindAllKeyspaceShards")
 
 	// No keyspace / shards.

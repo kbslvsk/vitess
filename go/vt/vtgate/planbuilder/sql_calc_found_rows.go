@@ -21,7 +21,6 @@ import (
 	"vitess.io/vitess/go/vt/sqlparser"
 	"vitess.io/vitess/go/vt/vterrors"
 	"vitess.io/vitess/go/vt/vtgate/engine"
-	"vitess.io/vitess/go/vt/vtgate/planbuilder/plancontext"
 	"vitess.io/vitess/go/vt/vtgate/semantics"
 )
 
@@ -44,12 +43,12 @@ func (s *sqlCalcFoundRows) Wireup(logicalPlan, *jointab) error {
 }
 
 // WireupGen4 implements the logicalPlan interface
-func (s *sqlCalcFoundRows) WireupGen4(ctx *plancontext.PlanningContext) error {
-	err := s.LimitQuery.WireupGen4(ctx)
+func (s *sqlCalcFoundRows) WireupGen4(semTable *semantics.SemTable) error {
+	err := s.LimitQuery.WireupGen4(semTable)
 	if err != nil {
 		return err
 	}
-	return s.CountQuery.WireupGen4(ctx)
+	return s.CountQuery.WireupGen4(semTable)
 }
 
 // ContainsTables implements the logicalPlan interface
@@ -57,7 +56,7 @@ func (s *sqlCalcFoundRows) ContainsTables() semantics.TableSet {
 	return s.LimitQuery.ContainsTables()
 }
 
-// Primitive implements the logicalPlan interface
+//Primitive implements the logicalPlan interface
 func (s *sqlCalcFoundRows) Primitive() engine.Primitive {
 	countPrim := s.CountQuery.Primitive()
 	rb, ok := countPrim.(*engine.Route)

@@ -76,7 +76,7 @@ func RecoverAll() {
 	doRecover(recover(), true)
 }
 
-func doRecover(err any, recoverAll bool) {
+func doRecover(err interface{}, recoverAll bool) {
 	if err == nil {
 		return
 	}

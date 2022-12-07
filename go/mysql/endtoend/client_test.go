@@ -17,7 +17,6 @@ limitations under the License.
 package endtoend
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -26,6 +25,8 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/stretchr/testify/require"
+
+	"context"
 
 	"vitess.io/vitess/go/mysql"
 )
@@ -243,8 +244,10 @@ func expectNoError(t *testing.T, err error) {
 
 func expectFlag(t *testing.T, msg string, flag, want bool) {
 	t.Helper()
-	require.Equal(t, want, flag, "%s: %v, want: %v", msg, flag, want)
-
+	if flag != want {
+		// We cannot continue the test if flag is incorrect.
+		t.Fatalf("%s: %v, want: %v", msg, flag, want)
+	}
 }
 
 // TestTLS tests our client can connect via SSL.
@@ -254,8 +257,12 @@ func TestTLS(t *testing.T) {
 
 	// First make sure the official 'mysql' client can connect.
 	output, ok := runMysql(t, &params, "status")
-	require.True(t, ok, "'mysql -e status' failed: %v", output)
-	require.True(t, strings.Contains(output, "Cipher in use is"), "cannot connect via SSL: %v", output)
+	if !ok {
+		t.Fatalf("'mysql -e status' failed: %v", output)
+	}
+	if !strings.Contains(output, "Cipher in use is") {
+		t.Fatalf("cannot connect via SSL: %v", output)
+	}
 
 	// Now connect with our client.
 	ctx := context.Background()
@@ -266,8 +273,9 @@ func TestTLS(t *testing.T) {
 	defer conn.Close()
 
 	result, err := conn.ExecuteFetch("SHOW STATUS LIKE 'Ssl_cipher'", 10, true)
-	require.NoError(t, err, "SHOW STATUS LIKE 'Ssl_cipher' failed: %v", err)
-
+	if err != nil {
+		t.Fatalf("SHOW STATUS LIKE 'Ssl_cipher' failed: %v", err)
+	}
 	if len(result.Rows) != 1 || result.Rows[0][0].ToString() != "Ssl_cipher" ||
 		result.Rows[0][1].ToString() == "" {
 		t.Fatalf("SHOW STATUS LIKE 'Ssl_cipher' returned unexpected result: %v", result)
@@ -284,8 +292,9 @@ func TestReplicationStatus(t *testing.T) {
 	defer conn.Close()
 
 	status, err := conn.ShowReplicationStatus()
-	assert.Equal(t, mysql.ErrNotReplica, err, "Got unexpected result for ShowReplicationStatus: %v %v", status, err)
-
+	if err != mysql.ErrNotReplica {
+		t.Errorf("Got unexpected result for ShowReplicationStatus: %v %v", status, err)
+	}
 }
 
 func TestSessionTrackGTIDs(t *testing.T) {
@@ -318,7 +327,9 @@ func TestCachingSha2Password(t *testing.T) {
 	defer conn.Close()
 
 	qr, err := conn.ExecuteFetch(`select true from information_schema.PLUGINS where PLUGIN_NAME='caching_sha2_password' and PLUGIN_STATUS='ACTIVE'`, 1, false)
-	assert.NoError(t, err, "select true from information_schema.PLUGINS failed: %v", err)
+	if err != nil {
+		t.Errorf("select true from information_schema.PLUGINS failed: %v", err)
+	}
 
 	if len(qr.Rows) != 1 {
 		t.Skip("Server does not support caching_sha2_password plugin")
@@ -345,50 +356,4 @@ func TestCachingSha2Password(t *testing.T) {
 	if len(qr.Rows) != 1 || qr.Rows[0][0].ToString() != "sha2user@localhost" {
 		t.Errorf("Logged in user is not sha2user")
 	}
-}
-
-func TestClientInfo(t *testing.T) {
-	const infoPrepared = "Statement prepared"
-
-	ctx := context.Background()
-	params := connParams
-	params.EnableQueryInfo = true
-	conn, err := mysql.Connect(ctx, &params)
-	require.NoError(t, err)
-
-	defer conn.Close()
-
-	// This is the simplest query that would return some textual data in the 'info' field
-	result, err := conn.ExecuteFetch(`PREPARE stmt1 FROM 'SELECT 1 = 1'`, -1, true)
-	require.NoError(t, err, "select failed: %v", err)
-	require.Equal(t, infoPrepared, result.Info, "expected result.Info=%q, got=%q", infoPrepared, result.Info)
-}
-
-func TestBaseShowTables(t *testing.T) {
-	params := connParams
-	ctx := context.Background()
-	conn, err := mysql.Connect(ctx, &params)
-	require.NoError(t, err)
-	defer conn.Close()
-
-	sql := conn.BaseShowTables()
-	// An improved test would make assertions about the results. This test just
-	// makes sure there aren't any errors.
-	_, err = conn.ExecuteFetch(sql, -1, true)
-	require.NoError(t, err)
-}
-
-func TestBaseShowTablesFilePos(t *testing.T) {
-	params := connParams
-	params.Flavor = "FilePos"
-	ctx := context.Background()
-	conn, err := mysql.Connect(ctx, &params)
-	require.NoError(t, err)
-	defer conn.Close()
-
-	sql := conn.BaseShowTables()
-	// An improved test would make assertions about the results. This test just
-	// makes sure there aren't any errors.
-	_, err = conn.ExecuteFetch(sql, -1, true)
-	require.NoError(t, err)
 }

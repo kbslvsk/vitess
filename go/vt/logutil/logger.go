@@ -33,18 +33,18 @@ import (
 // call these methods simultaneously).
 type Logger interface {
 	// Infof logs at INFO level. A newline is appended if missing.
-	Infof(format string, v ...any)
+	Infof(format string, v ...interface{})
 	// Warningf logs at WARNING level. A newline is appended if missing.
-	Warningf(format string, v ...any)
+	Warningf(format string, v ...interface{})
 	// Errorf logs at ERROR level. A newline is appended if missing.
-	Errorf(format string, v ...any)
+	Errorf(format string, v ...interface{})
 	// Errorf2 logs an error with stack traces at ERROR level. A newline is appended if missing.
-	Errorf2(e error, message string, v ...any)
+	Errorf2(e error, message string, v ...interface{})
 
 	Error(e error)
 	// Printf will just display information on stdout when possible.
 	// No newline is appended.
-	Printf(format string, v ...any)
+	Printf(format string, v ...interface{})
 
 	// InfoDepth allows call frame depth to be adjusted when logging to INFO.
 	InfoDepth(depth int, s string)
@@ -170,22 +170,22 @@ func (cl *CallbackLogger) ErrorDepth(depth int, s string) {
 }
 
 // Infof is part of the Logger interface.
-func (cl *CallbackLogger) Infof(format string, v ...any) {
+func (cl *CallbackLogger) Infof(format string, v ...interface{}) {
 	cl.InfoDepth(1, fmt.Sprintf(format, v...))
 }
 
 // Warningf is part of the Logger interface.
-func (cl *CallbackLogger) Warningf(format string, v ...any) {
+func (cl *CallbackLogger) Warningf(format string, v ...interface{}) {
 	cl.WarningDepth(1, fmt.Sprintf(format, v...))
 }
 
 // Errorf is part of the Logger interface.
-func (cl *CallbackLogger) Errorf(format string, v ...any) {
+func (cl *CallbackLogger) Errorf(format string, v ...interface{}) {
 	cl.ErrorDepth(1, fmt.Sprintf(format, v...))
 }
 
 // Errorf2 is part of the Logger interface
-func (cl *CallbackLogger) Errorf2(err error, format string, v ...any) {
+func (cl *CallbackLogger) Errorf2(err error, format string, v ...interface{}) {
 	cl.ErrorDepth(1, fmt.Sprintf(format+": %+v", append(v, err)))
 }
 
@@ -195,7 +195,7 @@ func (cl *CallbackLogger) Error(err error) {
 }
 
 // Printf is part of the Logger interface.
-func (cl *CallbackLogger) Printf(format string, v ...any) {
+func (cl *CallbackLogger) Printf(format string, v ...interface{}) {
 	file, line := fileAndLine(2)
 	cl.f(&logutilpb.Event{
 		Time:  TimeToProto(time.Now()),
@@ -320,22 +320,22 @@ func (tl *TeeLogger) ErrorDepth(depth int, s string) {
 }
 
 // Infof is part of the Logger interface
-func (tl *TeeLogger) Infof(format string, v ...any) {
+func (tl *TeeLogger) Infof(format string, v ...interface{}) {
 	tl.InfoDepth(1, fmt.Sprintf(format, v...))
 }
 
 // Warningf is part of the Logger interface
-func (tl *TeeLogger) Warningf(format string, v ...any) {
+func (tl *TeeLogger) Warningf(format string, v ...interface{}) {
 	tl.WarningDepth(1, fmt.Sprintf(format, v...))
 }
 
 // Errorf is part of the Logger interface
-func (tl *TeeLogger) Errorf(format string, v ...any) {
+func (tl *TeeLogger) Errorf(format string, v ...interface{}) {
 	tl.ErrorDepth(1, fmt.Sprintf(format, v...))
 }
 
 // Errorf2 is part of the Logger interface
-func (tl *TeeLogger) Errorf2(err error, format string, v ...any) {
+func (tl *TeeLogger) Errorf2(err error, format string, v ...interface{}) {
 	tl.ErrorDepth(1, fmt.Sprintf(format+": %+v", append(v, err)))
 }
 
@@ -345,7 +345,7 @@ func (tl *TeeLogger) Error(err error) {
 }
 
 // Printf is part of the Logger interface
-func (tl *TeeLogger) Printf(format string, v ...any) {
+func (tl *TeeLogger) Printf(format string, v ...interface{}) {
 	tl.One.Printf(format, v...)
 	tl.Two.Printf(format, v...)
 }

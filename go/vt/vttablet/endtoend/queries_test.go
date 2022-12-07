@@ -36,7 +36,7 @@ Result mismatch:
 '[[2 1] [1 2]]'
 RowsReturned mismatch: 2, want 1
 Rewritten mismatch:
-'["select /* fail */ eid, id from vitess_a union select eid, id from vitess_b limit 10001"]' does not match
+'["select eid, id from vitess_a where 1 != 1 union select eid, id from vitess_b where 1 != 1" "select /* fail */ eid, id from vitess_a union select eid, id from vitess_b limit 10001"]' does not match
 '["select eid id from vitess_a where 1 != 1 union select eid, id from vitess_b where 1 != 1" "select /* fail */ eid, id from vitess_a union select eid, id from vitess_b"]'
 Plan mismatch: Select, want aa`
 
@@ -72,6 +72,7 @@ var TestQueryCases = []framework.Testable{
 			{"1", "2"},
 		},
 		Rewritten: []string{
+			"select eid, id from vitess_a where 1 != 1 union select eid, id from vitess_b where 1 != 1",
 			"select /* union */ eid, id from vitess_a union select eid, id from vitess_b limit 10001",
 		},
 		RowsReturned: 2,
@@ -84,6 +85,7 @@ var TestQueryCases = []framework.Testable{
 			{"1", "2"},
 		},
 		Rewritten: []string{
+			"select eid, id from vitess_a where 1 != 1 union select eid, id from vitess_b where 1 != 1 union select eid, id from vitess_d where 1 != 1",
 			"select /* double union */ eid, id from vitess_a union select eid, id from vitess_b union select eid, id from vitess_d limit 10001",
 		},
 		RowsReturned: 2,
@@ -96,6 +98,7 @@ var TestQueryCases = []framework.Testable{
 			{"1", "2", "bcde", "fghi"},
 		},
 		Rewritten: []string{
+			"select * from vitess_a where 1 != 1",
 			"select /* distinct */ distinct * from vitess_a limit 10001",
 		},
 	},
@@ -106,6 +109,7 @@ var TestQueryCases = []framework.Testable{
 			{"1", "3"},
 		},
 		Rewritten: []string{
+			"select eid, sum(id) from vitess_a where 1 != 1 group by eid",
 			"select /* group by */ eid, sum(id) from vitess_a group by eid limit 10001",
 		},
 		RowsReturned: 1,
@@ -117,6 +121,7 @@ var TestQueryCases = []framework.Testable{
 			{"3"},
 		},
 		Rewritten: []string{
+			"select sum(id) from vitess_a where 1 != 1",
 			"select /* having */ sum(id) from vitess_a having sum(id) = 3 limit 10001",
 		},
 		RowsReturned: 1,
@@ -131,6 +136,7 @@ var TestQueryCases = []framework.Testable{
 			{"1", "1"},
 		},
 		Rewritten: []string{
+			"select eid, id from vitess_a where 1 != 1",
 			"select /* limit */ eid, id from vitess_a limit 1",
 		},
 		RowsReturned: 1,
@@ -145,6 +151,7 @@ var TestQueryCases = []framework.Testable{
 			{"1", "2", "1", "2"},
 		},
 		Rewritten: []string{
+			"select a.eid, a.id, b.eid, b.id from vitess_a as a, vitess_b as b where 1 != 1",
 			"select /* multi-table */ a.eid, a.id, b.eid, b.id from vitess_a as a, vitess_b as b order by a.eid asc, a.id asc, b.eid asc, b.id asc limit 10001",
 		},
 		RowsReturned: 4,
@@ -157,6 +164,7 @@ var TestQueryCases = []framework.Testable{
 			{"1", "2", "1", "2"},
 		},
 		Rewritten: []string{
+			"select a.eid, a.id, b.eid, b.id from vitess_a as a join vitess_b as b on a.eid = b.eid and a.id = b.id where 1 != 1",
 			"select /* join */ a.eid, a.id, b.eid, b.id from vitess_a as a join vitess_b as b on a.eid = b.eid and a.id = b.id limit 10001",
 		},
 		RowsReturned: 2,
@@ -169,6 +177,7 @@ var TestQueryCases = []framework.Testable{
 			{"1", "2", "1", "2"},
 		},
 		Rewritten: []string{
+			"select a.eid, a.id, b.eid, b.id from vitess_a as a straight_join vitess_b as b on a.eid = b.eid and a.id = b.id where 1 != 1",
 			"select /* straight_join */ a.eid, a.id, b.eid, b.id from vitess_a as a straight_join vitess_b as b on a.eid = b.eid and a.id = b.id limit 10001",
 		},
 		RowsReturned: 2,
@@ -181,6 +190,7 @@ var TestQueryCases = []framework.Testable{
 			{"1", "2", "1", "2"},
 		},
 		Rewritten: []string{
+			"select a.eid, a.id, b.eid, b.id from vitess_a as a join vitess_b as b on a.eid = b.eid and a.id = b.id where 1 != 1",
 			"select /* cross join */ a.eid, a.id, b.eid, b.id from vitess_a as a join vitess_b as b on a.eid = b.eid and a.id = b.id limit 10001",
 		},
 		RowsReturned: 2,
@@ -193,6 +203,7 @@ var TestQueryCases = []framework.Testable{
 			{"1", "2", "1", "2"},
 		},
 		Rewritten: []string{
+			"select a.eid, a.id, b.eid, b.id from vitess_a as a natural join vitess_b as b where 1 != 1",
 			"select /* natural join */ a.eid, a.id, b.eid, b.id from vitess_a as a natural join vitess_b as b limit 10001",
 		},
 		RowsReturned: 2,
@@ -205,6 +216,7 @@ var TestQueryCases = []framework.Testable{
 			{"1", "2", "1", "2"},
 		},
 		Rewritten: []string{
+			"select a.eid, a.id, b.eid, b.id from vitess_a as a left join vitess_b as b on a.eid = b.eid and a.id = b.id where 1 != 1",
 			"select /* left join */ a.eid, a.id, b.eid, b.id from vitess_a as a left join vitess_b as b on a.eid = b.eid and a.id = b.id limit 10001",
 		},
 		RowsReturned: 2,
@@ -217,6 +229,7 @@ var TestQueryCases = []framework.Testable{
 			{"1", "2", "1", "2"},
 		},
 		Rewritten: []string{
+			"select a.eid, a.id, b.eid, b.id from vitess_a as a right join vitess_b as b on a.eid = b.eid and a.id = b.id where 1 != 1",
 			"select /* right join */ a.eid, a.id, b.eid, b.id from vitess_a as a right join vitess_b as b on a.eid = b.eid and a.id = b.id limit 10001",
 		},
 		RowsReturned: 2,
@@ -229,6 +242,7 @@ var TestQueryCases = []framework.Testable{
 			{"2", "2"},
 		},
 		Rewritten: []string{
+			"select eid + 1, id from vitess_a where 1 != 1",
 			"select /* complex select list */ eid + 1, id from vitess_a limit 10001",
 		},
 		RowsReturned: 2,
@@ -241,6 +255,7 @@ var TestQueryCases = []framework.Testable{
 			{"1", "2", "bcde", "fghi"},
 		},
 		Rewritten: []string{
+			"select * from vitess_a where 1 != 1",
 			"select /* * */ * from vitess_a limit 10001",
 		},
 		RowsReturned: 2,
@@ -253,6 +268,7 @@ var TestQueryCases = []framework.Testable{
 			{"1"},
 		},
 		Rewritten: []string{
+			"select a.eid from vitess_a as a where 1 != 1",
 			"select /* table alias */ a.eid from vitess_a as a where a.eid = 1 limit 10001",
 		},
 		RowsReturned: 2,
@@ -264,6 +280,7 @@ var TestQueryCases = []framework.Testable{
 			{"1"},
 		},
 		Rewritten: []string{
+			"select eid from vitess_a where 1 != 1",
 			"select /* parenthesised col */ eid from vitess_a where eid = 1 and id = 1 limit 10001",
 		},
 		RowsReturned: 1,
@@ -278,6 +295,7 @@ var TestQueryCases = []framework.Testable{
 					{"1"},
 				},
 				Rewritten: []string{
+					"select eid from vitess_a where 1 != 1",
 					"select /* for update */ eid from vitess_a where eid = 1 and id = 1 limit 10001 for update",
 				},
 				RowsReturned: 1,
@@ -295,6 +313,7 @@ var TestQueryCases = []framework.Testable{
 					{"1"},
 				},
 				Rewritten: []string{
+					"select eid from vitess_a where 1 != 1",
 					"select /* for update */ eid from vitess_a where eid = 1 and id = 1 limit 10001 lock in share mode",
 				},
 				RowsReturned: 1,
@@ -309,6 +328,7 @@ var TestQueryCases = []framework.Testable{
 			{"1"},
 		},
 		Rewritten: []string{
+			"select id from vitess_a where 1 != 1",
 			"select /* complex where */ id from vitess_a where id + 1 = 2 limit 10001",
 		},
 		RowsReturned: 1,
@@ -320,6 +340,7 @@ var TestQueryCases = []framework.Testable{
 			{"1", "1"},
 		},
 		Rewritten: []string{
+			"select eid, id from vitess_a where 1 != 1",
 			"select /* complex where (non-value operand) */ eid, id from vitess_a where eid = id limit 10001",
 		},
 		RowsReturned: 1,
@@ -332,6 +353,7 @@ var TestQueryCases = []framework.Testable{
 			{"1", "2", "bcde", "fghi"},
 		},
 		Rewritten: []string{
+			"select * from vitess_a where 1 != 1",
 			"select /* (condition) */ * from vitess_a where eid = 1 limit 10001",
 		},
 		RowsReturned: 2,
@@ -343,6 +365,7 @@ var TestQueryCases = []framework.Testable{
 			{"1", "2", "bcde", "fghi"},
 		},
 		Rewritten: []string{
+			"select * from vitess_a where 1 != 1",
 			"select /* inequality */ * from vitess_a where id > 1 limit 10001",
 		},
 		RowsReturned: 1,
@@ -355,6 +378,7 @@ var TestQueryCases = []framework.Testable{
 			{"1", "2", "bcde", "fghi"},
 		},
 		Rewritten: []string{
+			"select * from vitess_a where 1 != 1",
 			"select /* in */ * from vitess_a where id in (1, 2) limit 10001",
 		},
 		RowsReturned: 2,
@@ -367,6 +391,7 @@ var TestQueryCases = []framework.Testable{
 			{"1", "2", "bcde", "fghi"},
 		},
 		Rewritten: []string{
+			"select * from vitess_a where 1 != 1",
 			"select /* between */ * from vitess_a where id between 1 and 2 limit 10001",
 		},
 		RowsReturned: 2,
@@ -379,6 +404,7 @@ var TestQueryCases = []framework.Testable{
 			{"1", "1", "abcd", "efgh"},
 		},
 		Rewritten: []string{
+			"select * from vitess_a where 1 != 1",
 			"select /* order */ * from vitess_a order by id desc limit 10001",
 		},
 		RowsReturned: 2,
@@ -390,6 +416,7 @@ var TestQueryCases = []framework.Testable{
 			{"1", "1"},
 		},
 		Rewritten: []string{
+			"select (select eid from vitess_a where 1 != 1), eid from vitess_a where 1 != 1",
 			"select (select eid from vitess_a where id = 1), eid from vitess_a where id = 2 limit 10001",
 		},
 		RowsReturned: 1,
@@ -401,6 +428,7 @@ var TestQueryCases = []framework.Testable{
 			{"1"},
 		},
 		Rewritten: []string{
+			"select eid from (select eid from vitess_a where 1 != 1) as a where 1 != 1",
 			"select eid from (select eid from vitess_a where id = 2) as a limit 10001",
 		},
 		RowsReturned: 1,
@@ -412,6 +440,7 @@ var TestQueryCases = []framework.Testable{
 			&framework.TestCase{
 				Query: "select * from vitess_a where eid = 2 and id = 1",
 				Rewritten: []string{
+					"select * from vitess_a where 1 != 1",
 					"select * from vitess_a where eid = 2 and id = 1 limit 10001",
 				},
 			},
@@ -1435,6 +1464,7 @@ var TestQueryCases = []framework.Testable{
 					{"-128", "255", "-32768", "65535", "-8388608", "16777215", "-2147483648", "4294967295", "-9223372036854775808", "18446744073709551615", "2012"},
 				},
 				Rewritten: []string{
+					"select * from vitess_ints where 1 != 1",
 					"select * from vitess_ints where tiny = -128 limit 10001",
 				},
 			},
@@ -1484,6 +1514,7 @@ var TestQueryCases = []framework.Testable{
 					{"1", "1.99", "2.99", "3.99", "4.99"},
 				},
 				Rewritten: []string{
+					"select * from vitess_fracts where 1 != 1",
 					"select * from vitess_fracts where id = 1 limit 10001",
 				},
 			},
@@ -1538,6 +1569,7 @@ var TestQueryCases = []framework.Testable{
 					{"a", "b", "c", "d\x00\x00\x00", "e", "f", "g", "h", "a", "a,b"},
 				},
 				Rewritten: []string{
+					"select * from vitess_strings where 1 != 1",
 					"select * from vitess_strings where vb = 'a' limit 10001",
 				},
 			},
@@ -1587,6 +1619,7 @@ var TestQueryCases = []framework.Testable{
 					{"1", "\x01", "2012-01-01", "2012-01-01 15:45:45", "15:45:45", point12},
 				},
 				Rewritten: []string{
+					"select * from vitess_misc where 1 != 1",
 					"select * from vitess_misc where id = 1 limit 10001",
 				},
 			},
@@ -1720,7 +1753,7 @@ var TestQueryCases = []framework.Testable{
 				Name:  "specific column",
 				Query: "select eid from vitess_a where 1 != 1",
 				Rewritten: []string{
-					"select eid from vitess_a where 1 != 1 limit 10001",
+					"select eid from vitess_a where 1 != 1",
 				},
 				RowsAffected: 0,
 			},
@@ -1728,7 +1761,7 @@ var TestQueryCases = []framework.Testable{
 				Name:  "all columns",
 				Query: "select * from vitess_a where 1 != 1",
 				Rewritten: []string{
-					"select * from vitess_a where 1 != 1 limit 10001",
+					"select * from vitess_a where 1 != 1",
 				},
 				RowsAffected: 0,
 			},

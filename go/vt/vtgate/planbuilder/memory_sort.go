@@ -20,9 +20,9 @@ import (
 	"errors"
 	"fmt"
 
-	"vitess.io/vitess/go/vt/vtgate/planbuilder/plancontext"
-
 	"vitess.io/vitess/go/mysql/collations"
+	"vitess.io/vitess/go/vt/vtgate/semantics"
+
 	"vitess.io/vitess/go/sqltypes"
 	"vitess.io/vitess/go/vt/sqlparser"
 	"vitess.io/vitess/go/vt/vtgate/engine"
@@ -40,16 +40,6 @@ type memorySort struct {
 	eMemorySort *engine.MemorySort
 }
 
-func findColNumber(ms *memorySort, expr *sqlparser.ColName) int {
-	c := expr.Metadata.(*column)
-	for i, rc := range ms.ResultColumns() {
-		if rc.column == c {
-			return i
-		}
-	}
-	return -1
-}
-
 // newMemorySort builds a new memorySort.
 func newMemorySort(plan logicalPlan, orderBy v3OrderBy) (*memorySort, error) {
 	eMemorySort := &engine.MemorySort{}
@@ -58,7 +48,7 @@ func newMemorySort(plan logicalPlan, orderBy v3OrderBy) (*memorySort, error) {
 		eMemorySort:    eMemorySort,
 	}
 	for _, order := range orderBy {
-		var colNumber int
+		colNumber := -1
 		switch expr := order.Expr.(type) {
 		case *sqlparser.Literal:
 			var err error
@@ -66,19 +56,25 @@ func newMemorySort(plan logicalPlan, orderBy v3OrderBy) (*memorySort, error) {
 				return nil, err
 			}
 		case *sqlparser.ColName:
-			colNumber = findColNumber(ms, expr)
-		case *sqlparser.CastExpr:
+			c := expr.Metadata.(*column)
+			for i, rc := range ms.ResultColumns() {
+				if rc.column == c {
+					colNumber = i
+					break
+				}
+			}
+		case *sqlparser.UnaryExpr:
 			colName, ok := expr.Expr.(*sqlparser.ColName)
 			if !ok {
 				return nil, fmt.Errorf("unsupported: memory sort: complex order by expression: %s", sqlparser.String(expr))
 			}
-			colNumber = findColNumber(ms, colName)
-		case *sqlparser.ConvertExpr:
-			colName, ok := expr.Expr.(*sqlparser.ColName)
-			if !ok {
-				return nil, fmt.Errorf("unsupported: memory sort: complex order by expression: %s", sqlparser.String(expr))
+			c := colName.Metadata.(*column)
+			for i, rc := range ms.ResultColumns() {
+				if rc.column == c {
+					colNumber = i
+					break
+				}
 			}
-			colNumber = findColNumber(ms, colName)
 		default:
 			return nil, fmt.Errorf("unsupported: memory sort: complex order by expression: %s", sqlparser.String(expr))
 		}
@@ -138,6 +134,6 @@ func (ms *memorySort) Wireup(plan logicalPlan, jt *jointab) error {
 	return ms.input.Wireup(plan, jt)
 }
 
-func (ms *memorySort) WireupGen4(ctx *plancontext.PlanningContext) error {
-	return ms.input.WireupGen4(ctx)
+func (ms *memorySort) WireupGen4(semTable *semantics.SemTable) error {
+	return ms.input.WireupGen4(semTable)
 }

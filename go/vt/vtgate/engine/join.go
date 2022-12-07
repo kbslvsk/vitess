@@ -17,7 +17,6 @@ limitations under the License.
 package engine
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
@@ -50,9 +49,9 @@ type Join struct {
 }
 
 // TryExecute performs a non-streaming exec.
-func (jn *Join) TryExecute(ctx context.Context, vcursor VCursor, bindVars map[string]*querypb.BindVariable, wantfields bool) (*sqltypes.Result, error) {
+func (jn *Join) TryExecute(vcursor VCursor, bindVars map[string]*querypb.BindVariable, wantfields bool) (*sqltypes.Result, error) {
 	joinVars := make(map[string]*querypb.BindVariable)
-	lresult, err := vcursor.ExecutePrimitive(ctx, jn.Left, bindVars, wantfields)
+	lresult, err := vcursor.ExecutePrimitive(jn.Left, bindVars, wantfields)
 	if err != nil {
 		return nil, err
 	}
@@ -61,7 +60,7 @@ func (jn *Join) TryExecute(ctx context.Context, vcursor VCursor, bindVars map[st
 		for k := range jn.Vars {
 			joinVars[k] = sqltypes.NullBindVariable
 		}
-		rresult, err := jn.Right.GetFields(ctx, vcursor, combineVars(bindVars, joinVars))
+		rresult, err := jn.Right.GetFields(vcursor, combineVars(bindVars, joinVars))
 		if err != nil {
 			return nil, err
 		}
@@ -72,7 +71,7 @@ func (jn *Join) TryExecute(ctx context.Context, vcursor VCursor, bindVars map[st
 		for k, col := range jn.Vars {
 			joinVars[k] = sqltypes.ValueBindVariable(lrow[col])
 		}
-		rresult, err := vcursor.ExecutePrimitive(ctx, jn.Right, combineVars(bindVars, joinVars), wantfields)
+		rresult, err := vcursor.ExecutePrimitive(jn.Right, combineVars(bindVars, joinVars), wantfields)
 		if err != nil {
 			return nil, err
 		}
@@ -94,15 +93,15 @@ func (jn *Join) TryExecute(ctx context.Context, vcursor VCursor, bindVars map[st
 }
 
 // TryStreamExecute performs a streaming exec.
-func (jn *Join) TryStreamExecute(ctx context.Context, vcursor VCursor, bindVars map[string]*querypb.BindVariable, wantfields bool, callback func(*sqltypes.Result) error) error {
+func (jn *Join) TryStreamExecute(vcursor VCursor, bindVars map[string]*querypb.BindVariable, wantfields bool, callback func(*sqltypes.Result) error) error {
 	joinVars := make(map[string]*querypb.BindVariable)
-	err := vcursor.StreamExecutePrimitive(ctx, jn.Left, bindVars, wantfields, func(lresult *sqltypes.Result) error {
+	err := vcursor.StreamExecutePrimitive(jn.Left, bindVars, wantfields, func(lresult *sqltypes.Result) error {
 		for _, lrow := range lresult.Rows {
 			for k, col := range jn.Vars {
 				joinVars[k] = sqltypes.ValueBindVariable(lrow[col])
 			}
 			rowSent := false
-			err := vcursor.StreamExecutePrimitive(ctx, jn.Right, combineVars(bindVars, joinVars), wantfields, func(rresult *sqltypes.Result) error {
+			err := vcursor.StreamExecutePrimitive(jn.Right, combineVars(bindVars, joinVars), wantfields, func(rresult *sqltypes.Result) error {
 				result := &sqltypes.Result{}
 				if wantfields {
 					// This code is currently unreachable because the first result
@@ -138,7 +137,7 @@ func (jn *Join) TryStreamExecute(ctx context.Context, vcursor VCursor, bindVars 
 				joinVars[k] = sqltypes.NullBindVariable
 			}
 			result := &sqltypes.Result{}
-			rresult, err := jn.Right.GetFields(ctx, vcursor, combineVars(bindVars, joinVars))
+			rresult, err := jn.Right.GetFields(vcursor, combineVars(bindVars, joinVars))
 			if err != nil {
 				return err
 			}
@@ -151,9 +150,9 @@ func (jn *Join) TryStreamExecute(ctx context.Context, vcursor VCursor, bindVars 
 }
 
 // GetFields fetches the field info.
-func (jn *Join) GetFields(ctx context.Context, vcursor VCursor, bindVars map[string]*querypb.BindVariable) (*sqltypes.Result, error) {
+func (jn *Join) GetFields(vcursor VCursor, bindVars map[string]*querypb.BindVariable) (*sqltypes.Result, error) {
 	joinVars := make(map[string]*querypb.BindVariable)
-	lresult, err := jn.Left.GetFields(ctx, vcursor, bindVars)
+	lresult, err := jn.Left.GetFields(vcursor, bindVars)
 	if err != nil {
 		return nil, err
 	}
@@ -161,7 +160,7 @@ func (jn *Join) GetFields(ctx context.Context, vcursor VCursor, bindVars map[str
 	for k := range jn.Vars {
 		joinVars[k] = sqltypes.NullBindVariable
 	}
-	rresult, err := jn.Right.GetFields(ctx, vcursor, combineVars(bindVars, joinVars))
+	rresult, err := jn.Right.GetFields(vcursor, combineVars(bindVars, joinVars))
 	if err != nil {
 		return nil, err
 	}
@@ -259,9 +258,9 @@ func combineVars(bv1, bv2 map[string]*querypb.BindVariable) map[string]*querypb.
 }
 
 func (jn *Join) description() PrimitiveDescription {
-	other := map[string]any{
+	other := map[string]interface{}{
 		"TableName":         jn.GetTableName(),
-		"JoinColumnIndexes": jn.joinColsDescription(),
+		"JoinColumnIndexes": strings.Trim(strings.Join(strings.Fields(fmt.Sprint(jn.Cols)), ","), "[]"),
 	}
 	if len(jn.Vars) > 0 {
 		other["JoinVars"] = orderedStringIntMap(jn.Vars)
@@ -271,17 +270,4 @@ func (jn *Join) description() PrimitiveDescription {
 		Variant:      jn.Opcode.String(),
 		Other:        other,
 	}
-}
-
-func (jn *Join) joinColsDescription() string {
-	var joinCols []string
-	for _, col := range jn.Cols {
-		if col < 0 {
-			joinCols = append(joinCols, fmt.Sprintf("L:%d", -col-1))
-		} else {
-			joinCols = append(joinCols, fmt.Sprintf("R:%d", col-1))
-		}
-	}
-	joinColTxt := strings.Join(joinCols, ",")
-	return joinColTxt
 }

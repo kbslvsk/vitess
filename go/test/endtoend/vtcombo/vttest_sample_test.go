@@ -18,7 +18,6 @@ package vtcombo
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -30,7 +29,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -46,52 +44,34 @@ var (
 	localCluster *vttest.LocalCluster
 	grpcAddress  string
 	vtctldAddr   string
-	mysqlAddress string
 	ks1          = "test_keyspace"
 	redirected   = "redirected"
-	jsonTopo     = `
-{
-	"keyspaces": [
-		{
-			"name": "test_keyspace",
-			"shards": [{"name": "-80"}, {"name": "80-"}],
-			"rdonlyCount": 1,
-			"replicaCount": 2
-		},
-		{
-			"name": "redirected",
-			"servedFrom": "test_keyspace"
-		},
-		{
-			"name": "routed",
-			"shards": [{"name": "0"}]
-		}
-	],
-	"routing_rules": {
-		"rules": [{
-            "from_table": "routed.routed_table",
-            "to_tables": [
-                "routed.test_table"
-            ]
-        }]
-	}
-}`
 )
 
 func TestMain(m *testing.M) {
 	flag.Parse()
 
 	exitcode, err := func() (int, error) {
-		var topology vttestpb.VTTestTopology
 
-		data := vttest.JSONTopoData(&topology)
-		err := data.Set(jsonTopo)
-		if err != nil {
-			return 1, err
+		topology := new(vttestpb.VTTestTopology)
+		topology.Keyspaces = []*vttestpb.Keyspace{
+			{
+				Name: ks1,
+				Shards: []*vttestpb.Shard{
+					{Name: "-80"},
+					{Name: "80-"},
+				},
+				RdonlyCount:  1,
+				ReplicaCount: 2,
+			},
+			{
+				Name:       redirected,
+				ServedFrom: ks1,
+			},
 		}
 
 		var cfg vttest.Config
-		cfg.Topology = &topology
+		cfg.Topology = topology
 		cfg.SchemaDir = os.Getenv("VTROOT") + "/test/vttest_schema"
 		cfg.DefaultSchemaDir = os.Getenv("VTROOT") + "/test/vttest_schema/default"
 		cfg.PersistentMode = true
@@ -100,14 +80,13 @@ func TestMain(m *testing.M) {
 			Config: cfg,
 		}
 
-		err = localCluster.Setup()
+		err := localCluster.Setup()
 		defer localCluster.TearDown()
 		if err != nil {
 			return 1, err
 		}
 
 		grpcAddress = fmt.Sprintf("localhost:%d", localCluster.Env.PortForProtocol("vtcombo", "grpc"))
-		mysqlAddress = fmt.Sprintf("localhost:%d", localCluster.Env.PortForProtocol("vtcombo_mysql_port", ""))
 		vtctldAddr = fmt.Sprintf("localhost:%d", localCluster.Env.PortForProtocol("vtcombo", "port"))
 
 		return m.Run(), nil
@@ -123,46 +102,35 @@ func TestMain(m *testing.M) {
 func TestStandalone(t *testing.T) {
 	// validate debug vars
 	resp, err := http.Get(fmt.Sprintf("http://%s/debug/vars", vtctldAddr))
-	require.NoError(t, err)
-	defer resp.Body.Close()
+	require.Nil(t, err)
 	require.Equal(t, 200, resp.StatusCode)
-	resultMap := make(map[string]any)
+	resultMap := make(map[string]interface{})
 	respByte, _ := io.ReadAll(resp.Body)
 	err = json.Unmarshal(respByte, &resultMap)
-	require.NoError(t, err)
+	require.Nil(t, err)
 	cmd := resultMap["cmdline"]
 	require.NotNil(t, cmd, "cmdline is not available in debug vars")
-	tmp, _ := cmd.([]any)
+	tmp, _ := cmd.([]interface{})
 	require.Contains(t, tmp[0], "vtcombo")
 
 	ctx := context.Background()
 	conn, err := vtgateconn.Dial(ctx, grpcAddress)
-	require.NoError(t, err)
+	require.Nil(t, err)
 	defer conn.Close()
-
-	cfg := mysql.NewConfig()
-	cfg.Net = "tcp"
-	cfg.Addr = mysqlAddress
-	cfg.DBName = "routed@primary"
-	db, err := sql.Open("mysql", cfg.FormatDSN())
-	require.NoError(t, err)
-	defer db.Close()
 
 	idStart, rowCount := 1000, 500
 	insertManyRows(ctx, t, conn, idStart, rowCount)
 	assertInsertedRowsExist(ctx, t, conn, idStart, rowCount)
-	assertRouting(ctx, t, db)
 	assertCanInsertRow(ctx, t, conn)
 	assertTabletsPresent(t)
 
 	err = localCluster.TearDown()
-	require.NoError(t, err)
+	require.Nil(t, err)
 	err = localCluster.Setup()
-	require.NoError(t, err)
+	require.Nil(t, err)
 
 	assertInsertedRowsExist(ctx, t, conn, idStart, rowCount)
 	assertTabletsPresent(t)
-	assertTransactionalityAndRollbackObeyed(ctx, t, conn, idStart)
 }
 
 func assertInsertedRowsExist(ctx context.Context, t *testing.T, conn *vtgateconn.VTGateConn, idStart, rowCount int) {
@@ -171,7 +139,7 @@ func assertInsertedRowsExist(ctx context.Context, t *testing.T, conn *vtgateconn
 		"id_start": {Type: querypb.Type_UINT64, Value: []byte(strconv.FormatInt(int64(idStart), 10))},
 	}
 	res, err := cur.Execute(ctx, "select * from test_table where id >= :id_start", bindVariables)
-	require.NoError(t, err)
+	require.Nil(t, err)
 
 	assert.Equal(t, rowCount, len(res.Rows))
 
@@ -180,28 +148,15 @@ func assertInsertedRowsExist(ctx context.Context, t *testing.T, conn *vtgateconn
 		"id_start": {Type: querypb.Type_UINT64, Value: []byte(strconv.FormatInt(int64(idStart), 10))},
 	}
 	res, err = cur.Execute(ctx, "select * from test_table where id = :id_start", bindVariables)
-	require.NoError(t, err)
+	require.Nil(t, err)
 	require.Equal(t, 1, len(res.Rows))
 	assert.Equal(t, "VARCHAR(\"test1000\")", res.Rows[0][1].String())
-}
-
-func assertRouting(ctx context.Context, t *testing.T, db *sql.DB) {
-	// insert into test table
-	_, err := db.ExecContext(ctx, `insert into test_table (id, msg, keyspace_id) values (?, ?, ?)`, 1, "message", 1)
-	require.NoError(t, err)
-
-	// read from routed table
-	row := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM routed_table")
-	require.NoError(t, row.Err())
-	var count uint64
-	require.NoError(t, row.Scan(&count))
-	require.NotZero(t, count)
 }
 
 func assertCanInsertRow(ctx context.Context, t *testing.T, conn *vtgateconn.VTGateConn) {
 	cur := conn.Session(ks1+":80-@primary", nil)
 	_, err := cur.Execute(ctx, "begin", nil)
-	require.NoError(t, err)
+	require.Nil(t, err)
 
 	i := 0x810000000000000
 	bindVariables := map[string]*querypb.BindVariable{
@@ -211,10 +166,10 @@ func assertCanInsertRow(ctx context.Context, t *testing.T, conn *vtgateconn.VTGa
 	}
 	query := "insert into test_table (id, msg, keyspace_id) values (:id, :msg, :keyspace_id)"
 	_, err = cur.Execute(ctx, query, bindVariables)
-	require.NoError(t, err)
+	require.Nil(t, err)
 
 	_, err = cur.Execute(ctx, "commit", nil)
-	require.NoError(t, err)
+	require.Nil(t, err)
 }
 
 func insertManyRows(ctx context.Context, t *testing.T, conn *vtgateconn.VTGateConn, idStart, rowCount int) {
@@ -222,7 +177,7 @@ func insertManyRows(ctx context.Context, t *testing.T, conn *vtgateconn.VTGateCo
 
 	query := "insert into test_table (id, msg, keyspace_id) values (:id, :msg, :keyspace_id)"
 	_, err := cur.Execute(ctx, "begin", nil)
-	require.NoError(t, err)
+	require.Nil(t, err)
 
 	for i := idStart; i < idStart+rowCount; i++ {
 		bindVariables := map[string]*querypb.BindVariable{
@@ -231,34 +186,28 @@ func insertManyRows(ctx context.Context, t *testing.T, conn *vtgateconn.VTGateCo
 			"keyspace_id": {Type: querypb.Type_UINT64, Value: []byte(strconv.FormatInt(int64(i), 10))},
 		}
 		_, err = cur.Execute(ctx, query, bindVariables)
-		require.NoError(t, err)
+		require.Nil(t, err)
 	}
 
 	_, err = cur.Execute(ctx, "commit", nil)
-	require.NoError(t, err)
+	require.Nil(t, err)
 }
 
 func assertTabletsPresent(t *testing.T) {
-	tmpCmd := exec.Command("vtctlclient", "--vtctl_client_protocol", "grpc", "--server", grpcAddress, "--stderrthreshold", "0", "ListAllTablets", "--", "test")
+	tmpCmd := exec.Command("vtctlclient", "-vtctl_client_protocol", "grpc", "-server", grpcAddress, "-stderrthreshold", "0", "ListAllTablets", "test")
 
 	log.Infof("Running vtctlclient with command: %v", tmpCmd.Args)
 
 	output, err := tmpCmd.CombinedOutput()
-	require.NoError(t, err)
+	require.Nil(t, err)
 
-	numPrimary, numReplica, numRdonly, numDash80, num80Dash, numRouted := 0, 0, 0, 0, 0, 0
+	numPrimary, numReplica, numRdonly, numDash80, num80Dash := 0, 0, 0, 0, 0
 	lines := strings.Split(string(output), "\n")
-
 	for _, line := range lines {
 		if !strings.HasPrefix(line, "test-") {
 			continue
 		}
 		parts := strings.Split(line, " ")
-		if parts[1] == "routed" {
-			numRouted++
-			continue
-		}
-
 		assert.Equal(t, "test_keyspace", parts[1])
 
 		switch parts[3] {
@@ -288,49 +237,4 @@ func assertTabletsPresent(t *testing.T) {
 	assert.Equal(t, 2, numRdonly)
 	assert.Equal(t, 3, numDash80)
 	assert.Equal(t, 3, num80Dash)
-	assert.NotZero(t, numRouted)
-}
-
-func assertTransactionalityAndRollbackObeyed(ctx context.Context, t *testing.T, conn *vtgateconn.VTGateConn, idStart int) {
-	cur := conn.Session(ks1+":80-@primary", &querypb.ExecuteOptions{})
-
-	i := idStart + 1
-	msg := "test"
-	bindVariables := map[string]*querypb.BindVariable{
-		"id":          {Type: querypb.Type_UINT64, Value: []byte(strconv.FormatInt(int64(i), 10))},
-		"msg":         {Type: querypb.Type_VARCHAR, Value: []byte(msg)},
-		"keyspace_id": {Type: querypb.Type_UINT64, Value: []byte(strconv.FormatInt(int64(i), 10))},
-	}
-	query := "insert into test_table (id, msg, keyspace_id) values (:id, :msg, :keyspace_id)"
-	_, err := cur.Execute(ctx, query, bindVariables)
-	require.NoError(t, err)
-
-	bindVariables = map[string]*querypb.BindVariable{
-		"msg": {Type: querypb.Type_VARCHAR, Value: []byte(msg)},
-	}
-	res, err := cur.Execute(ctx, "select * from test_table where msg = :msg", bindVariables)
-	require.NoError(t, err)
-	require.Equal(t, 1, len(res.Rows))
-
-	_, err = cur.Execute(ctx, "begin", nil)
-	require.NoError(t, err)
-
-	msg2 := msg + "2"
-	bindVariables = map[string]*querypb.BindVariable{
-		"id":  {Type: querypb.Type_UINT64, Value: []byte(strconv.FormatInt(int64(i), 10))},
-		"msg": {Type: querypb.Type_VARCHAR, Value: []byte(msg2)},
-	}
-	query = "update test_table set msg = :msg where id = :id"
-	_, err = cur.Execute(ctx, query, bindVariables)
-	require.NoError(t, err)
-
-	_, err = cur.Execute(ctx, "rollback", nil)
-	require.NoError(t, err)
-
-	bindVariables = map[string]*querypb.BindVariable{
-		"msg": {Type: querypb.Type_VARCHAR, Value: []byte(msg2)},
-	}
-	res, err = cur.Execute(ctx, "select * from test_table where msg = :msg", bindVariables)
-	require.NoError(t, err)
-	require.Equal(t, 0, len(res.Rows))
 }

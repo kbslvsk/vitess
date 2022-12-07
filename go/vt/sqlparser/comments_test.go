@@ -21,11 +21,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/stretchr/testify/assert"
-
-	querypb "vitess.io/vitess/go/vt/proto/query"
 )
 
 func TestSplitComments(t *testing.T) {
@@ -266,58 +262,58 @@ func TestExtractMysqlComment(t *testing.T) {
 func TestExtractCommentDirectives(t *testing.T) {
 	var testCases = []struct {
 		input string
-		vals  map[string]string
+		vals  CommentDirectives
 	}{{
 		input: "",
 		vals:  nil,
 	}, {
 		input: "/* not a vt comment */",
-		vals:  map[string]string{},
+		vals:  nil,
 	}, {
 		input: "/*vt+ */",
-		vals:  map[string]string{},
+		vals:  CommentDirectives{},
 	}, {
 		input: "/*vt+ SINGLE_OPTION */",
-		vals: map[string]string{
-			"single_option": "true",
+		vals: CommentDirectives{
+			"SINGLE_OPTION": true,
 		},
 	}, {
 		input: "/*vt+ ONE_OPT TWO_OPT */",
-		vals: map[string]string{
-			"one_opt": "true",
-			"two_opt": "true",
+		vals: CommentDirectives{
+			"ONE_OPT": true,
+			"TWO_OPT": true,
 		},
 	}, {
 		input: "/*vt+ ONE_OPT */ /* other comment */ /*vt+ TWO_OPT */",
-		vals: map[string]string{
-			"one_opt": "true",
-			"two_opt": "true",
+		vals: CommentDirectives{
+			"ONE_OPT": true,
+			"TWO_OPT": true,
 		},
 	}, {
 		input: "/*vt+ ONE_OPT=abc TWO_OPT=def */",
-		vals: map[string]string{
-			"one_opt": "abc",
-			"two_opt": "def",
+		vals: CommentDirectives{
+			"ONE_OPT": "abc",
+			"TWO_OPT": "def",
 		},
 	}, {
 		input: "/*vt+ ONE_OPT=true TWO_OPT=false */",
-		vals: map[string]string{
-			"one_opt": "true",
-			"two_opt": "false",
+		vals: CommentDirectives{
+			"ONE_OPT": true,
+			"TWO_OPT": false,
 		},
 	}, {
 		input: "/*vt+ ONE_OPT=true TWO_OPT=\"false\" */",
-		vals: map[string]string{
-			"one_opt": "true",
-			"two_opt": "\"false\"",
+		vals: CommentDirectives{
+			"ONE_OPT": true,
+			"TWO_OPT": "\"false\"",
 		},
 	}, {
 		input: "/*vt+ RANGE_OPT=[a:b] ANOTHER ANOTHER_WITH_VALEQ=val= AND_ONE_WITH_EQ== */",
-		vals: map[string]string{
-			"range_opt":          "[a:b]",
-			"another":            "true",
-			"another_with_valeq": "val=",
-			"and_one_with_eq":    "=",
+		vals: CommentDirectives{
+			"RANGE_OPT":          "[a:b]",
+			"ANOTHER":            true,
+			"ANOTHER_WITH_VALEQ": "val=",
+			"AND_ONE_WITH_EQ":    "=",
 		},
 	}}
 
@@ -330,14 +326,10 @@ func TestExtractCommentDirectives(t *testing.T) {
 				"drop " + testCase.input + " table t",
 				"create " + testCase.input + " table if not exists t (id int primary key)",
 				"alter " + testCase.input + " table t add column c int not null",
-				"create " + testCase.input + " view v as select * from t",
-				"create " + testCase.input + " or replace view v as select * from t",
-				"alter " + testCase.input + " view v as select * from t",
-				"drop " + testCase.input + " view v",
 			}
 			for _, sql := range sqls {
 				t.Run(sql, func(t *testing.T) {
-					var comments *ParsedComments
+					var comments Comments
 					stmt, _ := Parse(sql)
 					switch s := stmt.(type) {
 					case *Select:
@@ -352,44 +344,51 @@ func TestExtractCommentDirectives(t *testing.T) {
 						comments = s.Comments
 					case *CreateTable:
 						comments = s.Comments
-					case *CreateView:
-						comments = s.Comments
-					case *AlterView:
-						comments = s.Comments
-					case *DropView:
-						comments = s.Comments
 					default:
 						t.Errorf("Unexpected statement type %+v", s)
 					}
+					vals := ExtractCommentDirectives(comments)
 
-					vals := comments.Directives()
-					if vals == nil {
-						require.Nil(t, vals)
-						return
-					}
-					if !reflect.DeepEqual(vals.m, testCase.vals) {
-						t.Errorf("test input: '%v', got vals %T:\n%+v, want %T\n%+v", testCase.input, vals, vals, testCase.vals, testCase.vals)
+					if !reflect.DeepEqual(vals, testCase.vals) {
+						t.Errorf("test input: '%v', got vals:\n%+v, want\n%+v", testCase.input, vals, testCase.vals)
 					}
 				})
 			}
 		})
 	}
 
-	d := &CommentDirectives{m: map[string]string{
-		"one_opt": "true",
-		"two_opt": "false",
-		"three":   "1",
-		"four":    "2",
-		"five":    "0",
+	d := CommentDirectives{
+		"ONE_OPT": true,
+		"TWO_OPT": false,
+		"three":   1,
+		"four":    2,
+		"five":    0,
 		"six":     "true",
-	}}
+	}
 
-	assert.True(t, d.IsSet("ONE_OPT"), "d.IsSet(ONE_OPT)")
-	assert.False(t, d.IsSet("TWO_OPT"), "d.IsSet(TWO_OPT)")
-	assert.True(t, d.IsSet("three"), "d.IsSet(three)")
-	assert.False(t, d.IsSet("four"), "d.IsSet(four)")
-	assert.False(t, d.IsSet("five"), "d.IsSet(five)")
-	assert.True(t, d.IsSet("six"), "d.IsSet(six)")
+	if !d.IsSet("ONE_OPT") {
+		t.Errorf("d.IsSet(ONE_OPT) should be true")
+	}
+
+	if d.IsSet("TWO_OPT") {
+		t.Errorf("d.IsSet(TWO_OPT) should be false")
+	}
+
+	if !d.IsSet("three") {
+		t.Errorf("d.IsSet(three) should be true")
+	}
+
+	if d.IsSet("four") {
+		t.Errorf("d.IsSet(four) should be false")
+	}
+
+	if d.IsSet("five") {
+		t.Errorf("d.IsSet(five) should be false")
+	}
+
+	if d.IsSet("six") {
+		t.Errorf("d.IsSet(six) should be false")
+	}
 }
 
 func TestSkipQueryPlanCacheDirective(t *testing.T) {
@@ -467,32 +466,6 @@ func TestIgnoreMaxMaxMemoryRowsDirective(t *testing.T) {
 			stmt, _ := Parse(test.query)
 			got := IgnoreMaxMaxMemoryRowsDirective(stmt)
 			assert.Equalf(t, test.expected, got, fmt.Sprintf("IgnoreMaxPayloadSizeDirective(stmt) returned %v but expected %v", got, test.expected))
-		})
-	}
-}
-
-func TestConsolidator(t *testing.T) {
-	testCases := []struct {
-		query    string
-		expected querypb.ExecuteOptions_Consolidator
-	}{
-		{"insert /*vt+ CONSOLIDATOR=enabled */ into user(id) values (1), (2)", querypb.ExecuteOptions_CONSOLIDATOR_UNSPECIFIED},
-		{"update /*vt+ CONSOLIDATOR=enabled */ users set name=1", querypb.ExecuteOptions_CONSOLIDATOR_UNSPECIFIED},
-		{"delete /*vt+ CONSOLIDATOR=enabled */ from users", querypb.ExecuteOptions_CONSOLIDATOR_UNSPECIFIED},
-		{"show /*vt+ CONSOLIDATOR=enabled */ create table users", querypb.ExecuteOptions_CONSOLIDATOR_UNSPECIFIED},
-		{"select * from users", querypb.ExecuteOptions_CONSOLIDATOR_UNSPECIFIED},
-		{"select /*vt+ CONSOLIDATOR=invalid_value */ * from users", querypb.ExecuteOptions_CONSOLIDATOR_UNSPECIFIED},
-		{"select /*vt+ IGNORE_MAX_MEMORY_ROWS=1 */ * from users", querypb.ExecuteOptions_CONSOLIDATOR_UNSPECIFIED},
-		{"select /*vt+ CONSOLIDATOR=disabled */ * from users", querypb.ExecuteOptions_CONSOLIDATOR_DISABLED},
-		{"select /*vt+ CONSOLIDATOR=enabled */ * from users", querypb.ExecuteOptions_CONSOLIDATOR_ENABLED},
-		{"select /*vt+ CONSOLIDATOR=enabled_replicas */ * from users", querypb.ExecuteOptions_CONSOLIDATOR_ENABLED_REPLICAS},
-	}
-
-	for _, test := range testCases {
-		t.Run(test.query, func(t *testing.T) {
-			stmt, _ := Parse(test.query)
-			got := Consolidator(stmt)
-			assert.Equalf(t, test.expected, got, fmt.Sprintf("Consolidator(stmt) returned %v but expected %v", got, test.expected))
 		})
 	}
 }

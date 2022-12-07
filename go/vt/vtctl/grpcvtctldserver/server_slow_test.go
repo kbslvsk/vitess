@@ -129,6 +129,7 @@ func TestEmergencyReparentShardSlow(t *testing.T) {
 					"zone1-0000000101": nil,
 				},
 				StopReplicationAndGetStatusResults: map[string]struct {
+					Status     *replicationdatapb.Status
 					StopStatus *replicationdatapb.StopReplicationStatus
 					Error      error
 				}{
@@ -140,7 +141,7 @@ func TestEmergencyReparentShardSlow(t *testing.T) {
 					},
 					"zone1-0000000200": {
 						StopStatus: &replicationdatapb.StopReplicationStatus{
-							Before: &replicationdatapb.Status{IoState: int32(mysql.ReplicationStateRunning), SqlState: int32(mysql.ReplicationStateRunning)},
+							Before: &replicationdatapb.Status{IoThreadRunning: true, SqlThreadRunning: true},
 							After: &replicationdatapb.Status{
 								SourceUuid:       "3E11FA47-71CA-11E1-9E33-C80AA9429562",
 								RelayLogPosition: "MySQL56/3E11FA47-71CA-11E1-9E33-C80AA9429562:1-5",
@@ -247,6 +248,7 @@ func TestEmergencyReparentShardSlow(t *testing.T) {
 					"zone1-0000000101": nil,
 				},
 				StopReplicationAndGetStatusResults: map[string]struct {
+					Status     *replicationdatapb.Status
 					StopStatus *replicationdatapb.StopReplicationStatus
 					Error      error
 				}{
@@ -258,7 +260,7 @@ func TestEmergencyReparentShardSlow(t *testing.T) {
 					},
 					"zone1-0000000200": {
 						StopStatus: &replicationdatapb.StopReplicationStatus{
-							Before: &replicationdatapb.Status{IoState: int32(mysql.ReplicationStateRunning), SqlState: int32(mysql.ReplicationStateRunning)},
+							Before: &replicationdatapb.Status{IoThreadRunning: true, SqlThreadRunning: true},
 							After: &replicationdatapb.Status{
 								SourceUuid:       "3E11FA47-71CA-11E1-9E33-C80AA9429562",
 								RelayLogPosition: "MySQL56/3E11FA47-71CA-11E1-9E33-C80AA9429562:1-5",
@@ -723,7 +725,7 @@ func TestSleepTablet(t *testing.T) {
 
 			require.NoError(t, err)
 			assert.Equal(t, tt.expected, resp)
-			dur := expectedDur(t, tt.req.Duration, topo.RemoteOperationTimeout)
+			dur := expectedDur(t, tt.req.Duration, *topo.RemoteOperationTimeout)
 			assert.LessOrEqual(t, dur, sleepDur, "sleep should have taken at least %v; took %v", dur, sleepDur)
 		})
 	}

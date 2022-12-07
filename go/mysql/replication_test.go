@@ -19,9 +19,6 @@ package mysql
 import (
 	"reflect"
 	"testing"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestComBinlogDump(t *testing.T) {
@@ -38,7 +35,9 @@ func TestComBinlogDump(t *testing.T) {
 	}
 
 	data, err := sConn.ReadPacket()
-	require.NoError(t, err, "sConn.ReadPacket - ComBinlogDump failed: %v", err)
+	if err != nil {
+		t.Fatalf("sConn.ReadPacket - ComBinlogDump failed: %v", err)
+	}
 
 	expectedData := []byte{
 		ComBinlogDump,
@@ -47,8 +46,9 @@ func TestComBinlogDump(t *testing.T) {
 		0x04, 0x03, 0x02, 0x01, // server-id
 		'm', 'o', 'o', 'f', 'a', 'r', 'm', // binlog-filename
 	}
-	assert.True(t, reflect.DeepEqual(data, expectedData), "ComBinlogDump returned unexpected data:\n%v\nwas expecting:\n%v", data, expectedData)
-
+	if !reflect.DeepEqual(data, expectedData) {
+		t.Errorf("ComBinlogDump returned unexpected data:\n%v\nwas expecting:\n%v", data, expectedData)
+	}
 	sConn.sequence = 0
 
 	// Write ComBinlogDump packet with no filename, read it, compare.
@@ -57,7 +57,9 @@ func TestComBinlogDump(t *testing.T) {
 	}
 
 	data, err = sConn.ReadPacket()
-	require.NoError(t, err, "sConn.ReadPacket - ComBinlogDump failed: %v", err)
+	if err != nil {
+		t.Fatalf("sConn.ReadPacket - ComBinlogDump failed: %v", err)
+	}
 
 	expectedData = []byte{
 		ComBinlogDump,
@@ -65,8 +67,9 @@ func TestComBinlogDump(t *testing.T) {
 		0x0a, 0x09, // flags
 		0x04, 0x03, 0x02, 0x01, // server-id
 	}
-	assert.True(t, reflect.DeepEqual(data, expectedData), "ComBinlogDump returned unexpected data:\n%v\nwas expecting:\n%v", data, expectedData)
-
+	if !reflect.DeepEqual(data, expectedData) {
+		t.Errorf("ComBinlogDump returned unexpected data:\n%v\nwas expecting:\n%v", data, expectedData)
+	}
 }
 
 func TestComBinlogDumpGTID(t *testing.T) {
@@ -83,7 +86,9 @@ func TestComBinlogDumpGTID(t *testing.T) {
 	}
 
 	data, err := sConn.ReadPacket()
-	require.NoError(t, err, "sConn.ReadPacket - ComBinlogDumpGTID failed: %v", err)
+	if err != nil {
+		t.Fatalf("sConn.ReadPacket - ComBinlogDumpGTID failed: %v", err)
+	}
 
 	expectedData := []byte{
 		ComBinlogDumpGTID,
@@ -95,8 +100,9 @@ func TestComBinlogDumpGTID(t *testing.T) {
 		0x02, 0x00, 0x00, 0x00, // data-size
 		0xfa, 0xfb, // data
 	}
-	assert.True(t, reflect.DeepEqual(data, expectedData), "ComBinlogDumpGTID returned unexpected data:\n%v\nwas expecting:\n%v", data, expectedData)
-
+	if !reflect.DeepEqual(data, expectedData) {
+		t.Errorf("ComBinlogDumpGTID returned unexpected data:\n%v\nwas expecting:\n%v", data, expectedData)
+	}
 	sConn.sequence = 0
 
 	// Write ComBinlogDumpGTID packet with no filename, read it, compare.
@@ -105,7 +111,9 @@ func TestComBinlogDumpGTID(t *testing.T) {
 	}
 
 	data, err = sConn.ReadPacket()
-	require.NoError(t, err, "sConn.ReadPacket - ComBinlogDumpGTID failed: %v", err)
+	if err != nil {
+		t.Fatalf("sConn.ReadPacket - ComBinlogDumpGTID failed: %v", err)
+	}
 
 	expectedData = []byte{
 		ComBinlogDumpGTID,
@@ -116,33 +124,7 @@ func TestComBinlogDumpGTID(t *testing.T) {
 		0x02, 0x00, 0x00, 0x00, // data-size
 		0xfa, 0xfb, // data
 	}
-	assert.True(t, reflect.DeepEqual(data, expectedData), "ComBinlogDumpGTID returned unexpected data:\n%v\nwas expecting:\n%v", data, expectedData)
-
-}
-
-func TestSendSemiSyncAck(t *testing.T) {
-	listener, sConn, cConn := createSocketPair(t)
-	defer func() {
-		listener.Close()
-		sConn.Close()
-		cConn.Close()
-	}()
-
-	// Write ComBinlogDumpGTID packet, read it, compare.
-	logName := "moofarm"
-	logPos := uint64(1852)
-	if err := cConn.SendSemiSyncAck(logName, logPos); err != nil {
-		t.Fatalf("SendSemiSyncAck failed: %v", err)
+	if !reflect.DeepEqual(data, expectedData) {
+		t.Errorf("ComBinlogDumpGTID returned unexpected data:\n%v\nwas expecting:\n%v", data, expectedData)
 	}
-
-	data, err := sConn.ReadPacket()
-	require.NoError(t, err, "sConn.ReadPacket - SendSemiSyncAck failed: %v", err)
-
-	expectedData := []byte{
-		ComSemiSyncAck,
-		0x3c, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // log pos
-		'm', 'o', 'o', 'f', 'a', 'r', 'm', // binlog-filename
-	}
-	assert.True(t, reflect.DeepEqual(data, expectedData), "SendSemiSyncAck returned unexpected data:\n%v\nwas expecting:\n%v", data, expectedData)
-
 }

@@ -17,11 +17,11 @@ limitations under the License.
 package logutil
 
 import (
-	_flag "vitess.io/vitess/go/internal/flag"
+	"flag"
 )
 
 func init() {
-	threshold := _flag.Lookup("stderrthreshold")
+	threshold := flag.Lookup("stderrthreshold")
 	if threshold == nil {
 		// the logging module doesn't specify a stderrthreshold flag
 		return

@@ -18,16 +18,13 @@ package mysqlctl
 
 import (
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/spf13/pflag"
-
-	"vitess.io/vitess/go/vt/servenv"
 
 	"context"
 
@@ -48,7 +45,6 @@ const (
 	// the three bases for files to restore
 	backupInnodbDataHomeDir     = "InnoDBData"
 	backupInnodbLogGroupHomeDir = "InnoDBLog"
-	backupBinlogDir             = "BinLog"
 	backupData                  = "Data"
 
 	// backupManifestFileName is the MANIFEST file name within a backup.
@@ -78,38 +74,24 @@ var (
 	// only used at backup time. Then it is put in the manifest,
 	// and when decoding a backup, it is read from the manifest,
 	// and used as the transform hook name again.
-	backupStorageHook string
+	backupStorageHook = flag.String("backup_storage_hook", "", "if set, we send the contents of the backup files through this hook.")
 
 	// backupStorageCompress can be set to false to not use gzip
 	// on the backups. Usually would be set if a hook is used, and
 	// the hook compresses the data.
-	backupStorageCompress = true
+	backupStorageCompress = flag.Bool("backup_storage_compress", true, "if set, the backup files will be compressed (default is true). Set to false for instance if a backup_storage_hook is specified and it compresses the data.")
 
 	// backupCompressBlockSize is the splitting size for each
 	// compressed block
-	backupCompressBlockSize = 250000
+	backupCompressBlockSize = flag.Int("backup_storage_block_size", 250000, "if backup_storage_compress is true, backup_storage_block_size sets the byte size for each block while compressing (default is 250000).")
 
 	// backupCompressBlocks is the number of blocks that are processed
 	// once before the writer blocks
-	backupCompressBlocks = 2
+	backupCompressBlocks = flag.Int("backup_storage_number_blocks", 2, "if backup_storage_compress is true, backup_storage_number_blocks sets the number of blocks that can be processed, at once, before the writer blocks, during compression (default is 2). It should be equal to the number of CPUs available for compression")
 
 	backupDuration  = stats.NewGauge("backup_duration_seconds", "How long it took to complete the last backup operation (in seconds)")
 	restoreDuration = stats.NewGauge("restore_duration_seconds", "How long it took to complete the last restore operation (in seconds)")
 )
-
-func init() {
-	for _, cmd := range []string{"vtcombo", "vttablet", "vttestserver", "vtbackup", "vtctld"} {
-		servenv.OnParseFor(cmd, registerBackupFlags)
-	}
-}
-
-func registerBackupFlags(fs *pflag.FlagSet) {
-	fs.StringVar(&backupStorageHook, "backup_storage_hook", backupStorageHook, "if set, we send the contents of the backup files through this hook.")
-	_ = fs.MarkDeprecated("backup_storage_hook", "consider using one of the builtin compression algorithms or --external-compressor and --external-decompressor instead.")
-	fs.BoolVar(&backupStorageCompress, "backup_storage_compress", backupStorageCompress, "if set, the backup files will be compressed (default is true). Set to false for instance if a backup_storage_hook is specified and it compresses the data.")
-	fs.IntVar(&backupCompressBlockSize, "backup_storage_block_size", backupCompressBlockSize, "if backup_storage_compress is true, backup_storage_block_size sets the byte size for each block while compressing (default is 250000).")
-	fs.IntVar(&backupCompressBlocks, "backup_storage_number_blocks", backupCompressBlocks, "if backup_storage_compress is true, backup_storage_number_blocks sets the number of blocks that can be processed, at once, before the writer blocks, during compression (default is 2). It should be equal to the number of CPUs available for compression.")
-}
 
 // Backup is the main entry point for a backup:
 // - uses the BackupStorage service to store a new backup
@@ -324,23 +306,16 @@ func Restore(ctx context.Context, params RestoreParams) (*BackupManifest, error)
 		return nil, ErrNoBackup
 	}
 
-	restorePath, err := FindBackupToRestore(ctx, params, bhs)
+	bh, err := FindBackupToRestore(ctx, params, bhs)
 	if err != nil {
 		return nil, err
 	}
-	if restorePath.IsEmpty() {
-		// This condition should not happen; but we validate for sanity
-		return nil, vterrors.Errorf(vtrpc.Code_INTERNAL, "empty restore path")
-	}
-	bh := restorePath.FullBackupHandle()
+
 	re, err := GetRestoreEngine(ctx, bh)
 	if err != nil {
 		return nil, vterrors.Wrap(err, "Failed to find restore engine")
 	}
-	params.Logger.Infof("Restore: %v", restorePath.String())
-	if params.DryRun {
-		return nil, nil
-	}
+
 	manifest, err := re.ExecuteRestore(ctx, params, bh)
 	if err != nil {
 		return nil, err
@@ -404,24 +379,10 @@ func Restore(ctx context.Context, params RestoreParams) (*BackupManifest, error)
 		return nil, err
 	}
 
-	if handles := restorePath.IncrementalBackupHandles(); len(handles) > 0 {
-		params.Logger.Infof("Restore: applying %v incremental backups", len(handles))
-		for _, bh := range handles {
-			manifest, err := re.ExecuteRestore(ctx, params, bh)
-			if err != nil {
-				return nil, err
-			}
-			params.Logger.Infof("Restore: applied incremental backup: %v", manifest.Position)
-		}
-		params.Logger.Infof("Restore: done applying incremental backups")
-	}
-
-	params.Logger.Infof("Restore: removing state file")
 	if err = removeStateFile(params.Cnf); err != nil {
 		return nil, err
 	}
 
 	restoreDuration.Set(int64(time.Since(startTs).Seconds()))
-	params.Logger.Infof("Restore: complete")
 	return manifest, nil
 }

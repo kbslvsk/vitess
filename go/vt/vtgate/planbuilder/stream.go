@@ -26,7 +26,7 @@ import (
 	"vitess.io/vitess/go/vt/vtgate/planbuilder/plancontext"
 )
 
-func buildStreamPlan(stmt *sqlparser.Stream, vschema plancontext.VSchema) (*planResult, error) {
+func buildStreamPlan(stmt *sqlparser.Stream, vschema plancontext.VSchema) (engine.Primitive, error) {
 	table, _, destTabletType, dest, err := vschema.FindTable(stmt.Table)
 	if err != nil {
 		return nil, err
@@ -37,9 +37,9 @@ func buildStreamPlan(stmt *sqlparser.Stream, vschema plancontext.VSchema) (*plan
 	if dest == nil {
 		dest = key.DestinationExactKeyRange{}
 	}
-	return newPlanResult(&engine.MStream{
+	return &engine.MStream{
 		Keyspace:          table.Keyspace,
 		TargetDestination: dest,
 		TableName:         table.Name.CompliantName(),
-	}), nil
+	}, nil
 }

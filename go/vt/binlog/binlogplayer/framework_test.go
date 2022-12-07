@@ -17,9 +17,13 @@ limitations under the License.
 package binlogplayer
 
 import (
-	"context"
+	"flag"
 	"reflect"
 	"testing"
+
+	"vitess.io/vitess/go/vt/log"
+
+	"context"
 
 	"google.golang.org/protobuf/proto"
 
@@ -116,5 +120,8 @@ var globalFBC *fakeBinlogClient
 func init() {
 	RegisterClientFactory("test", func() Client { return globalFBC })
 
-	SetProtocol("binlogplayer_test_framework", "test")
+	//log error
+	if err := flag.Set("binlog_player_protocol", "test"); err != nil {
+		log.Errorf("failed to set flag \"binlog_player_protocol\" to \"test\":%v", err)
+	}
 }

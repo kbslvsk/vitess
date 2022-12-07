@@ -22,12 +22,8 @@ import (
 	"vitess.io/vitess/go/mysql/collations/internal/charset"
 )
 
-// CaseAwareCollation implements lowercase and uppercase conventions for collations.
-type CaseAwareCollation interface {
-	Collation
-	ToUpper(dst []byte, src []byte) []byte
-	ToLower(dst []byte, src []byte) []byte
-}
+// Generate all the metadata used for collations from the JSON data dumped from MySQL
+//go:generate go run ./tools/makecolldata/
 
 // ID is a numeric identifier for a collation. These identifiers are defined by MySQL, not by Vitess.
 type ID uint16
@@ -175,28 +171,4 @@ func register(c Collation) {
 		panic("duplicated collation registered")
 	}
 	globalAllCollations[c.ID()] = c
-}
-
-// Slice returns the substring in `input[from:to]`, where `from` and `to`
-// are collation-aware character indices instead of bytes.
-func Slice(collation Collation, input []byte, from, to int) []byte {
-	return charset.Slice(collation.Charset(), input, from, to)
-}
-
-// Validate returns whether the given `input` is properly encoded with the
-// character set for the given collation.
-func Validate(collation Collation, input []byte) bool {
-	return charset.Validate(collation.Charset(), input)
-}
-
-// Convert converts the bytes in `src`, which are encoded in `srcCollation`'s charset,
-// into a byte slice encoded in `dstCollation`'s charset. The resulting byte slice is
-// appended to `dst` and returned.
-func Convert(dst []byte, dstCollation Collation, src []byte, srcCollation Collation) ([]byte, error) {
-	return charset.Convert(dst, dstCollation.Charset(), src, srcCollation.Charset())
-}
-
-// Length returns the number of codepoints in the input based on the given collation
-func Length(collation Collation, input []byte) int {
-	return charset.Length(collation.Charset(), input)
 }

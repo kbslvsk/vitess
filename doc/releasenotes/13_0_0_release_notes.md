@@ -73,7 +73,7 @@ alter vitess_migration '9748c3b7_7fdb_11eb_ac2c_f875a4d24e90' complete
 This command indicates that a migration executed with `-postpone-completion` is good to complete. Behavior:
 
 - For running `ALTER`s (`online` and `gh-ost`) which are ready to cut-over: cut-over imminently (though not immediately
-    - cut-over depends on polling interval, replication lag, etc)
+  - cut-over depends on polling interval, replication lag, etc)
 - For running `ALTER`s (`online` and `gh-ost`) which are only partly through the migration: they will cut-over
   automatically when they complete their work, as if `-postpone-completion` wasn't indicated
 - For queued `CREATE` and `DROP` migrations: "unblock" them from being scheduled. They'll be scheduled at the scheduler'
@@ -116,10 +116,6 @@ gets scheduled nor executed.
 of `-migration_context` as it is more consistent with output of `SHOW VITESS_MIGRATIONS ...` which includes
 the `migration_context` column.
 
-### vtctl/vtctlclient ApplySchema -caller_id
-`-caller_id` flag sets the Effective Caller ID of the ApplySchema operation so that the operation can succeed with a database that 
-is enforcing strict ACL checking.
-
 ### vtctl/vtctlclient OnlineDDL ... complete
 
 Complementing the `alter vitess_migration ... complete` query, a migration can also be completed via `vtctl`
@@ -140,7 +136,7 @@ vtctlclient OnlineDDL commerce complete d08ffe6b_51c9_11ec_9cf2_0a43f95f28a3
 The command now accepts an optional `-json` flag. With this flag, the output is a valid JSON listing all columns and
 rows.
 
-### vtadmin-web updated to node v16.13.0 (LTS)
+## vtadmin-web updated to node v16.13.0 (LTS)
 
 Building vtadmin-web now requires node >= v16.13.0 (LTS). Upgrade notes are given
 in https://github.com/vitessio/vitess/pull/9136.

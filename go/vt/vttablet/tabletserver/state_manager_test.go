@@ -17,7 +17,6 @@ limitations under the License.
 package tabletserver
 
 import (
-	"context"
 	"errors"
 	"sync"
 	"testing"
@@ -25,10 +24,12 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
+	"vitess.io/vitess/go/mysql/fakesqldb"
+
+	"context"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"vitess.io/vitess/go/mysql/fakesqldb"
 
 	"vitess.io/vitess/go/sync2"
 	"vitess.io/vitess/go/vt/log"
@@ -458,11 +459,10 @@ func TestStateManagerCheckMySQL(t *testing.T) {
 
 	sm.qe.(*testQueryEngine).failMySQL = true
 	order.Set(0)
-	sm.checkMySQL()
-	assert.EqualValues(t, 1, sm.isCheckMySQLRunning())
+	sm.CheckMySQL()
 
 	// Rechecking immediately should be a no-op:
-	sm.checkMySQL()
+	sm.CheckMySQL()
 
 	// Wait for closeAll to get under way.
 	for {
@@ -493,20 +493,6 @@ func TestStateManagerCheckMySQL(t *testing.T) {
 
 	assert.Equal(t, topodatapb.TabletType_PRIMARY, sm.Target().TabletType)
 	assert.Equal(t, StateServing, sm.State())
-
-	// Wait for checkMySQL to finish.
-	timeout := time.After(2 * time.Second)
-	for {
-		select {
-		case <-timeout:
-			t.Fatalf("Timedout waiting for checkMySQL to finish")
-		default:
-			if sm.isCheckMySQLRunning() == 0 {
-				return
-			}
-			time.Sleep(100 * time.Millisecond)
-		}
-	}
 }
 
 func TestStateManagerValidations(t *testing.T) {
@@ -646,7 +632,7 @@ func TestStateManagerNotify(t *testing.T) {
 		TabletAlias: &topodatapb.TabletAlias{},
 	}
 	sm.hcticks.Stop()
-	assert.Truef(t, proto.Equal(gotshr, wantshr), "got: %v, want: %v", gotshr, wantshr)
+	assert.Equal(t, wantshr, gotshr)
 	sm.StopService()
 }
 
@@ -685,7 +671,7 @@ func TestRefreshReplHealthLocked(t *testing.T) {
 	assert.False(t, sm.replHealthy)
 }
 
-func verifySubcomponent(t *testing.T, order int64, component any, state testState) {
+func verifySubcomponent(t *testing.T, order int64, component interface{}, state testState) {
 	tos := component.(orderState)
 	assert.Equal(t, order, tos.Order())
 	assert.Equal(t, state, tos.State())

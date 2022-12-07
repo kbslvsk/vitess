@@ -31,7 +31,7 @@ func skippedCount(tl *ThrottledLogger) int {
 func TestThrottledLogger(t *testing.T) {
 	// Install a fake log func for testing.
 	log := make(chan string)
-	infoDepth = func(depth int, args ...any) {
+	infoDepth = func(depth int, args ...interface{}) {
 		log <- fmt.Sprint(args...)
 	}
 	interval := 100 * time.Millisecond

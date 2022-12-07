@@ -26,35 +26,15 @@ import (
 	"text/template"
 )
 
-type mysqlVersion string
-
-const (
-	mysql57    mysqlVersion = "mysql57"
-	mysql80    mysqlVersion = "mysql80"
-	mariadb103 mysqlVersion = "mariadb103"
-
-	defaultMySQLVersion = mysql80
-)
-
-type mysqlVersions []mysqlVersion
-
-var (
-	defaultMySQLVersions = []mysqlVersion{defaultMySQLVersion}
-	allMySQLVersions     = []mysqlVersion{mysql57, mysql80}
-)
-
-var (
-	unitTestDatabases = []mysqlVersion{mysql57, mysql80, mariadb103}
-)
-
 const (
 	workflowConfigDir = "../.github/workflows"
 
-	unitTestTemplate = "templates/unit_test.tpl"
+	unitTestTemplate  = "templates/unit_test.tpl"
+	unitTestDatabases = "mysql57, mariadb103, mysql80"
 
 	// An empty string will cause the default non platform specific template
 	// to be used.
-	clusterTestTemplate = "templates/cluster_endtoend_test%s.tpl"
+	clusterTestTemplateFormatStr = "templates/cluster_endtoend_test%s.tpl"
 
 	unitTestSelfHostedTemplate    = "templates/unit_test_self_hosted.tpl"
 	unitTestSelfHostedDatabases   = ""
@@ -67,19 +47,21 @@ var (
 	// Clusters 10, 25 are executed on docker, using the docker_test_cluster 10, 25 workflows.
 	// Hence, they are not listed in the list below.
 	clusterList = []string{
-		"vtctlbackup_sharded_clustertest_heavy",
+		"11",
 		"12",
 		"13",
-		"ers_prs_newfeatures_heavy",
+		"14",
 		"15",
-		"vtgate_general_heavy",
-		"vtbackup",
+		"16",
+		"17",
 		"18",
-		"xb_backup",
-		"backup_pitr",
+		"19",
+		"20",
 		"21",
 		"22",
-		"mysql_server_vault",
+		"23",
+		"24",
+		"26",
 		"vstream_failover",
 		"vstream_stoponreshard_true",
 		"vstream_stoponreshard_false",
@@ -89,100 +71,73 @@ var (
 		"onlineddl_vrepl_stress",
 		"onlineddl_vrepl_stress_suite",
 		"onlineddl_vrepl_suite",
-		"vreplication_migrate_vdiff2_convert_tz",
+		"vreplication_migrate",
 		"onlineddl_revert",
 		"onlineddl_declarative",
 		"onlineddl_singleton",
 		"onlineddl_scheduler",
 		"onlineddl_revertible",
 		"tabletmanager_throttler",
-		"tabletmanager_throttler_topo",
 		"tabletmanager_throttler_custom_config",
 		"tabletmanager_tablegc",
 		"tabletmanager_consul",
+		"vtgate_buffer",
 		"vtgate_concurrentdml",
 		"vtgate_godriver",
 		"vtgate_gen4",
 		"vtgate_readafterwrite",
 		"vtgate_reservedconn",
 		"vtgate_schema",
-		"vtgate_tablet_healthcheck_cache",
 		"vtgate_topo",
 		"vtgate_topo_consul",
 		"vtgate_topo_etcd",
 		"vtgate_transaction",
 		"vtgate_unsharded",
-		"vtgate_vindex_heavy",
+		"vtgate_vindex",
 		"vtgate_vschema",
 		"vtgate_queries",
 		"vtgate_schema_tracker",
-		"vtorc",
 		"xb_recovery",
+		"resharding",
+		"resharding_bytes",
+		"mysql57",
 		"mysql80",
-		"vreplication_across_db_versions",
 		"vreplication_multicell",
 		"vreplication_cellalias",
-		"vreplication_basic",
-		"vreplication_v2",
-		"schemadiff_vrepl",
-		"topo_connection_cache",
-		"vtgate_partial_keyspace",
-		"vttablet_prscomplex",
+		"vtorc",
 	}
 
-	clusterSelfHostedList       = []string{}
-	clusterDockerList           = []string{}
-	clustersRequiringXtraBackup = []string{
-		"xb_backup",
-		"xb_recovery",
+	clusterSelfHostedList []string
+	clusterDockerList     = []string{
+		"vreplication_basic",
+		"vreplication_v2",
 	}
-	clustersRequiringMakeTools = []string{
+	// TODO: currently some percona tools including xtrabackup are installed on all clusters, we can possibly optimize
+	// this by only installing them in the required clusters
+	clustersRequiringXtraBackup = append([]string{}, []string{"xb_recovery", "20"}...)
+	clustersRequiringMakeTools  = []string{
 		"18",
-		"mysql_server_vault",
+		"24",
 		"vtgate_topo_consul",
 		"tabletmanager_consul",
+	}
+	clustersRequiringMySQL57 = []string{
+		"mysql57",
 	}
 )
 
 type unitTest struct {
-	Name, Platform, FileName string
+	Name, Platform string
 }
 
 type clusterTest struct {
 	Name, Shard, Platform        string
-	FileName                     string
 	MakeTools, InstallXtraBackup bool
-	Docker                       bool
-	LimitResourceUsage           bool
-	PartialKeyspace              bool
 }
 
 type selfHostedTest struct {
 	Name, Platform, Dockerfile, Shard, ImageName, directoryName string
-	FileName                                                    string
-	MakeTools, InstallXtraBackup, Docker                        bool
-}
-
-// clusterMySQLVersions return list of mysql versions (one or more) that this cluster needs to test against
-func clusterMySQLVersions(clusterName string) mysqlVersions {
-	switch {
-	case strings.HasPrefix(clusterName, "onlineddl_"):
-		return allMySQLVersions
-	case clusterName == "schemadiff_vrepl":
-		return allMySQLVersions
-	case clusterName == "backup_pitr":
-		return allMySQLVersions
-	case clusterName == "tabletmanager_tablegc":
-		return allMySQLVersions
-	case clusterName == "vtorc":
-		return allMySQLVersions
-	case clusterName == "xb_backup":
-		return allMySQLVersions
-	case clusterName == "xb_recovery":
-		return allMySQLVersions
-	default:
-		return defaultMySQLVersions
-	}
+	MakeTools, InstallXtraBackup                                bool
 }
 
 func mergeBlankLines(buf *bytes.Buffer) string {
@@ -206,7 +161,7 @@ func mergeBlankLines(buf *bytes.Buffer) string {
 
 func main() {
 	generateUnitTestWorkflows()
-	generateClusterWorkflows(clusterList, clusterTestTemplate)
+	generateClusterWorkflows(clusterList, clusterTestTemplateFormatStr)
 	generateClusterWorkflows(clusterDockerList, clusterTestDockerTemplate)
 
 	// tests that will use self-hosted runners
@@ -223,13 +178,13 @@ func main() {
 func canonnizeList(list []string) []string {
 	var output []string
 	for _, item := range list {
-		if item := strings.TrimSpace(item); item != "" {
+		item = strings.TrimSpace(item)
+		if item != "" {
 			output = append(output, item)
 		}
 	}
 	return output
 }
-
 func parseList(csvList string) []string {
 	var list []string
 	for _, item := range strings.Split(csvList, ",") {
@@ -257,8 +212,7 @@ func generateSelfHostedUnitTestWorkflows() error {
 		if err != nil {
 			return err
 		}
-		test.FileName = fmt.Sprintf("unit_test_%s.yml", platform)
-		filePath := fmt.Sprintf("%s/%s", workflowConfigDir, test.FileName)
+		filePath := fmt.Sprintf("%s/unit_test_%s.yml", workflowConfigDir, platform)
 		err = writeFileFromTemplate(unitTestSelfHostedTemplate, filePath, test)
 		if err != nil {
 			log.Print(err)
@@ -270,53 +224,48 @@ func generateSelfHostedUnitTestWorkflows() error {
 func generateSelfHostedClusterWorkflows() error {
 	clusters := canonnizeList(clusterSelfHostedList)
 	for _, cluster := range clusters {
-		for _, mysqlVersion := range clusterMySQLVersions(cluster) {
-			// check mysqlversion
-			mysqlVersionIndicator := ""
-			if mysqlVersion != defaultMySQLVersion && len(clusterMySQLVersions(cluster)) > 1 {
-				mysqlVersionIndicator = "_" + string(mysqlVersion)
+		directoryName := fmt.Sprintf("cluster_test_%s", cluster)
+		test := &selfHostedTest{
+			Name:              fmt.Sprintf("Cluster (%s)", cluster),
+			ImageName:         fmt.Sprintf("cluster_test_%s", cluster),
+			Platform:          "mysql80",
+			directoryName:     directoryName,
+			Dockerfile:        fmt.Sprintf("./.github/docker/%s/Dockerfile", directoryName),
+			Shard:             cluster,
+			MakeTools:         false,
+			InstallXtraBackup: false,
+		}
+		makeToolClusters := canonnizeList(clustersRequiringMakeTools)
+		for _, makeToolCluster := range makeToolClusters {
+			if makeToolCluster == cluster {
+				test.MakeTools = true
+				break
 			}
+		}
+		xtraBackupClusters := canonnizeList(clustersRequiringXtraBackup)
+		for _, xtraBackupCluster := range xtraBackupClusters {
+			if xtraBackupCluster == cluster {
+				test.InstallXtraBackup = true
+				break
+			}
+		}
+		mysql57Clusters := canonnizeList(clustersRequiringMySQL57)
+		for _, mysql57Cluster := range mysql57Clusters {
+			if mysql57Cluster == cluster {
+				test.Platform = "mysql57"
+				break
+			}
+		}
 
-			directoryName := fmt.Sprintf("cluster_test_%s%s", cluster, mysqlVersionIndicator)
-			test := &selfHostedTest{
-				Name:              fmt.Sprintf("Cluster (%s)(%s)", cluster, mysqlVersion),
-				ImageName:         fmt.Sprintf("cluster_test_%s%s", cluster, mysqlVersionIndicator),
-				Platform:          "mysql80",
-				directoryName:     directoryName,
-				Dockerfile:        fmt.Sprintf("./.github/docker/%s/Dockerfile", directoryName),
-				Shard:             cluster,
-				MakeTools:         false,
-				InstallXtraBackup: false,
-			}
-			makeToolClusters := canonnizeList(clustersRequiringMakeTools)
-			for _, makeToolCluster := range makeToolClusters {
-				if makeToolCluster == cluster {
-					test.MakeTools = true
-					break
-				}
-			}
-			xtraBackupClusters := canonnizeList(clustersRequiringXtraBackup)
-			for _, xtraBackupCluster := range xtraBackupClusters {
-				if xtraBackupCluster == cluster {
-					test.InstallXtraBackup = true
-					break
-				}
-			}
-			if mysqlVersion == mysql57 {
-				test.Platform = string(mysql57)
-			}
+		err := setupTestDockerFile(test)
+		if err != nil {
+			return err
+		}
 
-			err := setupTestDockerFile(test)
-			if err != nil {
-				return err
-			}
-
-			test.FileName = fmt.Sprintf("cluster_endtoend_%s%s.yml", cluster, mysqlVersionIndicator)
-			filePath := fmt.Sprintf("%s/%s", workflowConfigDir, test.FileName)
-			err = writeFileFromTemplate(clusterTestSelfHostedTemplate, filePath, test)
-			if err != nil {
-				log.Print(err)
-			}
+		filePath := fmt.Sprintf("%s/cluster_endtoend_%s.yml", workflowConfigDir, cluster)
+		err = writeFileFromTemplate(clusterTestSelfHostedTemplate, filePath, test)
+		if err != nil {
+			log.Print(err)
 		}
 	}
 	return nil
@@ -325,64 +274,54 @@ func generateSelfHostedClusterWorkflows() error {
 func generateClusterWorkflows(list []string, tpl string) {
 	clusters := canonnizeList(list)
 	for _, cluster := range clusters {
-		for _, mysqlVersion := range clusterMySQLVersions(cluster) {
-			test := &clusterTest{
-				Name:  fmt.Sprintf("Cluster (%s)", cluster),
-				Shard: cluster,
+		test := &clusterTest{
+			Name:  fmt.Sprintf("Cluster (%s)", cluster),
+			Shard: cluster,
+		}
+		makeToolClusters := canonnizeList(clustersRequiringMakeTools)
+		for _, makeToolCluster := range makeToolClusters {
+			if makeToolCluster == cluster {
+				test.MakeTools = true
+				break
 			}
-			makeToolClusters := canonnizeList(clustersRequiringMakeTools)
-			for _, makeToolCluster := range makeToolClusters {
-				if makeToolCluster == cluster {
-					test.MakeTools = true
-					break
-				}
+		}
+		xtraBackupClusters := canonnizeList(clustersRequiringXtraBackup)
+		for _, xtraBackupCluster := range xtraBackupClusters {
+			if xtraBackupCluster == cluster {
+				test.InstallXtraBackup = true
+				break
 			}
-			xtraBackupClusters := canonnizeList(clustersRequiringXtraBackup)
-			for _, xtraBackupCluster := range xtraBackupClusters {
-				if xtraBackupCluster == cluster {
-					test.InstallXtraBackup = true
-					break
-				}
+		}
+		ubuntu18Clusters := canonnizeList(clustersRequiringMySQL57)
+		for _, ubuntu18Cluster := range ubuntu18Clusters {
+			if ubuntu18Cluster == cluster {
+				test.Platform = "mysql57"
+				break
 			}
-			if mysqlVersion == mysql57 {
-				test.Platform = string(mysql57)
-			}
-			if strings.HasPrefix(cluster, "vreplication") || strings.HasSuffix(cluster, "heavy") {
-				test.LimitResourceUsage = true
-			}
-			mysqlVersionIndicator := ""
-			if mysqlVersion != defaultMySQLVersion && len(clusterMySQLVersions(cluster)) > 1 {
-				mysqlVersionIndicator = "_" + string(mysqlVersion)
-				test.Name = test.Name + " " + string(mysqlVersion)
-			}
-			if strings.Contains(test.Shard, "partial_keyspace") {
-				test.PartialKeyspace = true
-			}
+		}
 
-			workflowPath := fmt.Sprintf("%s/cluster_endtoend_%s%s.yml", workflowConfigDir, cluster, mysqlVersionIndicator)
-			templateFileName := tpl
-			if test.Platform != "" {
-				templateFileName = fmt.Sprintf(tpl, "_"+test.Platform)
-			} else if strings.Contains(templateFileName, "%s") {
-				templateFileName = fmt.Sprintf(tpl, "")
-			}
-			test.FileName = fmt.Sprintf("cluster_endtoend_%s%s.yml", cluster, mysqlVersionIndicator)
-			err := writeFileFromTemplate(templateFileName, workflowPath, test)
-			if err != nil {
-				log.Print(err)
-			}
+		path := fmt.Sprintf("%s/cluster_endtoend_%s.yml", workflowConfigDir, cluster)
+		template := tpl
+		if test.Platform != "" {
+			template = fmt.Sprintf(tpl, "_"+test.Platform)
+		} else if strings.Contains(template, "%s") {
+			template = fmt.Sprintf(tpl, "")
+		}
+		err := writeFileFromTemplate(template, path, test)
+		if err != nil {
+			log.Print(err)
 		}
 	}
 }
 
 func generateUnitTestWorkflows() {
-	for _, platform := range unitTestDatabases {
+	platforms := parseList(unitTestDatabases)
+	for _, platform := range platforms {
 		test := &unitTest{
 			Name:     fmt.Sprintf("Unit Test (%s)", platform),
-			Platform: string(platform),
+			Platform: platform,
 		}
-		test.FileName = fmt.Sprintf("unit_test_%s.yml", platform)
-		path := fmt.Sprintf("%s/%s", workflowConfigDir, test.FileName)
+		path := fmt.Sprintf("%s/unit_test_%s.yml", workflowConfigDir, platform)
 		err := writeFileFromTemplate(unitTestTemplate, path, test)
 		if err != nil {
 			log.Print(err)
@@ -413,12 +352,8 @@ func setupTestDockerFile(test *selfHostedTest) error {
 	return nil
 }
 
-func writeFileFromTemplate(templateFile, filePath string, test any) error {
-	tpl := template.New(path.Base(templateFile))
-	tpl.Funcs(template.FuncMap{
-		"contains": strings.Contains,
-	})
-	tpl, err := tpl.ParseFiles(templateFile)
+func writeFileFromTemplate(templateFile, path string, test interface{}) error {
+	tpl, err := template.ParseFiles(templateFile)
 	if err != nil {
 		return fmt.Errorf("Error: %s\n", err)
 	}
@@ -429,16 +364,12 @@ func writeFileFromTemplate(templateFile, filePath string, test any) error {
 		return fmt.Errorf("Error: %s\n", err)
 	}
 
-	f, err := os.Create(filePath)
+	f, err := os.Create(path)
 	if err != nil {
 		return fmt.Errorf("Error creating file: %s\n", err)
 	}
-	if _, err := f.WriteString("# DO NOT MODIFY: THIS FILE IS GENERATED USING \"make generate_ci_workflows\"\n\n"); err != nil {
-		return err
-	}
-	if _, err := f.WriteString(mergeBlankLines(buf)); err != nil {
-		return err
-	}
-	fmt.Printf("Generated %s\n", filePath)
+	f.WriteString("# DO NOT MODIFY: THIS FILE IS GENERATED USING \"make generate_ci_workflows\"\n\n")
+	f.WriteString(mergeBlankLines(buf))
+	fmt.Printf("Generated %s\n", path)
 	return nil
 }

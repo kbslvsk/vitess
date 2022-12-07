@@ -33,15 +33,13 @@ func TestVttabletProcess(t *testing.T) {
 	defer cluster.PanicHandler(t)
 	firstTabletPort := clusterInstance.Keyspaces[0].Shards[0].Vttablets[0].HTTPPort
 	testURL(t, fmt.Sprintf("http://localhost:%d/debug/vars/", firstTabletPort), "tablet debug var url")
-	resp, err := http.Get(fmt.Sprintf("http://localhost:%d/debug/vars", firstTabletPort))
-	require.NoError(t, err)
-	defer resp.Body.Close()
-
-	resultMap := make(map[string]any)
-	respByte, err := io.ReadAll(resp.Body)
-	require.NoError(t, err)
-	err = json.Unmarshal(respByte, &resultMap)
-	require.NoError(t, err)
+	resp, _ := http.Get(fmt.Sprintf("http://localhost:%d/debug/vars", firstTabletPort))
+	resultMap := make(map[string]interface{})
+	respByte, _ := io.ReadAll(resp.Body)
+	err := json.Unmarshal(respByte, &resultMap)
+	if err != nil {
+		panic(err)
+	}
 	if got, want := resultMap["TabletKeyspace"], "commerce"; got != want {
 		t.Errorf("select:\n%v want\n%v for %s", got, want, "Keyspace of tablet should match")
 	}
@@ -51,6 +49,6 @@ func TestDeleteTablet(t *testing.T) {
 	defer cluster.PanicHandler(t)
 	primary := clusterInstance.Keyspaces[0].Shards[0].PrimaryTablet()
 	require.NotNil(t, primary)
-	_, err := clusterInstance.VtctlclientProcess.ExecuteCommandWithOutput("DeleteTablet", "--", "--allow_primary", primary.Alias)
-	require.NoError(t, err)
+	_, err := clusterInstance.VtctlclientProcess.ExecuteCommandWithOutput("DeleteTablet", "-allow_primary", primary.Alias)
+	require.Nil(t, err, "Error: %v", err)
 }

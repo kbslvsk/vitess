@@ -145,6 +145,7 @@ export class DashboardComponent implements OnInit {
     for (let key of Object.keys(flags)) {
       newFlags[key].value = flags[key].value;
     }
+    this.shardColumnAndNameSanitize(newFlags);
     return new PrepareResponse(true, newFlags);
   }
 
@@ -153,7 +154,17 @@ export class DashboardComponent implements OnInit {
     for (let key of Object.keys(flags)) {
       newFlags[key].value = flags[key].value;
     }
+    this.shardColumnAndNameSanitize(newFlags);
     return new PrepareResponse(true, newFlags);
+  }
+
+  shardColumnAndNameSanitize(newFlags) {
+    if (!newFlags['sharding_column_name'].value) {
+      newFlags['sharding_column_type']['value'] = '';
+    }
+    if (newFlags['sharding_column_name'].value && !newFlags['sharding_column_type'].value) {
+      newFlags['sharding_column_type']['value'] = 'UINT64';
+    }
   }
 
   navigate(keyspaceName: string) {

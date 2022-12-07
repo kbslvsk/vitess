@@ -35,29 +35,18 @@ import { TabletLink } from '../links/TabletLink';
 import { ExternalTabletLink } from '../links/ExternalTabletLink';
 import { ShardLink } from '../links/ShardLink';
 import InfoDropdown from './tablets/InfoDropdown';
-import { isReadOnlyMode } from '../../util/env';
-import { ReadOnlyGate } from '../ReadOnlyGate';
-import { QueryLoadingPlaceholder } from '../placeholders/QueryLoadingPlaceholder';
-
-const COLUMNS = ['Keyspace', 'Shard', 'Alias', 'Type', 'Tablet State', 'Hostname'];
-if (!isReadOnlyMode()) {
-    COLUMNS.push('Actions');
-}
+import ChangeDropdown from './tablets/ChangeDropdown';
 
 export const Tablets = () => {
     useDocumentTitle('Tablets');
 
     const { value: filter, updateValue: updateFilter } = useSyncedURLParam('filter');
-
-    const tabletsQuery = useTablets();
-    const keyspacesQuery = useKeyspaces();
-    const queries = [tabletsQuery, keyspacesQuery];
-
-    const { data: keyspaces = [], ...ksQuery } = keyspacesQuery;
+    const { data = [] } = useTablets();
+    const { data: keyspaces = [], ...ksQuery } = useKeyspaces();
 
     const filteredData = React.useMemo(() => {
-        return formatRows(tabletsQuery.data, keyspaces, filter);
-    }, [tabletsQuery.data, filter, keyspaces]);
+        return formatRows(data, keyspaces, filter);
+    }, [data, filter, keyspaces]);
 
     const renderRows = React.useCallback(
         (rows: typeof filteredData) => {
@@ -98,12 +87,10 @@ export const Tablets = () => {
                     <DataCell>
                         <ExternalTabletLink fqdn={`//${t._raw.FQDN}`}>{t.hostname}</ExternalTabletLink>
                     </DataCell>
-
-                    <ReadOnlyGate>
-                        <DataCell>
-                            <InfoDropdown alias={t.alias as string} clusterID={t._raw.cluster?.id as string} />
-                        </DataCell>
-                    </ReadOnlyGate>
+                    <DataCell>
+                        <InfoDropdown alias={t.alias as string} clusterID={t._raw.cluster?.id as string} />
+                        <ChangeDropdown />
+                    </DataCell>
                 </tr>
             ));
         },
@@ -123,8 +110,11 @@ export const Tablets = () => {
                     placeholder="Filter tablets"
                     value={filter || ''}
                 />
-                <DataTable columns={COLUMNS} data={filteredData} renderRows={renderRows} />
-                <QueryLoadingPlaceholder queries={queries} />
+                <DataTable
+                    columns={['Keyspace', 'Shard', 'Alias', 'Type', 'Tablet State', 'Hostname', 'Actions']}
+                    data={filteredData}
+                    renderRows={renderRows}
+                />
             </ContentContainer>
         </div>
     );

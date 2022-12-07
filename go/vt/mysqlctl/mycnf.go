@@ -109,7 +109,7 @@ type Mycnf struct {
 	TmpDir string
 
 	mycnfMap map[string]string
-	Path     string // the actual path that represents this mycnf
+	path     string // the actual path that represents this mycnf
 }
 
 // TabletDir returns the tablet directory.
@@ -154,7 +154,7 @@ func normKey(bkey []byte) string {
 // ReadMycnf will read an existing my.cnf from disk, and update the passed in Mycnf object
 // with values from the my.cnf on disk.
 func ReadMycnf(mycnf *Mycnf) (*Mycnf, error) {
-	f, err := os.Open(mycnf.Path)
+	f, err := os.Open(mycnf.path)
 	if err != nil {
 		return nil, err
 	}

@@ -17,10 +17,8 @@ limitations under the License.
 package planbuilder
 
 import (
-	querypb "vitess.io/vitess/go/vt/proto/query"
 	vtrpcpb "vitess.io/vitess/go/vt/proto/vtrpc"
 	"vitess.io/vitess/go/vt/vterrors"
-	"vitess.io/vitess/go/vt/vtgate/planbuilder/plancontext"
 	"vitess.io/vitess/go/vt/vtgate/semantics"
 
 	"vitess.io/vitess/go/vt/sqlparser"
@@ -49,16 +47,13 @@ type routeGen4 struct {
 	// eroute is the primitive being built.
 	eroute *engine.Route
 
-	// is the engine primitive we will return from the Primitive() method. Note that it could be different than eroute
-	enginePrimitive engine.Primitive
-
 	// tables keeps track of which tables this route is covering
 	tables semantics.TableSet
 }
 
 // Primitive implements the logicalPlan interface
 func (rb *routeGen4) Primitive() engine.Primitive {
-	return rb.enginePrimitive
+	return rb.eroute
 }
 
 // SetLimit adds a LIMIT clause to the route.
@@ -67,49 +62,15 @@ func (rb *routeGen4) SetLimit(limit *sqlparser.Limit) {
 }
 
 // WireupGen4 implements the logicalPlan interface
-func (rb *routeGen4) WireupGen4(ctx *plancontext.PlanningContext) error {
+func (rb *routeGen4) WireupGen4(_ *semantics.SemTable) error {
 	rb.prepareTheAST()
 
-	// prepare the queries we will pass down
 	rb.eroute.Query = sqlparser.String(rb.Select)
+
 	buffer := sqlparser.NewTrackedBuffer(sqlparser.FormatImpossibleQuery)
 	node := buffer.WriteNode(rb.Select)
-	parsedQuery := node.ParsedQuery()
-	rb.eroute.FieldQuery = parsedQuery.Query
-
-	// if we have a planable vindex lookup, let's extract it into its own primitive
-	planableVindex, ok := rb.eroute.RoutingParameters.Vindex.(vindexes.LookupPlanable)
-	if !ok {
-		rb.enginePrimitive = rb.eroute
-		return nil
-	}
-
-	query, args := planableVindex.Query()
-	stmt, reserved, err := sqlparser.Parse2(query)
-	if err != nil {
-		return err
-	}
-	reservedVars := sqlparser.NewReservedVars("vtg", reserved)
-
-	lookupPrimitive, err := gen4SelectStmtPlanner(query, querypb.ExecuteOptions_Gen4, stmt.(sqlparser.SelectStatement), reservedVars, ctx.VSchema)
-	if err != nil {
-		return vterrors.Wrapf(err, "failed to plan the lookup query: [%s]", query)
-	}
-
-	rb.enginePrimitive = &engine.VindexLookup{
-		Opcode:    rb.eroute.Opcode,
-		Vindex:    planableVindex,
-		Keyspace:  rb.eroute.Keyspace,
-		Values:    rb.eroute.Values,
-		SendTo:    rb.eroute,
-		Arguments: args,
-		Lookup:    lookupPrimitive.primitive,
-	}
-
-	rb.eroute.RoutingParameters.Opcode = engine.ByDestination
-	rb.eroute.RoutingParameters.Values = nil
-	rb.eroute.RoutingParameters.Vindex = nil
-
+	query := node.ParsedQuery()
+	rb.eroute.FieldQuery = query.Query
 	return nil
 }
 

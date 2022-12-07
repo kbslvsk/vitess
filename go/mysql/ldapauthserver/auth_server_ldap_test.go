@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/stretchr/testify/require"
 	ldap "gopkg.in/ldap.v2"
 )
 
@@ -47,9 +46,12 @@ func TestValidateClearText(t *testing.T) {
 		RefreshSeconds: 1,
 	}
 	_, err := asl.validate("testuser", "testpass")
-	require.NoError(t, err, "AuthServerLdap failed to validate valid credentials. Got: %v", err)
+	if err != nil {
+		t.Fatalf("AuthServerLdap failed to validate valid credentials. Got: %v", err)
+	}
 
 	_, err = asl.validate("invaliduser", "invalidpass")
-	require.Error(t, err, "AuthServerLdap validated invalid credentials.")
-
+	if err == nil {
+		t.Fatalf("AuthServerLdap validated invalid credentials.")
+	}
 }

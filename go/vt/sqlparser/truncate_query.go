@@ -17,50 +17,16 @@ limitations under the License.
 package sqlparser
 
 import (
-	"github.com/spf13/pflag"
-
-	"vitess.io/vitess/go/vt/servenv"
+	"flag"
 )
 
 var (
-	// truncateUILen truncate queries in debug UIs to the given length. 0 means unlimited.
-	truncateUILen = 512
+	// TruncateUILen truncate queries in debug UIs to the given length. 0 means unlimited.
+	TruncateUILen = flag.Int("sql-max-length-ui", 512, "truncate queries in debug UIs to the given length (default 512)")
 
-	// truncateErrLen truncate queries in error logs to the given length. 0 means unlimited.
-	truncateErrLen = 0
+	// TruncateErrLen truncate queries in error logs to the given length. 0 means unlimited.
+	TruncateErrLen = flag.Int("sql-max-length-errors", 0, "truncate queries in error logs to the given length (default unlimited)")
 )
-
-func registerQueryTruncationFlags(fs *pflag.FlagSet) {
-	fs.IntVar(&truncateUILen, "sql-max-length-ui", truncateUILen, "truncate queries in debug UIs to the given length (default 512)")
-	fs.IntVar(&truncateErrLen, "sql-max-length-errors", truncateErrLen, "truncate queries in error logs to the given length (default unlimited)")
-}
-
-func init() {
-	for _, cmd := range []string{
-		"vtgate",
-		"vttablet",
-		"vtcombo",
-		"vtctld",
-		"vtctl",
-		"vtexplain",
-		"vtbackup",
-		"vttestserver",
-		"vtbench",
-	} {
-		servenv.OnParseFor(cmd, registerQueryTruncationFlags)
-	}
-}
-
-// GetTruncateErrLen is a function used to read the value of truncateErrLen
-func GetTruncateErrLen() int {
-	return truncateErrLen
-}
-
-// SetTruncateErrLen is a function used to override the value of truncateErrLen
-// It is only meant to be used from tests and not from production code.
-func SetTruncateErrLen(errLen int) {
-	truncateErrLen = errLen
-}
 
 func truncateQuery(query string, max int) string {
 	sql, comments := SplitMarginComments(query)
@@ -75,12 +41,12 @@ func truncateQuery(query string, max int) string {
 // TruncateForUI is used when displaying queries on various Vitess status pages
 // to keep the pages small enough to load and render properly
 func TruncateForUI(query string) string {
-	return truncateQuery(query, truncateUILen)
+	return truncateQuery(query, *TruncateUILen)
 }
 
 // TruncateForLog is used when displaying queries as part of error logs
 // to avoid overwhelming logging systems with potentially long queries and
 // bind value data.
 func TruncateForLog(query string) string {
-	return truncateQuery(query, truncateErrLen)
+	return truncateQuery(query, *TruncateErrLen)
 }

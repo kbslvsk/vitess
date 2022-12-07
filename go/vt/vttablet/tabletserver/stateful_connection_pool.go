@@ -17,18 +17,20 @@ limitations under the License.
 package tabletserver
 
 import (
-	"context"
 	"time"
 
 	"vitess.io/vitess/go/pools"
+
+	"vitess.io/vitess/go/vt/vttablet/tabletserver/tx"
+
+	"context"
+
 	"vitess.io/vitess/go/sync2"
 	"vitess.io/vitess/go/vt/dbconfigs"
 	"vitess.io/vitess/go/vt/log"
+	querypb "vitess.io/vitess/go/vt/proto/query"
 	"vitess.io/vitess/go/vt/vttablet/tabletserver/connpool"
 	"vitess.io/vitess/go/vt/vttablet/tabletserver/tabletenv"
-	"vitess.io/vitess/go/vt/vttablet/tabletserver/tx"
-
-	querypb "vitess.io/vitess/go/vt/proto/query"
 )
 
 const (
@@ -58,7 +60,7 @@ type StatefulConnectionPool struct {
 	lastID        sync2.AtomicInt64
 }
 
-// NewStatefulConnPool creates an ActivePool
+//NewStatefulConnPool creates an ActivePool
 func NewStatefulConnPool(env tabletenv.Env) *StatefulConnectionPool {
 	config := env.Config()
 
@@ -85,7 +87,7 @@ func (sf *StatefulConnectionPool) Open(appParams, dbaParams, appDebugParams dbco
 
 // Close closes the TxPool. A closed pool can be reopened.
 func (sf *StatefulConnectionPool) Close() {
-	for _, v := range sf.active.GetByFilter("for closing", func(_ any) bool { return true }) {
+	for _, v := range sf.active.GetOutdated(time.Duration(0), "for closing") {
 		conn := v.(*StatefulConnection)
 		thing := "connection"
 		if conn.IsInTransaction() {
@@ -105,7 +107,7 @@ func (sf *StatefulConnectionPool) Close() {
 // InUse connections will be killed as they are returned.
 func (sf *StatefulConnectionPool) ShutdownNonTx() {
 	sf.state.Set(scpKillingNonTx)
-	conns := mapToTxConn(sf.active.GetByFilter("kill non-tx", func(sc any) bool {
+	conns := mapToTxConn(sf.active.GetByFilter("kill non-tx", func(sc interface{}) bool {
 		return !sc.(*StatefulConnection).IsInTransaction()
 	}))
 	for _, sc := range conns {
@@ -118,7 +120,7 @@ func (sf *StatefulConnectionPool) ShutdownNonTx() {
 // by the caller (TxPool). InUse connections will be killed as they are returned.
 func (sf *StatefulConnectionPool) ShutdownAll() []*StatefulConnection {
 	sf.state.Set(scpKillingAll)
-	return mapToTxConn(sf.active.GetByFilter("kill non-tx", func(sc any) bool {
+	return mapToTxConn(sf.active.GetByFilter("kill non-tx", func(sc interface{}) bool {
 		return true
 	}))
 }
@@ -133,19 +135,16 @@ func (sf *StatefulConnectionPool) AdjustLastID(id int64) {
 	}
 }
 
-// GetElapsedTimeout returns sessions older than the timeout stored on the
-// connection. Does not return any connections that are in use.
+// GetOutdated returns a list of connections that are older than age.
+// It does not return any connections that are in use.
 // TODO(sougou): deprecate.
-func (sf *StatefulConnectionPool) GetElapsedTimeout(purpose string) []*StatefulConnection {
-	return mapToTxConn(sf.active.GetByFilter(purpose, func(val any) bool {
-		sc := val.(*StatefulConnection)
-		return sc.ElapsedTimeout()
-	}))
+func (sf *StatefulConnectionPool) GetOutdated(age time.Duration, purpose string) []*StatefulConnection {
+	return mapToTxConn(sf.active.GetOutdated(age, purpose))
 }
 
-func mapToTxConn(vals []any) []*StatefulConnection {
-	result := make([]*StatefulConnection, len(vals))
-	for i, el := range vals {
+func mapToTxConn(outdated []interface{}) []*StatefulConnection {
+	result := make([]*StatefulConnection, len(outdated))
+	for i, el := range outdated {
 		result[i] = el.(*StatefulConnection)
 	}
 	return result
@@ -169,14 +168,15 @@ func (sf *StatefulConnectionPool) GetAndLock(id int64, reason string) (*Stateful
 
 // NewConn creates a new StatefulConnection. It will be created from either the normal pool or
 // the found_rows pool, depending on the options provided
-func (sf *StatefulConnectionPool) NewConn(ctx context.Context, options *querypb.ExecuteOptions, setting *pools.Setting) (*StatefulConnection, error) {
+func (sf *StatefulConnectionPool) NewConn(ctx context.Context, options *querypb.ExecuteOptions) (*StatefulConnection, error) {
+
 	var conn *connpool.DBConn
 	var err error
 
 	if options.GetClientFoundRows() {
-		conn, err = sf.foundRowsPool.Get(ctx, setting)
+		conn, err = sf.foundRowsPool.Get(ctx)
 	} else {
-		conn, err = sf.conns.Get(ctx, setting)
+		conn, err = sf.conns.Get(ctx)
 	}
 	if err != nil {
 		return nil, err
@@ -190,10 +190,12 @@ func (sf *StatefulConnectionPool) NewConn(ctx context.Context, options *querypb.
 		env:            sf.env,
 		enforceTimeout: options.GetWorkload() != querypb.ExecuteOptions_DBA,
 	}
-	// This will set both the timeout and initialize the expiryTime.
-	sfConn.SetTimeout(sf.env.Config().TxTimeoutForWorkload(options.GetWorkload()))
 
-	err = sf.active.Register(sfConn.ConnID, sfConn)
+	err = sf.active.Register(
+		sfConn.ConnID,
+		sfConn,
+		sfConn.enforceTimeout,
+	)
 	if err != nil {
 		sfConn.Release(tx.ConnInitFail)
 		return nil, err
@@ -232,10 +234,7 @@ func (sf *StatefulConnectionPool) markAsNotInUse(sc *StatefulConnection, updateT
 		sc.Releasef("kill all")
 		return
 	}
-	if updateTime {
-		sc.resetExpiryTime()
-	}
-	sf.active.Put(sc.ConnID)
+	sf.active.Put(sc.ConnID, updateTime)
 }
 
 // Capacity returns the pool capacity.
@@ -247,6 +246,5 @@ func (sf *StatefulConnectionPool) Capacity() int {
 func (sf *StatefulConnectionPool) renewConn(sc *StatefulConnection) error {
 	sf.active.Unregister(sc.ConnID, "renew existing connection")
 	sc.ConnID = sf.lastID.Add(1)
-	sc.resetExpiryTime()
-	return sf.active.Register(sc.ConnID, sc)
+	return sf.active.Register(sc.ConnID, sc, sc.enforceTimeout)
 }

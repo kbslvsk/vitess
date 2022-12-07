@@ -22,8 +22,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"testing"
 	"time"
+
+	"vitess.io/vitess/go/test/utils"
+
+	"vitess.io/vitess/go/vt/vtgate/evalengine"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -31,13 +36,10 @@ import (
 	"vitess.io/vitess/go/mysql"
 	"vitess.io/vitess/go/sqltypes"
 	"vitess.io/vitess/go/test/endtoend/cluster"
-	"vitess.io/vitess/go/test/endtoend/utils"
-	cmp "vitess.io/vitess/go/test/utils"
 	"vitess.io/vitess/go/vt/log"
 	"vitess.io/vitess/go/vt/proto/query"
 	querypb "vitess.io/vitess/go/vt/proto/query"
 	"vitess.io/vitess/go/vt/proto/topodata"
-	"vitess.io/vitess/go/vt/vtgate/evalengine"
 	"vitess.io/vitess/go/vt/vtgate/vtgateconn"
 )
 
@@ -60,7 +62,6 @@ create table vitess_message(
 
 	# required indexes
 	primary key(id),
-	index next_idx(time_next),
 	index poller_idx(time_acked, priority, time_next desc)
 
 	# add any secondary indexes or foreign keys - no restrictions
@@ -82,13 +83,13 @@ func TestMessage(t *testing.T) {
 	require.NoError(t, err)
 	defer streamConn.Close()
 
-	utils.Exec(t, conn, fmt.Sprintf("use %s", lookupKeyspace))
-	utils.Exec(t, conn, createMessage)
+	exec(t, conn, fmt.Sprintf("use %s", lookupKeyspace))
+	exec(t, conn, createMessage)
 	clusterInstance.VtctlProcess.ExecuteCommand(fmt.Sprintf("ReloadSchemaKeyspace %s", lookupKeyspace))
 
-	defer utils.Exec(t, conn, "drop table vitess_message")
+	defer exec(t, conn, "drop table vitess_message")
 
-	utils.Exec(t, streamConn, "set workload = 'olap'")
+	exec(t, streamConn, "set workload = 'olap'")
 	err = streamConn.ExecuteStreamFetch("stream * from vitess_message")
 	require.NoError(t, err)
 
@@ -111,9 +112,9 @@ func TestMessage(t *testing.T) {
 		}
 	}
 	require.NoError(t, err)
-	cmp.MustMatch(t, wantFields, gotFields)
+	utils.MustMatch(t, wantFields, gotFields)
 
-	utils.Exec(t, conn, fmt.Sprintf("insert into vitess_message(id, tenant_id, message) values(1, 1, '%s')", testMessage))
+	exec(t, conn, fmt.Sprintf("insert into vitess_message(id, tenant_id, message) values(1, 1, '%s')", testMessage))
 
 	// account for jitter in timings, maxJitter uses the current hardcoded value for jitter in message_manager.go
 	jitter := int64(0)
@@ -129,9 +130,9 @@ func TestMessage(t *testing.T) {
 		sqltypes.NewInt64(1),
 		sqltypes.TestValue(sqltypes.TypeJSON, testMessage),
 	}
-	cmp.MustMatch(t, want, got)
+	utils.MustMatch(t, want, got)
 
-	qr := utils.Exec(t, conn, "select time_next, epoch from vitess_message where id = 1")
+	qr := exec(t, conn, "select time_next, epoch from vitess_message where id = 1")
 	next, epoch := getTimeEpoch(qr)
 	jitter += epoch * maxJitter
 	// epoch could be 0 or 1, depending on how fast the row is updated
@@ -151,7 +152,7 @@ func TestMessage(t *testing.T) {
 	// Consume the resend.
 	_, err = streamConn.FetchNext(nil)
 	require.NoError(t, err)
-	qr = utils.Exec(t, conn, "select time_next, epoch from vitess_message where id = 1")
+	qr = exec(t, conn, "select time_next, epoch from vitess_message where id = 1")
 	next, epoch = getTimeEpoch(qr)
 	jitter += epoch * maxJitter
 	// epoch could be 1 or 2, depending on how fast the row is updated
@@ -169,12 +170,12 @@ func TestMessage(t *testing.T) {
 	}
 
 	// Ack the message.
-	qr = utils.Exec(t, conn, "update vitess_message set time_acked = 123, time_next = null where id = 1 and time_acked is null")
+	qr = exec(t, conn, "update vitess_message set time_acked = 123, time_next = null where id = 1 and time_acked is null")
 	assert.Equal(t, uint64(1), qr.RowsAffected)
 
 	// Within 3+1 seconds, the row should be deleted.
 	time.Sleep(4 * time.Second)
-	qr = utils.Exec(t, conn, "select time_acked, epoch from vitess_message where id = 1")
+	qr = exec(t, conn, "select time_acked, epoch from vitess_message where id = 1")
 	assert.Equal(t, 0, len(qr.Rows))
 }
 
@@ -198,7 +199,6 @@ create table vitess_message3(
 
 	# required indexes
 	primary key(id),
-	index next_idx(time_next),
 	index poller_idx(time_acked, priority, time_next desc)
 
 	# add any secondary indexes or foreign keys - no restrictions
@@ -220,11 +220,11 @@ func TestThreeColMessage(t *testing.T) {
 	require.NoError(t, err)
 	defer streamConn.Close()
 
-	utils.Exec(t, conn, fmt.Sprintf("use %s", lookupKeyspace))
-	utils.Exec(t, conn, createThreeColMessage)
-	defer utils.Exec(t, conn, "drop table vitess_message3")
+	exec(t, conn, fmt.Sprintf("use %s", lookupKeyspace))
+	exec(t, conn, createThreeColMessage)
+	defer exec(t, conn, "drop table vitess_message3")
 
-	utils.Exec(t, streamConn, "set workload = 'olap'")
+	exec(t, streamConn, "set workload = 'olap'")
 	err = streamConn.ExecuteStreamFetch("stream * from vitess_message3")
 	require.NoError(t, err)
 
@@ -253,9 +253,9 @@ func TestThreeColMessage(t *testing.T) {
 		}
 	}
 	require.NoError(t, err)
-	cmp.MustMatch(t, wantFields, gotFields)
+	utils.MustMatch(t, wantFields, gotFields)
 
-	utils.Exec(t, conn, fmt.Sprintf("insert into vitess_message3(id, tenant_id, message, msg1, msg2) values(1, 3, '%s', 'hello world', 3)", testMessage))
+	exec(t, conn, fmt.Sprintf("insert into vitess_message3(id, tenant_id, message, msg1, msg2) values(1, 3, '%s', 'hello world', 3)", testMessage))
 
 	got, err := streamConn.FetchNext(nil)
 	require.NoError(t, err)
@@ -266,91 +266,10 @@ func TestThreeColMessage(t *testing.T) {
 		sqltypes.NewVarChar("hello world"),
 		sqltypes.NewInt64(3),
 	}
-	cmp.MustMatch(t, want, got)
+	utils.MustMatch(t, want, got)
 
 	// Verify Ack.
-	qr := utils.Exec(t, conn, "update vitess_message3 set time_acked = 123, time_next = null where id = 1 and time_acked is null")
-	assert.Equal(t, uint64(1), qr.RowsAffected)
-}
-
-var createSpecificStreamingColsMessage = `create table vitess_message4(
-	# required columns
-	id bigint NOT NULL COMMENT 'often an event id, can also be auto-increment or a sequence',
-	priority tinyint NOT NULL DEFAULT '50' COMMENT 'lower number priorities process first',
-	epoch bigint NOT NULL DEFAULT '0' COMMENT 'Vitess increments this each time it sends a message, and is used for incremental backoff doubling',
-	time_next bigint DEFAULT 0 COMMENT 'the earliest time the message will be sent in epoch nanoseconds. Must be null if time_acked is set',
-	time_acked bigint DEFAULT NULL COMMENT 'the time the message was acked in epoch nanoseconds. Must be null if time_next is set',
-
-	# add as many custom fields here as required
-	# optional - these are suggestions
-	tenant_id bigint,
-	message json,
-
-	# custom to this test
-	msg1 varchar(128),
-	msg2 bigint,
-
-	# required indexes
-	primary key(id),
-	index next_idx(time_next),
-	index poller_idx(time_acked, priority, time_next desc)
-
-	# add any secondary indexes or foreign keys - no restrictions
-) comment 'vitess_message,vt_message_cols=id|msg1,vt_ack_wait=1,vt_purge_after=3,vt_batch_size=2,vt_cache_size=10,vt_poller_interval=1'`
-
-func TestSpecificStreamingColsMessage(t *testing.T) {
-	ctx := context.Background()
-
-	vtParams := mysql.ConnParams{
-		Host: "localhost",
-		Port: clusterInstance.VtgateMySQLPort,
-	}
-	conn, err := mysql.Connect(ctx, &vtParams)
-	require.NoError(t, err)
-	defer conn.Close()
-
-	streamConn, err := mysql.Connect(ctx, &vtParams)
-	require.NoError(t, err)
-	defer streamConn.Close()
-
-	utils.Exec(t, conn, fmt.Sprintf("use %s", lookupKeyspace))
-	utils.Exec(t, conn, createSpecificStreamingColsMessage)
-	defer utils.Exec(t, conn, "drop table vitess_message4")
-
-	utils.Exec(t, streamConn, "set workload = 'olap'")
-	err = streamConn.ExecuteStreamFetch("stream * from vitess_message4")
-	require.NoError(t, err)
-
-	wantFields := []*querypb.Field{{
-		Name: "id",
-		Type: sqltypes.Int64,
-	}, {
-		Name: "msg1",
-		Type: sqltypes.VarChar,
-	}}
-	gotFields, err := streamConn.Fields()
-	for i, field := range gotFields {
-		// Remove other artifacts.
-		gotFields[i] = &querypb.Field{
-			Name: field.Name,
-			Type: field.Type,
-		}
-	}
-	require.NoError(t, err)
-	cmp.MustMatch(t, wantFields, gotFields)
-
-	utils.Exec(t, conn, "insert into vitess_message4(id, msg1, msg2) values(1, 'hello world', 3)")
-
-	got, err := streamConn.FetchNext(nil)
-	require.NoError(t, err)
-	want := []sqltypes.Value{
-		sqltypes.NewInt64(1),
-		sqltypes.NewVarChar("hello world"),
-	}
-	cmp.MustMatch(t, want, got)
-
-	// Verify Ack.
-	qr := utils.Exec(t, conn, "update vitess_message4 set time_acked = 123, time_next = null where id = 1 and time_acked is null")
+	qr := exec(t, conn, "update vitess_message3 set time_acked = 123, time_next = null where id = 1 and time_acked is null")
 	assert.Equal(t, uint64(1), qr.RowsAffected)
 }
 
@@ -387,16 +306,16 @@ func TestReparenting(t *testing.T) {
 	_, err = stream.MessageStream(userKeyspace, "", nil, name)
 	require.Nil(t, err)
 
-	assertClientCount(t, 1, shard0Primary)
-	assertClientCount(t, 0, shard0Replica)
-	assertClientCount(t, 1, shard1Primary)
+	assert.Equal(t, 1, getClientCount(shard0Primary))
+	assert.Equal(t, 0, getClientCount(shard0Replica))
+	assert.Equal(t, 1, getClientCount(shard1Primary))
 
 	// do planned reparenting, make one replica as primary
 	// and validate client connection count in correspond tablets
 	clusterInstance.VtctlclientProcess.ExecuteCommandWithOutput(
-		"PlannedReparentShard", "--",
-		"--keyspace_shard", userKeyspace+"/-80",
-		"--new_primary", shard0Replica.Alias)
+		"PlannedReparentShard",
+		"-keyspace_shard", userKeyspace+"/-80",
+		"-new_primary", shard0Replica.Alias)
 	// validate topology
 	err = clusterInstance.VtctlclientProcess.ExecuteCommand("Validate")
 	require.Nil(t, err)
@@ -406,9 +325,9 @@ func TestReparenting(t *testing.T) {
 	// wait before retrying: that is 30s/5 where 30s is the default
 	// message_stream_grace_period.
 	time.Sleep(10 * time.Second)
-	assertClientCount(t, 0, shard0Primary)
-	assertClientCount(t, 1, shard0Replica)
-	assertClientCount(t, 1, shard1Primary)
+	assert.Equal(t, 0, getClientCount(shard0Primary))
+	assert.Equal(t, 1, getClientCount(shard0Replica))
+	assert.Equal(t, 1, getClientCount(shard1Primary))
 	session := stream.Session("@primary", nil)
 	msg3 := fmt.Sprintf(testShardedMessagef, 3)
 	cluster.ExecuteQueriesUsingVtgate(t, session, fmt.Sprintf("insert into sharded_message (id, tenant_id, message) values (3,3,'%s')", msg3))
@@ -418,16 +337,16 @@ func TestReparenting(t *testing.T) {
 
 	// make old primary again as new primary
 	clusterInstance.VtctlclientProcess.ExecuteCommandWithOutput(
-		"PlannedReparentShard", "--",
-		"--keyspace_shard", userKeyspace+"/-80",
-		"--new_primary", shard0Primary.Alias)
+		"PlannedReparentShard",
+		"-keyspace_shard", userKeyspace+"/-80",
+		"-new_primary", shard0Primary.Alias)
 	// validate topology
 	err = clusterInstance.VtctlclientProcess.ExecuteCommand("Validate")
 	require.Nil(t, err)
 	time.Sleep(10 * time.Second)
-	assertClientCount(t, 1, shard0Primary)
-	assertClientCount(t, 0, shard0Replica)
-	assertClientCount(t, 1, shard1Primary)
+	assert.Equal(t, 1, getClientCount(shard0Primary))
+	assert.Equal(t, 0, getClientCount(shard0Replica))
+	assert.Equal(t, 1, getClientCount(shard1Primary))
 
 	_, err = session.Execute(context.Background(), "update "+name+" set time_acked = 1, time_next = null where id in (3) and time_acked is null", nil)
 	require.Nil(t, err)
@@ -444,8 +363,8 @@ func TestConnection(t *testing.T) {
 
 	// create two grpc connection with vtgate and verify
 	// client connection count in vttablet of the primary
-	assertClientCount(t, 0, shard0Primary)
-	assertClientCount(t, 0, shard1Primary)
+	assert.Equal(t, 0, getClientCount(shard0Primary))
+	assert.Equal(t, 0, getClientCount(shard1Primary))
 
 	ctx := context.Background()
 	// first connection with vtgate
@@ -455,8 +374,8 @@ func TestConnection(t *testing.T) {
 	require.Nil(t, err)
 	// validate client count of vttablet
 	time.Sleep(time.Second)
-	assertClientCount(t, 1, shard0Primary)
-	assertClientCount(t, 1, shard1Primary)
+	assert.Equal(t, 1, getClientCount(shard0Primary))
+	assert.Equal(t, 1, getClientCount(shard1Primary))
 	// second connection with vtgate, secont connection
 	// will only be used for client connection counts
 	stream1, err := VtgateGrpcConn(ctx, clusterInstance)
@@ -465,8 +384,8 @@ func TestConnection(t *testing.T) {
 	require.Nil(t, err)
 	// validate client count of vttablet
 	time.Sleep(time.Second)
-	assertClientCount(t, 2, shard0Primary)
-	assertClientCount(t, 2, shard1Primary)
+	assert.Equal(t, 2, getClientCount(shard0Primary))
+	assert.Equal(t, 2, getClientCount(shard1Primary))
 
 	// insert data in primary and validate that we receive this
 	// in message stream
@@ -487,8 +406,8 @@ func TestConnection(t *testing.T) {
 	// After closing one stream, ensure vttablets have dropped it.
 	stream.Close()
 	time.Sleep(time.Second)
-	assertClientCount(t, 1, shard0Primary)
-	assertClientCount(t, 1, shard1Primary)
+	assert.Equal(t, 1, getClientCount(shard0Primary))
+	assert.Equal(t, 1, getClientCount(shard1Primary))
 
 	stream1.Close()
 }
@@ -628,38 +547,47 @@ func (stream *VTGateStream) Next() (*sqltypes.Result, error) {
 	}
 }
 
-// assertClientCount read connected client count from the vttablet debug vars.
-func assertClientCount(t *testing.T, expected int, vttablet *cluster.Vttablet) {
-	var vars struct {
-		Messages map[string]int
+// getClientCount read connected client count from the vttablet debug vars.
+func getClientCount(vttablet *cluster.Vttablet) int {
+	vars, err := getVar(vttablet)
+	if err != nil {
+		return 0
 	}
 
-	parseDebugVars(t, &vars, vttablet)
-
-	got := vars.Messages["sharded_message.ClientCount"]
-	if got != expected {
-		t.Fatalf("wrong number of clients: got %d, expected %d. messages:\n%#v", got, expected, vars.Messages)
+	msg, ok := vars["Messages"]
+	if !ok {
+		return 0
 	}
+
+	v, ok := msg.(map[string]interface{})
+	if !ok {
+		return 0
+	}
+
+	countStr, ok := v["sharded_message.ClientCount"]
+	if !ok {
+		return 0
+	}
+
+	i, err := strconv.ParseInt(fmt.Sprint(countStr), 10, 16)
+	if err != nil {
+		return 0
+	}
+
+	return int(i)
 }
 
-func parseDebugVars(t *testing.T, output interface{}, vttablet *cluster.Vttablet) {
-	debugVarURL := fmt.Sprintf("http://%s:%d/debug/vars", vttablet.VttabletProcess.TabletHostname, vttablet.HTTPPort)
-	resp, err := http.Get(debugVarURL)
+// getVar read debug vars from the vttablet.
+func getVar(vttablet *cluster.Vttablet) (map[string]interface{}, error) {
+	resp, err := http.Get(fmt.Sprintf("http://%s:%d/debug/vars", vttablet.VttabletProcess.TabletHostname, vttablet.HTTPPort))
 	if err != nil {
-		t.Fatalf("failed to fetch %q: %v", debugVarURL, err)
+		return nil, err
 	}
-	defer resp.Body.Close()
-
-	respByte, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("failed to read body %q: %v", debugVarURL, err)
+	if resp.StatusCode == 200 {
+		resultMap := make(map[string]interface{})
+		respByte, _ := io.ReadAll(resp.Body)
+		err := json.Unmarshal(respByte, &resultMap)
+		return resultMap, err
 	}
-
-	if resp.StatusCode != 200 {
-		t.Fatalf("status code %d while fetching %q:\n%s", resp.StatusCode, debugVarURL, respByte)
-	}
-
-	if err := json.Unmarshal(respByte, output); err != nil {
-		t.Fatalf("failed to unmarshal JSON from %q: %v", debugVarURL, err)
-	}
+	return nil, nil
 }

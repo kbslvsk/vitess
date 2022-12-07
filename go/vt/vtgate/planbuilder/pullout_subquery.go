@@ -21,7 +21,6 @@ import (
 	"vitess.io/vitess/go/vt/sqlparser"
 	"vitess.io/vitess/go/vt/vterrors"
 	"vitess.io/vitess/go/vt/vtgate/engine"
-	"vitess.io/vitess/go/vt/vtgate/planbuilder/plancontext"
 	"vitess.io/vitess/go/vt/vtgate/semantics"
 )
 
@@ -89,11 +88,11 @@ func (ps *pulloutSubquery) Wireup(plan logicalPlan, jt *jointab) error {
 }
 
 // Wireup2 implements the logicalPlan interface
-func (ps *pulloutSubquery) WireupGen4(ctx *plancontext.PlanningContext) error {
-	if err := ps.underlying.WireupGen4(ctx); err != nil {
+func (ps *pulloutSubquery) WireupGen4(semTable *semantics.SemTable) error {
+	if err := ps.underlying.WireupGen4(semTable); err != nil {
 		return err
 	}
-	return ps.subquery.WireupGen4(ctx)
+	return ps.subquery.WireupGen4(semTable)
 }
 
 // SupplyVar implements the logicalPlan interface

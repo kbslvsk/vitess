@@ -18,6 +18,7 @@ package vtgate
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"sync"
 
@@ -30,7 +31,6 @@ import (
 	"vitess.io/vitess/go/vt/vttablet/queryservice"
 	"vitess.io/vitess/go/vt/vttablet/sandboxconn"
 	"vitess.io/vitess/go/vt/vttablet/tabletconn"
-	"vitess.io/vitess/go/vt/vttablet/tabletconntest"
 
 	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
 	vschemapb "vitess.io/vitess/go/vt/proto/vschema"
@@ -40,7 +40,7 @@ import (
 // sandbox_test.go provides a sandbox for unit testing VTGate.
 
 const (
-	KsTestSharded             = "TestExecutor"
+	KsTestSharded             = "TestSharded"
 	KsTestUnsharded           = "TestUnsharded"
 	KsTestUnshardedServedFrom = "TestUnshardedServedFrom"
 	KsTestBadVSchema          = "TestXBadVSchema"
@@ -52,7 +52,7 @@ func init() {
 	createSandbox(KsTestUnsharded)
 	createSandbox(KsTestBadVSchema)
 	tabletconn.RegisterDialer("sandbox", sandboxDialer)
-	tabletconntest.SetProtocol("go.vt.vtgate.sandbox_test", "sandbox")
+	flag.Set("tablet_protocol", "sandbox")
 }
 
 var sandboxMu sync.Mutex
@@ -156,6 +156,8 @@ func createShardedSrvKeyspace(shardSpec, servedFromKeyspace string) (*topodatapb
 		shards = append(shards, shard)
 	}
 	shardedSrvKeyspace := &topodatapb.SrvKeyspace{
+		ShardingColumnName: "user_id", // exact value is ignored
+		ShardingColumnType: topodatapb.KeyspaceIdType_UINT64,
 		Partitions: []*topodatapb.SrvKeyspace_KeyspacePartition{
 			{
 				ServedType:      topodatapb.TabletType_PRIMARY,

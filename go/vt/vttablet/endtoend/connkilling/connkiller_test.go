@@ -20,8 +20,6 @@ All tests in this package come with a three second time out for OLTP session
 package connkilling
 
 import (
-	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -37,10 +35,7 @@ func TestTxKillerKillsTransactionsInReservedConnections(t *testing.T) {
 	_, err := client.ReserveBeginExecute("select 42", nil, nil, nil)
 	require.NoError(t, err)
 
-	assertIsKilledWithin(t, client, queryPollOpts{
-		StopAfter: 6 * time.Second,
-		PollEvery: time.Second,
-	})
+	assertIsKilledWithin6Seconds(t, client)
 }
 
 func TestTxKillerDoesNotKillReservedConnectionsInUse(t *testing.T) {
@@ -78,10 +73,7 @@ func TestTxKillerCountsTimeFromTxStartedNotStatefulConnCreated(t *testing.T) {
 	_, err = client.Execute("select 43", nil)
 	require.NoError(t, err)
 
-	assertIsKilledWithin(t, client, queryPollOpts{
-		StopAfter: 6 * time.Second,
-		PollEvery: time.Second,
-	})
+	assertIsKilledWithin6Seconds(t, client)
 }
 
 func TestTxKillerKillsTransactionThreeSecondsAfterCreation(t *testing.T) {
@@ -91,10 +83,7 @@ func TestTxKillerKillsTransactionThreeSecondsAfterCreation(t *testing.T) {
 	_, err := client.BeginExecute("select 42", nil, nil)
 	require.NoError(t, err)
 
-	assertIsKilledWithin(t, client, queryPollOpts{
-		StopAfter: 6 * time.Second,
-		PollEvery: time.Second,
-	})
+	assertIsKilledWithin6Seconds(t, client)
 }
 
 func assertIsNotKilledOver5Second(t *testing.T, client *framework.QueryClient) {
@@ -105,59 +94,18 @@ func assertIsNotKilledOver5Second(t *testing.T, client *framework.QueryClient) {
 	}
 }
 
-type queryPollOpts struct {
-	StopAfter time.Duration
-	PollEvery time.Duration
-}
-
-func assertIsKilledWithin(t testing.TB, client *framework.QueryClient, opts queryPollOpts) {
-	t.Helper()
-
+func assertIsKilledWithin6Seconds(t *testing.T, client *framework.QueryClient) {
 	var err error
-
-	doQuery := func() {
+	// when it is used once per second
+	for i := 0; i < 6; i++ {
 		_, err = client.Execute("select 43", nil)
 		if err != nil {
-			if strings.Contains(err.Error(), "in use: for tx killer rollback") {
-				t.Logf("tx is mid-rollback and not killed yet, ignoring this error: %s", err)
-				err = nil
-			}
+			break
 		}
+		time.Sleep(1 * time.Second)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), opts.StopAfter)
-	defer cancel()
-
-	defer func() {
-		// Check one last time after we've hit StopAfter
-		if err == nil {
-			doQuery()
-		}
-
-		// then it should still be killed. transactions are tracked per tx-creation time and not last-used time
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "exceeded timeout: 3s")
-	}()
-
-	ticker := time.NewTicker(opts.PollEvery)
-	defer func() {
-		ticker.Stop()
-		select {
-		case <-ticker.C:
-		default:
-		}
-	}()
-
-poll:
-	for {
-		select {
-		case <-ctx.Done():
-			break poll
-		case <-ticker.C:
-			doQuery()
-			if err != nil {
-				break poll
-			}
-		}
-	}
+	// then it should still be killed. transactions are tracked per tx-creation time and not last-used time
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "exceeded timeout: 3s")
 }

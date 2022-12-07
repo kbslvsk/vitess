@@ -17,7 +17,6 @@ limitations under the License.
 package vindexes
 
 import (
-	"context"
 	"strconv"
 	"testing"
 
@@ -43,7 +42,7 @@ func TestRegionExperimentalMap(t *testing.T) {
 	vindex, err := createRegionVindex(t, "region_experimental", "f1,f2", 1)
 	assert.NoError(t, err)
 	ge := vindex.(MultiColumn)
-	got, err := ge.Map(context.Background(), nil, [][]sqltypes.Value{{
+	got, err := ge.Map(nil, [][]sqltypes.Value{{
 		sqltypes.NewInt64(1), sqltypes.NewInt64(1),
 	}, {
 		sqltypes.NewInt64(255), sqltypes.NewInt64(1),
@@ -76,7 +75,7 @@ func TestRegionExperimentalMapMulti2(t *testing.T) {
 	vindex, err := createRegionVindex(t, "region_experimental", "f1,f2", 2)
 	assert.NoError(t, err)
 	ge := vindex.(MultiColumn)
-	got, err := ge.Map(context.Background(), nil, [][]sqltypes.Value{{
+	got, err := ge.Map(nil, [][]sqltypes.Value{{
 		sqltypes.NewInt64(1), sqltypes.NewInt64(1),
 	}, {
 		sqltypes.NewInt64(255), sqltypes.NewInt64(1),
@@ -117,7 +116,7 @@ func TestRegionExperimentalVerifyMulti(t *testing.T) {
 	}
 
 	want := []bool{true, false, false}
-	got, err := ge.Verify(context.Background(), nil, vals, ksids)
+	got, err := ge.Verify(nil, vals, ksids)
 	assert.NoError(t, err)
 	assert.Equal(t, want, got)
 }

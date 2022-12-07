@@ -31,29 +31,25 @@ import (
 )
 
 // Builds an explain-plan for the given Primitive
-func buildExplainPlan(stmt sqlparser.Explain, reservedVars *sqlparser.ReservedVars, vschema plancontext.VSchema, enableOnlineDDL, enableDirectDDL bool) (*planResult, error) {
+func buildExplainPlan(stmt sqlparser.Explain, reservedVars *sqlparser.ReservedVars, vschema plancontext.VSchema, enableOnlineDDL, enableDirectDDL bool) (engine.Primitive, error) {
 	switch explain := stmt.(type) {
 	case *sqlparser.ExplainTab:
 		return explainTabPlan(explain, vschema)
 	case *sqlparser.ExplainStmt:
-		switch explain.Type {
-		case sqlparser.VitessType:
+		if explain.Type == sqlparser.VitessType {
 			return buildVitessTypePlan(explain, reservedVars, vschema, enableOnlineDDL, enableDirectDDL)
-		case sqlparser.VTExplainType:
-			return buildVTExplainTypePlan(explain, reservedVars, vschema, enableOnlineDDL, enableDirectDDL)
-		default:
-			return buildOtherReadAndAdmin(sqlparser.String(explain), vschema)
 		}
+		return buildOtherReadAndAdmin(sqlparser.String(explain), vschema)
 	}
 	return nil, vterrors.Errorf(vtrpcpb.Code_INTERNAL, "[BUG] unexpected explain type: %T", stmt)
 }
 
-func explainTabPlan(explain *sqlparser.ExplainTab, vschema plancontext.VSchema) (*planResult, error) {
+func explainTabPlan(explain *sqlparser.ExplainTab, vschema plancontext.VSchema) (engine.Primitive, error) {
 	_, _, ks, _, destination, err := vschema.FindTableOrVindex(explain.Table)
 	if err != nil {
 		return nil, err
 	}
-	explain.Table.Qualifier = sqlparser.NewIdentifierCS("")
+	explain.Table.Qualifier = sqlparser.NewTableIdent("")
 
 	if destination == nil {
 		destination = key.DestinationAnyShard{}
@@ -67,20 +63,20 @@ func explainTabPlan(explain *sqlparser.ExplainTab, vschema plancontext.VSchema) 
 		return nil, vterrors.Errorf(vtrpcpb.Code_UNAVAILABLE, "Cannot find keyspace for: %s", ks)
 	}
 
-	return newPlanResult(&engine.Send{
+	return &engine.Send{
 		Keyspace:          keyspace,
 		TargetDestination: destination,
 		Query:             sqlparser.String(explain),
 		SingleShardOnly:   true,
-	}, singleTable(keyspace.Name, explain.Table.Name.String())), nil
+	}, nil
 }
 
-func buildVitessTypePlan(explain *sqlparser.ExplainStmt, reservedVars *sqlparser.ReservedVars, vschema plancontext.VSchema, enableOnlineDDL, enableDirectDDL bool) (*planResult, error) {
+func buildVitessTypePlan(explain *sqlparser.ExplainStmt, reservedVars *sqlparser.ReservedVars, vschema plancontext.VSchema, enableOnlineDDL, enableDirectDDL bool) (engine.Primitive, error) {
 	innerInstruction, err := createInstructionFor(sqlparser.String(explain.Statement), explain.Statement, reservedVars, vschema, enableOnlineDDL, enableDirectDDL)
 	if err != nil {
 		return nil, err
 	}
-	descriptions := treeLines(engine.PrimitiveToPlanDescription(innerInstruction.primitive))
+	descriptions := treeLines(engine.PrimitiveToPlanDescription(innerInstruction))
 
 	var rows [][]sqltypes.Value
 	for _, line := range descriptions {
@@ -112,27 +108,10 @@ func buildVitessTypePlan(explain *sqlparser.ExplainStmt, reservedVars *sqlparser
 		{Name: "query", Type: querypb.Type_VARCHAR},
 	}
 
-	return newPlanResult(engine.NewRowsPrimitive(rows, fields)), nil
+	return engine.NewRowsPrimitive(rows, fields), nil
 }
 
-func buildVTExplainTypePlan(explain *sqlparser.ExplainStmt, reservedVars *sqlparser.ReservedVars, vschema plancontext.VSchema, enableOnlineDDL, enableDirectDDL bool) (*planResult, error) {
-	input, err := createInstructionFor(sqlparser.String(explain.Statement), explain.Statement, reservedVars, vschema, enableOnlineDDL, enableDirectDDL)
-	if err != nil {
-		return nil, err
-	}
-	switch input.primitive.(type) {
-	case *engine.Insert, *engine.Delete, *engine.Update:
-		directives := explain.GetParsedComments().Directives()
-		if directives.IsSet(sqlparser.DirectiveVtexplainRunDMLQueries) {
-			break
-		}
-		return nil, vterrors.Errorf(vtrpcpb.Code_FAILED_PRECONDITION, "explain format = vtexplain will actually run queries. `/*vt+ %s */` must be set to run DML queries in vtexplain. Example: `explain /*vt+ %s */ format = vtexplain delete from t1`", sqlparser.DirectiveVtexplainRunDMLQueries, sqlparser.DirectiveVtexplainRunDMLQueries)
-	}
-
-	return &planResult{primitive: &engine.VTExplain{Input: input.primitive}, tables: input.tables}, nil
-}
-
-func extractQuery(m map[string]any) string {
+func extractQuery(m map[string]interface{}) string {
 	queryObj, ok := m["Query"]
 	if !ok {
 		return ""

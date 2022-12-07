@@ -3,9 +3,7 @@ Copyright 2019 The Vitess Authors.
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
-
-	http://www.apache.org/licenses/LICENSE-2.0
-
+    http://www.apache.org/licenses/LICENSE-2.0
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -18,10 +16,9 @@ import (
 	"context"
 	"crypto/tls"
 	"net"
+	"os"
 	"testing"
 	"time"
-
-	"google.golang.org/grpc/credentials/insecure"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -51,9 +48,13 @@ type testCredentials struct {
 	server credentials.TransportCredentials
 }
 
-func createCredentials(t *testing.T) (*testCredentials, error) {
+func createCredentials() (*testCredentials, error) {
 	// Create a temporary directory.
-	certDir := t.TempDir()
+	certDir, err := os.MkdirTemp("", "optionaltls_grpc_test")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(certDir)
 
 	certs := tlstest.CreateClientServerCertPairs(certDir)
 	cert, err := tls.LoadX509KeyPair(certs.ServerCert, certs.ServerKey)
@@ -76,7 +77,7 @@ func TestOptionalTLS(t *testing.T) {
 	testCtx, testCancel := context.WithCancel(context.Background())
 	defer testCancel()
 
-	tc, err := createCredentials(t)
+	tc, err := createCredentials()
 	if err != nil {
 		t.Fatalf("failed to create credentials %v", err)
 	}
@@ -114,7 +115,7 @@ func TestOptionalTLS(t *testing.T) {
 
 	t.Run("Plain2TLS", func(t *testing.T) {
 		for i := 0; i < 5; i++ {
-			testFunc(t, grpc.WithTransportCredentials(insecure.NewCredentials()))
+			testFunc(t, grpc.WithInsecure())
 		}
 	})
 	t.Run("TLS2TLS", func(t *testing.T) {

@@ -289,7 +289,7 @@
       "Instructions": {
         "OperatorType": "Join",
         "Variant": "Join",
-        "JoinColumnIndexes": "L:0,R:0",
+        "JoinColumnIndexes": "-1,1",
         "TableName": "INFORMATION_SCHEMA.KEY_COLUMN_USAGE, INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS_INFORMATION_SCHEMA.K",
         "Inputs": [
           {
@@ -372,8 +372,8 @@
           "Name": "main",
           "Sharded": false
         },
-        "FieldQuery": "select sum(data_length + index_length) as size from information_schema.`TABLES` where 1 != 1",
-        "Query": "select sum(data_length + index_length) as size from information_schema.`TABLES` where table_schema = :__vtschemaname",
+        "FieldQuery": "select SUM(data_length + index_length) as size from information_schema.`TABLES` where 1 != 1",
+        "Query": "select SUM(data_length + index_length) as size from information_schema.`TABLES` where table_schema = :__vtschemaname",
         "SysTableTableSchema": "[:v1]",
         "Table": "information_schema.`TABLES`"
       }
@@ -428,8 +428,8 @@
           "Name": "main",
           "Sharded": false
         },
-        "FieldQuery": "select fk.referenced_table_name as to_table, fk.referenced_column_name as primary_key, fk.column_name as `column`, fk.constraint_name as `name`, rc.update_rule as on_update, rc.delete_rule as on_delete from information_schema.referential_constraints as rc join information_schema.key_column_usage as fk using (constraint_schema, constraint_name) where 1 != 1",
-        "Query": "select fk.referenced_table_name as to_table, fk.referenced_column_name as primary_key, fk.column_name as `column`, fk.constraint_name as `name`, rc.update_rule as on_update, rc.delete_rule as on_delete from information_schema.referential_constraints as rc join information_schema.key_column_usage as fk using (constraint_schema, constraint_name) where fk.referenced_column_name is not null and fk.table_schema = database() and fk.table_name = :fk_table_name and rc.constraint_schema = database() and rc.table_name = :rc_table_name",
+        "FieldQuery": "select fk.referenced_table_name as to_table, fk.referenced_column_name as primary_key, fk.column_name as `column`, fk.constraint_name as `name`, rc.update_rule as on_update, rc.delete_rule as on_delete from information_schema.referential_constraints as rc join information_schema.key_column_usage as fk on rc.constraint_schema = fk.constraint_schema and rc.constraint_name = fk.constraint_name where 1 != 1",
+        "Query": "select fk.referenced_table_name as to_table, fk.referenced_column_name as primary_key, fk.column_name as `column`, fk.constraint_name as `name`, rc.update_rule as on_update, rc.delete_rule as on_delete from information_schema.referential_constraints as rc join information_schema.key_column_usage as fk on rc.constraint_schema = fk.constraint_schema and rc.constraint_name = fk.constraint_name where fk.referenced_column_name is not null and fk.table_schema = database() and fk.table_name = :fk_table_name and rc.constraint_schema = database() and rc.table_name = :rc_table_name",
         "SysTableTableName": "[fk_table_name:VARCHAR(\":vtg1\"), rc_table_name:VARCHAR(\":vtg1\")]",
         "Table": "information_schema.referential_constraints, information_schema.key_column_usage"
       }
@@ -445,7 +445,7 @@
           "Sharded": false
         },
         "FieldQuery": "select fk.referenced_table_name as to_table, fk.referenced_column_name as primary_key, fk.column_name as `column`, fk.constraint_name as `name`, rc.update_rule as on_update, rc.delete_rule as on_delete from information_schema.referential_constraints as rc, information_schema.key_column_usage as fk where 1 != 1",
-        "Query": "select fk.referenced_table_name as to_table, fk.referenced_column_name as primary_key, fk.column_name as `column`, fk.constraint_name as `name`, rc.update_rule as on_update, rc.delete_rule as on_delete from information_schema.referential_constraints as rc, information_schema.key_column_usage as fk where rc.constraint_schema = database() and rc.table_name = :rc_table_name and fk.referenced_column_name is not null and fk.table_schema = database() and fk.table_name = :fk_table_name",
+        "Query": "select fk.referenced_table_name as to_table, fk.referenced_column_name as primary_key, fk.column_name as `column`, fk.constraint_name as `name`, rc.update_rule as on_update, rc.delete_rule as on_delete from information_schema.referential_constraints as rc, information_schema.key_column_usage as fk where rc.constraint_schema = database() and rc.table_name = :rc_table_name and fk.referenced_column_name is not null and fk.table_schema = database() and fk.table_name = :fk_table_name and rc.constraint_schema = fk.constraint_schema and rc.constraint_name = fk.constraint_name",
         "SysTableTableName": "[fk_table_name:VARCHAR(\":vtg1\"), rc_table_name:VARCHAR(\":vtg1\")]",
         "Table": "information_schema.key_column_usage, information_schema.referential_constraints"
       }
@@ -505,8 +505,8 @@
           "Name": "main",
           "Sharded": false
         },
-        "FieldQuery": "select fk.referenced_table_name as to_table, fk.referenced_column_name as primary_key, fk.column_name as `column`, fk.constraint_name as `name`, rc.update_rule as on_update, rc.delete_rule as on_delete from information_schema.referential_constraints as rc join information_schema.key_column_usage as fk using (constraint_schema, constraint_name) where 1 != 1",
-        "Query": "select fk.referenced_table_name as to_table, fk.referenced_column_name as primary_key, fk.column_name as `column`, fk.constraint_name as `name`, rc.update_rule as on_update, rc.delete_rule as on_delete from information_schema.referential_constraints as rc join information_schema.key_column_usage as fk using (constraint_schema, constraint_name) where fk.referenced_column_name is not null and fk.table_schema = :__vtschemaname and fk.table_name = :fk_table_name and rc.constraint_schema = :__vtschemaname and rc.table_name = :rc_table_name",
+        "FieldQuery": "select fk.referenced_table_name as to_table, fk.referenced_column_name as primary_key, fk.column_name as `column`, fk.constraint_name as `name`, rc.update_rule as on_update, rc.delete_rule as on_delete from information_schema.referential_constraints as rc join information_schema.key_column_usage as fk on rc.constraint_schema = fk.constraint_schema and rc.constraint_name = fk.constraint_name where 1 != 1",
+        "Query": "select fk.referenced_table_name as to_table, fk.referenced_column_name as primary_key, fk.column_name as `column`, fk.constraint_name as `name`, rc.update_rule as on_update, rc.delete_rule as on_delete from information_schema.referential_constraints as rc join information_schema.key_column_usage as fk on rc.constraint_schema = fk.constraint_schema and rc.constraint_name = fk.constraint_name where fk.referenced_column_name is not null and fk.table_schema = :__vtschemaname and fk.table_name = :fk_table_name and rc.constraint_schema = :__vtschemaname and rc.table_name = :rc_table_name",
         "SysTableTableName": "[fk_table_name:VARCHAR(\"table_name\"), rc_table_name:VARCHAR(\"table_name\")]",
         "SysTableTableSchema": "[VARCHAR(\"table_schema\"), VARCHAR(\"table_schema\")]",
         "Table": "information_schema.referential_constraints, information_schema.key_column_usage"
@@ -523,7 +523,7 @@
           "Sharded": false
         },
         "FieldQuery": "select fk.referenced_table_name as to_table, fk.referenced_column_name as primary_key, fk.column_name as `column`, fk.constraint_name as `name`, rc.update_rule as on_update, rc.delete_rule as on_delete from information_schema.referential_constraints as rc, information_schema.key_column_usage as fk where 1 != 1",
-        "Query": "select fk.referenced_table_name as to_table, fk.referenced_column_name as primary_key, fk.column_name as `column`, fk.constraint_name as `name`, rc.update_rule as on_update, rc.delete_rule as on_delete from information_schema.referential_constraints as rc, information_schema.key_column_usage as fk where rc.constraint_schema = :__vtschemaname and rc.table_name = :rc_table_name and fk.referenced_column_name is not null and fk.table_schema = :__vtschemaname and fk.table_name = :fk_table_name",
+        "Query": "select fk.referenced_table_name as to_table, fk.referenced_column_name as primary_key, fk.column_name as `column`, fk.constraint_name as `name`, rc.update_rule as on_update, rc.delete_rule as on_delete from information_schema.referential_constraints as rc, information_schema.key_column_usage as fk where rc.constraint_schema = :__vtschemaname and rc.table_name = :rc_table_name and fk.referenced_column_name is not null and fk.table_schema = :__vtschemaname and fk.table_name = :fk_table_name and rc.constraint_schema = fk.constraint_schema and rc.constraint_name = fk.constraint_name",
         "SysTableTableName": "[fk_table_name:VARCHAR(\"table_name\"), rc_table_name:VARCHAR(\"table_name\")]",
         "SysTableTableSchema": "[VARCHAR(\"table_schema\"), VARCHAR(\"table_schema\")]",
         "Table": "information_schema.key_column_usage, information_schema.referential_constraints"
@@ -543,8 +543,8 @@
           "Name": "main",
           "Sharded": false
         },
-        "FieldQuery": "select cc.constraint_name as `name`, cc.check_clause as expression from information_schema.check_constraints as cc join information_schema.table_constraints as tc using (constraint_schema, constraint_name) where 1 != 1",
-        "Query": "select cc.constraint_name as `name`, cc.check_clause as expression from information_schema.check_constraints as cc join information_schema.table_constraints as tc using (constraint_schema, constraint_name) where tc.table_schema = :__vtschemaname and tc.table_name = :tc_table_name and cc.constraint_schema = :__vtschemaname",
+        "FieldQuery": "select cc.constraint_name as `name`, cc.check_clause as expression from information_schema.check_constraints as cc join information_schema.table_constraints as tc on cc.constraint_schema = tc.constraint_schema and cc.constraint_name = tc.constraint_name where 1 != 1",
+        "Query": "select cc.constraint_name as `name`, cc.check_clause as expression from information_schema.check_constraints as cc join information_schema.table_constraints as tc on cc.constraint_schema = tc.constraint_schema and cc.constraint_name = tc.constraint_name where tc.table_schema = :__vtschemaname and tc.table_name = :tc_table_name and cc.constraint_schema = :__vtschemaname",
         "SysTableTableName": "[tc_table_name:VARCHAR(\"table_name\")]",
         "SysTableTableSchema": "[VARCHAR(\"table_schema\"), VARCHAR(\"constraint_schema\")]",
         "Table": "information_schema.check_constraints, information_schema.table_constraints"
@@ -561,7 +561,7 @@
           "Sharded": false
         },
         "FieldQuery": "select cc.constraint_name as `name`, cc.check_clause as expression from information_schema.check_constraints as cc, information_schema.table_constraints as tc where 1 != 1",
-        "Query": "select cc.constraint_name as `name`, cc.check_clause as expression from information_schema.check_constraints as cc, information_schema.table_constraints as tc where cc.constraint_schema = :__vtschemaname and tc.table_schema = :__vtschemaname and tc.table_name = :tc_table_name",
+        "Query": "select cc.constraint_name as `name`, cc.check_clause as expression from information_schema.check_constraints as cc, information_schema.table_constraints as tc where cc.constraint_schema = :__vtschemaname and tc.table_schema = :__vtschemaname and tc.table_name = :tc_table_name and cc.constraint_schema = tc.constraint_schema and cc.constraint_name = tc.constraint_name",
         "SysTableTableName": "[tc_table_name:VARCHAR(\"table_name\")]",
         "SysTableTableSchema": "[VARCHAR(\"constraint_schema\"), VARCHAR(\"table_schema\")]",
         "Table": "information_schema.check_constraints, information_schema.table_constraints"
@@ -719,8 +719,8 @@
           "Name": "main",
           "Sharded": false
         },
-        "FieldQuery": "select count(*) from INFORMATION_SCHEMA.`TABLES` where 1 != 1",
-        "Query": "select count(*) from INFORMATION_SCHEMA.`TABLES` where table_schema = :__vtschemaname and table_name = :table_name",
+        "FieldQuery": "select COUNT(*) from INFORMATION_SCHEMA.`TABLES` where 1 != 1",
+        "Query": "select COUNT(*) from INFORMATION_SCHEMA.`TABLES` where table_schema = :__vtschemaname and table_name = :table_name",
         "SysTableTableName": "[table_name:VARCHAR(\"foo\")]",
         "SysTableTableSchema": "[VARCHAR(\"performance_schema\")]",
         "Table": "INFORMATION_SCHEMA.`TABLES`"
@@ -760,7 +760,7 @@
           "Sharded": false
         },
         "FieldQuery": "select * from INFORMATION_SCHEMA.`TABLES` where 1 != 1",
-        "Query": "select * from INFORMATION_SCHEMA.`TABLES` where TABLE_SCHEMA = :__vtschemaname",
+        "Query": "select * from INFORMATION_SCHEMA.`TABLES` where TABLE_SCHEMA = :__vtschemaname and TABLE_SCHEMA = :__vtschemaname",
         "SysTableTableSchema": "[VARCHAR(\"user\"), VARCHAR(\"main\")]",
         "Table": "INFORMATION_SCHEMA.`TABLES`"
       }
@@ -860,7 +860,7 @@
           "Sharded": false
         },
         "FieldQuery": "select * from INFORMATION_SCHEMA.`TABLES` where 1 != 1",
-        "Query": "select * from INFORMATION_SCHEMA.`TABLES` where TABLE_SCHEMA = :__vtschemaname and (other_column = 42 or foobar = 'value')",
+        "Query": "select * from INFORMATION_SCHEMA.`TABLES` where TABLE_SCHEMA = :__vtschemaname and (other_column = 42 or TABLE_SCHEMA = 'ks') and (other_column = 42 or foobar = 'value')",
         "SysTableTableSchema": "[VARCHAR(\"ks\")]",
         "Table": "INFORMATION_SCHEMA.`TABLES`"
       }
@@ -894,7 +894,7 @@
       "Instructions": {
         "OperatorType": "Join",
         "Variant": "Join",
-        "JoinColumnIndexes": "L:0",
+        "JoinColumnIndexes": "-1",
         "JoinVars": {
           "x_id": 1
         },
@@ -935,7 +935,7 @@
       "Instructions": {
         "OperatorType": "Join",
         "Variant": "Join",
-        "JoinColumnIndexes": "L:1",
+        "JoinColumnIndexes": "-2",
         "JoinVars": {
           "x_id": 0
         },
@@ -968,10 +968,7 @@
             "Vindex": "user_index"
           }
         ]
-      },
-      "TablesUsed": [
-        "user.user"
-      ]
+      }
     }
   },
   {
@@ -1127,7 +1124,7 @@
               "Sharded": false
             },
             "FieldQuery": "select 1 as found from information_schema.`tables` where 1 != 1",
-            "Query": "select 1 as found from information_schema.`tables` where table_schema = :__vtschemaname",
+            "Query": "select 1 as found from information_schema.`tables` where table_schema = :__vtschemaname and table_schema = :__vtschemaname",
             "SysTableTableSchema": "[VARCHAR(\"music\"), VARCHAR(\"Music\")]",
             "Table": "information_schema.`tables`"
           },
@@ -1139,7 +1136,7 @@
               "Sharded": false
             },
             "FieldQuery": "select 1 as found from information_schema.views where 1 != 1",
-            "Query": "select 1 as found from information_schema.views where table_schema = :__vtschemaname limit 1",
+            "Query": "select 1 as found from information_schema.views where table_schema = :__vtschemaname and table_schema = :__vtschemaname limit 1",
             "SysTableTableSchema": "[VARCHAR(\"music\"), VARCHAR(\"user\")]",
             "Table": "information_schema.views"
           }
@@ -1157,7 +1154,7 @@
           "Sharded": false
         },
         "FieldQuery": "select 1 as found from information_schema.`tables` where 1 != 1 union all (select 1 as found from information_schema.views where 1 != 1)",
-        "Query": "select 1 as found from information_schema.`tables` where table_schema = :__vtschemaname union all (select 1 as found from information_schema.views where table_schema = :__vtschemaname limit 1)",
+        "Query": "select 1 as found from information_schema.`tables` where table_schema = :__vtschemaname and table_schema = :__vtschemaname union all (select 1 as found from information_schema.views where table_schema = :__vtschemaname and table_schema = :__vtschemaname limit 1)",
         "SysTableTableSchema": "[VARCHAR(\"music\"), VARCHAR(\"Music\"), VARCHAR(\"music\"), VARCHAR(\"user\")]",
         "Table": "information_schema.`tables`"
       }
@@ -1180,7 +1177,7 @@
               "Sharded": false
             },
             "FieldQuery": "select 1 as found from information_schema.`tables` where 1 != 1",
-            "Query": "select 1 as found from information_schema.`tables` where table_schema = :__vtschemaname",
+            "Query": "select 1 as found from information_schema.`tables` where table_schema = :__vtschemaname and table_schema = :__vtschemaname",
             "SysTableTableSchema": "[VARCHAR(\"music\"), VARCHAR(\"Music\")]",
             "Table": "information_schema.`tables`"
           },
@@ -1192,7 +1189,7 @@
               "Sharded": false
             },
             "FieldQuery": "select 1 as found from information_schema.views where 1 != 1",
-            "Query": "select 1 as found from information_schema.views where table_schema = :__vtschemaname limit 1",
+            "Query": "select 1 as found from information_schema.views where table_schema = :__vtschemaname and table_schema = :__vtschemaname limit 1",
             "SysTableTableSchema": "[VARCHAR(\"music\"), VARCHAR(\"user\")]",
             "Table": "information_schema.views"
           }
@@ -1210,7 +1207,7 @@
           "Sharded": false
         },
         "FieldQuery": "select 1 as found from information_schema.`tables` where 1 != 1 union all (select 1 as found from information_schema.views where 1 != 1)",
-        "Query": "select 1 as found from information_schema.`tables` where table_schema = :__vtschemaname union all (select 1 as found from information_schema.views where table_schema = :__vtschemaname limit 1)",
+        "Query": "select 1 as found from information_schema.`tables` where table_schema = :__vtschemaname and table_schema = :__vtschemaname union all (select 1 as found from information_schema.views where table_schema = :__vtschemaname and table_schema = :__vtschemaname limit 1)",
         "SysTableTableSchema": "[VARCHAR(\"music\"), VARCHAR(\"Music\"), VARCHAR(\"music\"), VARCHAR(\"user\")]",
         "Table": "information_schema.`tables`"
       }
@@ -1435,11 +1432,12 @@
     }
   },
   {
-    "comment": "table_schema OR predicate\n# It is unsupported because we do not route queries to multiple keyspaces right now",
-    "query": "SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'ks' OR TABLE_SCHEMA = 'main'",
-    "plan": {
+    "comment": "systable union query in derived table with constraint on outside (star projection)",
+    "query": "select * from (select * from `information_schema`.`key_column_usage` `kcu` where `kcu`.`table_schema` = 'user' and `kcu`.`table_name` = 'user_extra' union select * from `information_schema`.`key_column_usage` `kcu` where `kcu`.`table_schema` = 'user' and `kcu`.`table_name` = 'music') `kcu` where `constraint_name` = 'primary'",
+    "v3-plan": "symbol constraint_name not found in table or subquery",
+    "gen4-plan": {
       "QueryType": "SELECT",
-      "Original": "SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'ks' OR TABLE_SCHEMA = 'main'",
+      "Original": "select * from (select * from `information_schema`.`key_column_usage` `kcu` where `kcu`.`table_schema` = 'user' and `kcu`.`table_name` = 'user_extra' union select * from `information_schema`.`key_column_usage` `kcu` where `kcu`.`table_schema` = 'user' and `kcu`.`table_name` = 'music') `kcu` where `constraint_name` = 'primary'",
       "Instructions": {
         "OperatorType": "Route",
         "Variant": "DBA",
@@ -1447,9 +1445,11 @@
           "Name": "main",
           "Sharded": false
         },
-        "FieldQuery": "select * from INFORMATION_SCHEMA.`TABLES` where 1 != 1",
-        "Query": "select * from INFORMATION_SCHEMA.`TABLES` where TABLE_SCHEMA = 'ks' or TABLE_SCHEMA = 'main'",
-        "Table": "INFORMATION_SCHEMA.`TABLES`"
+        "FieldQuery": "select * from (select * from information_schema.key_column_usage as kcu where 1 != 1 union select * from information_schema.key_column_usage as kcu where 1 != 1) as kcu where 1 != 1",
+        "Query": "select * from (select * from information_schema.key_column_usage as kcu where kcu.table_schema = :__vtschemaname and kcu.table_name = :kcu_table_name and constraint_name = 'primary' union select * from information_schema.key_column_usage as kcu where kcu.table_schema = :__vtschemaname and kcu.table_name = :kcu_table_name1 and constraint_name = 'primary') as kcu",
+        "SysTableTableName": "[kcu_table_name1:VARCHAR(\"music\"), kcu_table_name:VARCHAR(\"user_extra\")]",
+        "SysTableTableSchema": "[VARCHAR(\"user\"), VARCHAR(\"user\")]",
+        "Table": "information_schema.key_column_usage"
       }
     }
   }

@@ -22,8 +22,9 @@ limitations under the License.
 package log
 
 import (
+	"flag"
+
 	"github.com/golang/glog"
-	"github.com/spf13/pflag"
 )
 
 // Level is used with V() to test log verbosity.
@@ -72,11 +73,6 @@ var (
 	FatalDepth = glog.FatalDepth
 )
 
-// RegisterFlags installs log flags on the given FlagSet.
-//
-// `go/cmd/*` entrypoints should either use servenv.ParseFlags(WithArgs)? which
-// calls this function, or call this function directly before parsing
-// command-line arguments.
-func RegisterFlags(fs *pflag.FlagSet) {
-	fs.Uint64Var(&glog.MaxSize, "log_rotate_max_size", glog.MaxSize, "size in bytes at which logs are rotated (glog.MaxSize)")
+func init() {
+	flag.Uint64Var(&glog.MaxSize, "log_rotate_max_size", glog.MaxSize, "size in bytes at which logs are rotated (glog.MaxSize)")
 }

@@ -17,6 +17,7 @@ limitations under the License.
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"path"
@@ -24,14 +25,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/spf13/pflag"
-
 	"vitess.io/vitess/go/mysql/collations/internal/charset"
 	"vitess.io/vitess/go/mysql/collations/internal/uca"
 	"vitess.io/vitess/go/mysql/collations/tools/makecolldata/codegen"
 )
 
-var Print8BitData = pflag.Bool("full8bit", false, "")
+var Print8BitData = flag.Bool("full8bit", false, "")
 
 type TableGenerator struct {
 	*codegen.Generator
@@ -82,7 +81,7 @@ func diffMaps(orgWeights, modWeights TailoringWeights) (diff []uca.Patch) {
 	return
 }
 
-func (g *TableGenerator) dedupTable(name, coll string, val any) (string, bool) {
+func (g *TableGenerator) dedupTable(name, coll string, val interface{}) (string, bool) {
 	raw := fmt.Sprintf("%#v", val)
 	if exist, ok := g.dedup[raw]; ok {
 		return exist, true
@@ -243,7 +242,7 @@ func (g *Generator) printCollationUca900(meta *CollationMetadata) {
 	g.P("})")
 }
 
-func (g *TableGenerator) printSlice(name, coll string, slice any) string {
+func (g *TableGenerator) printSlice(name, coll string, slice interface{}) string {
 	tableName, dedup := g.dedupTable(name, coll, slice)
 	if !dedup {
 		g.P("var ", tableName, " = ", slice)

@@ -17,8 +17,9 @@ limitations under the License.
 package topotests
 
 import (
-	"context"
 	"testing"
+
+	"context"
 
 	"google.golang.org/protobuf/proto"
 

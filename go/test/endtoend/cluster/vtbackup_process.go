@@ -57,25 +57,25 @@ func (vtbackup *VtbackupProcess) Setup() (err error) {
 
 	vtbackup.proc = exec.Command(
 		vtbackup.Binary,
-		"--topo_implementation", vtbackup.CommonArg.TopoImplementation,
-		"--topo_global_server_address", vtbackup.CommonArg.TopoGlobalAddress,
-		"--topo_global_root", vtbackup.CommonArg.TopoGlobalRoot,
-		"--log_dir", vtbackup.LogDir,
+		"-topo_implementation", vtbackup.CommonArg.TopoImplementation,
+		"-topo_global_server_address", vtbackup.CommonArg.TopoGlobalAddress,
+		"-topo_global_root", vtbackup.CommonArg.TopoGlobalRoot,
+		"-log_dir", vtbackup.LogDir,
 
 		//initDBfile is required to run vtbackup
-		"--mysql_port", fmt.Sprintf("%d", vtbackup.MysqlPort),
-		"--init_db_sql_file", vtbackup.initDBfile,
-		"--init_keyspace", vtbackup.Keyspace,
-		"--init_shard", vtbackup.Shard,
+		"-mysql_port", fmt.Sprintf("%d", vtbackup.MysqlPort),
+		"-init_db_sql_file", vtbackup.initDBfile,
+		"-init_keyspace", vtbackup.Keyspace,
+		"-init_shard", vtbackup.Shard,
 
 		//Backup Arguments are not optional
-		"--backup_storage_implementation", "file",
-		"--file_backup_storage_root",
+		"-backup_storage_implementation", "file",
+		"-file_backup_storage_root",
 		path.Join(os.Getenv("VTDATAROOT"), "tmp", "backupstorage"),
 	)
 
 	if vtbackup.initialBackup {
-		vtbackup.proc.Args = append(vtbackup.proc.Args, "--initial_backup")
+		vtbackup.proc.Args = append(vtbackup.proc.Args, "-initial_backup")
 	}
 	if vtbackup.ExtraArgs != nil {
 		vtbackup.proc.Args = append(vtbackup.proc.Args, vtbackup.ExtraArgs...)
@@ -91,14 +91,6 @@ func (vtbackup *VtbackupProcess) Setup() (err error) {
 	if err != nil {
 		return
 	}
-
-	vtbackup.exit = make(chan error)
-	go func() {
-		if vtbackup.proc != nil {
-			vtbackup.exit <- vtbackup.proc.Wait()
-			close(vtbackup.exit)
-		}
-	}()
 
 	return nil
 }
@@ -119,9 +111,8 @@ func (vtbackup *VtbackupProcess) TearDown() error {
 
 	case <-time.After(10 * time.Second):
 		vtbackup.proc.Process.Kill()
-		err := <-vtbackup.exit
 		vtbackup.proc = nil
-		return err
+		return <-vtbackup.exit
 	}
 }
 

@@ -19,8 +19,6 @@ package mysql
 import (
 	"bytes"
 	"testing"
-
-	"github.com/stretchr/testify/assert"
 )
 
 func TestEncLenInt(t *testing.T) {
@@ -54,14 +52,22 @@ func TestEncLenInt(t *testing.T) {
 		// Check successful encoding.
 		data := make([]byte, len(test.encoded))
 		pos := writeLenEncInt(data, 0, test.value)
-		assert.Equal(t, len(test.encoded), pos, "unexpected pos %v after writeLenEncInt(%x), expected %v", pos, test.value, len(test.encoded))
-		assert.True(t, bytes.Equal(data, test.encoded), "unexpected encoded value for %x, got %v expected %v", test.value, data, test.encoded)
+		if pos != len(test.encoded) {
+			t.Errorf("unexpected pos %v after writeLenEncInt(%x), expected %v", pos, test.value, len(test.encoded))
+		}
+		if !bytes.Equal(data, test.encoded) {
+			t.Errorf("unexpected encoded value for %x, got %v expected %v", test.value, data, test.encoded)
+		}
 
 		// Check successful encoding with offset.
 		data = make([]byte, len(test.encoded)+1)
 		pos = writeLenEncInt(data, 1, test.value)
-		assert.Equal(t, len(test.encoded)+1, pos, "unexpected pos %v after writeLenEncInt(%x, 1), expected %v", pos, test.value, len(test.encoded)+1)
-		assert.True(t, bytes.Equal(data[1:], test.encoded), "unexpected encoded value for %x, got %v expected %v", test.value, data, test.encoded)
+		if pos != len(test.encoded)+1 {
+			t.Errorf("unexpected pos %v after writeLenEncInt(%x, 1), expected %v", pos, test.value, len(test.encoded)+1)
+		}
+		if !bytes.Equal(data[1:], test.encoded) {
+			t.Errorf("unexpected encoded value for %x, got %v expected %v", test.value, data, test.encoded)
+		}
 
 		// Check successful decoding.
 		got, pos, ok := readLenEncInt(test.encoded, 0)
@@ -71,8 +77,9 @@ func TestEncLenInt(t *testing.T) {
 
 		// Check failed decoding.
 		_, _, ok = readLenEncInt(test.encoded[:len(test.encoded)-1], 0)
-		assert.False(t, ok, "readLenEncInt returned ok=true for shorter value %x", test.value)
-
+		if ok {
+			t.Errorf("readLenEncInt returned ok=true for shorter value %x", test.value)
+		}
 	}
 }
 
@@ -95,8 +102,9 @@ func TestEncUint16(t *testing.T) {
 	}
 
 	_, _, ok = readUint16(data, 9)
-	assert.False(t, ok, "readUint16 returned ok=true for shorter value")
-
+	if ok {
+		t.Errorf("readUint16 returned ok=true for shorter value")
+	}
 }
 
 func TestEncBytes(t *testing.T) {
@@ -112,7 +120,9 @@ func TestEncBytes(t *testing.T) {
 	}
 
 	_, _, ok = readByte(data, 10)
-	assert.False(t, ok, "readByte returned ok=true for shorter value")
+	if ok {
+		t.Errorf("readByte returned ok=true for shorter value")
+	}
 
 	b, pos, ok := readBytes(data, 5, 2)
 	expected := []byte{0xab, 0x00}
@@ -121,8 +131,9 @@ func TestEncBytes(t *testing.T) {
 	}
 
 	_, _, ok = readBytes(data, 9, 2)
-	assert.False(t, ok, "readBytes returned ok=true for shorter value")
-
+	if ok {
+		t.Errorf("readBytes returned ok=true for shorter value")
+	}
 }
 
 func TestEncUint32(t *testing.T) {
@@ -144,8 +155,9 @@ func TestEncUint32(t *testing.T) {
 	}
 
 	_, _, ok = readUint32(data, 7)
-	assert.False(t, ok, "readUint32 returned ok=true for shorter value")
-
+	if ok {
+		t.Errorf("readUint32 returned ok=true for shorter value")
+	}
 }
 
 func TestEncUint64(t *testing.T) {
@@ -168,8 +180,9 @@ func TestEncUint64(t *testing.T) {
 	}
 
 	_, _, ok = readUint64(data, 7)
-	assert.False(t, ok, "readUint64 returned ok=true for shorter value")
-
+	if ok {
+		t.Errorf("readUint64 returned ok=true for shorter value")
+	}
 }
 
 func TestEncString(t *testing.T) {
@@ -219,14 +232,22 @@ func TestEncString(t *testing.T) {
 		// Check successful encoding.
 		data := make([]byte, len(test.lenEncoded))
 		pos := writeLenEncString(data, 0, test.value)
-		assert.Equal(t, len(test.lenEncoded), pos, "unexpected pos %v after writeLenEncString(%v), expected %v", pos, test.value, len(test.lenEncoded))
-		assert.True(t, bytes.Equal(data, test.lenEncoded), "unexpected lenEncoded value for %v, got %v expected %v", test.value, data, test.lenEncoded)
+		if pos != len(test.lenEncoded) {
+			t.Errorf("unexpected pos %v after writeLenEncString(%v), expected %v", pos, test.value, len(test.lenEncoded))
+		}
+		if !bytes.Equal(data, test.lenEncoded) {
+			t.Errorf("unexpected lenEncoded value for %v, got %v expected %v", test.value, data, test.lenEncoded)
+		}
 
 		// Check successful encoding with offset.
 		data = make([]byte, len(test.lenEncoded)+1)
 		pos = writeLenEncString(data, 1, test.value)
-		assert.Equal(t, len(test.lenEncoded)+1, pos, "unexpected pos %v after writeLenEncString(%v, 1), expected %v", pos, test.value, len(test.lenEncoded)+1)
-		assert.True(t, bytes.Equal(data[1:], test.lenEncoded), "unexpected lenEncoded value for %v, got %v expected %v", test.value, data[1:], test.lenEncoded)
+		if pos != len(test.lenEncoded)+1 {
+			t.Errorf("unexpected pos %v after writeLenEncString(%v, 1), expected %v", pos, test.value, len(test.lenEncoded)+1)
+		}
+		if !bytes.Equal(data[1:], test.lenEncoded) {
+			t.Errorf("unexpected lenEncoded value for %v, got %v expected %v", test.value, data[1:], test.lenEncoded)
+		}
 
 		// Check successful decoding as string.
 		got, pos, ok := readLenEncString(test.lenEncoded, 0)
@@ -236,11 +257,15 @@ func TestEncString(t *testing.T) {
 
 		// Check failed decoding with shorter data.
 		_, _, ok = readLenEncString(test.lenEncoded[:len(test.lenEncoded)-1], 0)
-		assert.False(t, ok, "readLenEncString returned ok=true for shorter value %v", test.value)
+		if ok {
+			t.Errorf("readLenEncString returned ok=true for shorter value %v", test.value)
+		}
 
 		// Check failed decoding with no data.
 		_, _, ok = readLenEncString([]byte{}, 0)
-		assert.False(t, ok, "readLenEncString returned ok=true for empty value %v", test.value)
+		if ok {
+			t.Errorf("readLenEncString returned ok=true for empty value %v", test.value)
+		}
 
 		// Check successful skipping as string.
 		pos, ok = skipLenEncString(test.lenEncoded, 0)
@@ -250,11 +275,15 @@ func TestEncString(t *testing.T) {
 
 		// Check failed skipping with shorter data.
 		_, ok = skipLenEncString(test.lenEncoded[:len(test.lenEncoded)-1], 0)
-		assert.False(t, ok, "skipLenEncString returned ok=true for shorter value %v", test.value)
+		if ok {
+			t.Errorf("skipLenEncString returned ok=true for shorter value %v", test.value)
+		}
 
 		// Check failed skipping with no data.
 		_, ok = skipLenEncString([]byte{}, 0)
-		assert.False(t, ok, "skipLenEncString returned ok=true for empty value %v", test.value)
+		if ok {
+			t.Errorf("skipLenEncString returned ok=true for empty value %v", test.value)
+		}
 
 		// Check successful decoding as bytes.
 		gotb, pos, ok := readLenEncStringAsBytes(test.lenEncoded, 0)
@@ -264,11 +293,15 @@ func TestEncString(t *testing.T) {
 
 		// Check failed decoding as bytes with shorter data.
 		_, _, ok = readLenEncStringAsBytes(test.lenEncoded[:len(test.lenEncoded)-1], 0)
-		assert.False(t, ok, "readLenEncStringAsBytes returned ok=true for shorter value %v", test.value)
+		if ok {
+			t.Errorf("readLenEncStringAsBytes returned ok=true for shorter value %v", test.value)
+		}
 
 		// Check failed decoding as bytes with no data.
 		_, _, ok = readLenEncStringAsBytes([]byte{}, 0)
-		assert.False(t, ok, "readLenEncStringAsBytes returned ok=true for empty value %v", test.value)
+		if ok {
+			t.Errorf("readLenEncStringAsBytes returned ok=true for empty value %v", test.value)
+		}
 
 		// Check successful decoding as bytes.
 		gotbcopy, posCopy, ok := readLenEncStringAsBytesCopy(test.lenEncoded, 0)
@@ -278,19 +311,27 @@ func TestEncString(t *testing.T) {
 
 		// Check failed decoding as bytes with shorter data.
 		_, _, ok = readLenEncStringAsBytesCopy(test.lenEncoded[:len(test.lenEncoded)-1], 0)
-		assert.False(t, ok, "readLenEncStringAsBytes returned ok=true for shorter value %v", test.value)
+		if ok {
+			t.Errorf("readLenEncStringAsBytes returned ok=true for shorter value %v", test.value)
+		}
 
 		// Check failed decoding as bytes with no data.
 		_, _, ok = readLenEncStringAsBytesCopy([]byte{}, 0)
-		assert.False(t, ok, "readLenEncStringAsBytes returned ok=true for empty value %v", test.value)
+		if ok {
+			t.Errorf("readLenEncStringAsBytes returned ok=true for empty value %v", test.value)
+		}
 
 		// null encoded tests.
 
 		// Check successful encoding.
 		data = make([]byte, len(test.nullEncoded))
 		pos = writeNullString(data, 0, test.value)
-		assert.Equal(t, len(test.nullEncoded), pos, "unexpected pos %v after writeNullString(%v), expected %v", pos, test.value, len(test.nullEncoded))
-		assert.True(t, bytes.Equal(data, test.nullEncoded), "unexpected nullEncoded value for %v, got %v expected %v", test.value, data, test.nullEncoded)
+		if pos != len(test.nullEncoded) {
+			t.Errorf("unexpected pos %v after writeNullString(%v), expected %v", pos, test.value, len(test.nullEncoded))
+		}
+		if !bytes.Equal(data, test.nullEncoded) {
+			t.Errorf("unexpected nullEncoded value for %v, got %v expected %v", test.value, data, test.nullEncoded)
+		}
 
 		// Check successful decoding.
 		got, pos, ok = readNullString(test.nullEncoded, 0)
@@ -300,15 +341,21 @@ func TestEncString(t *testing.T) {
 
 		// Check failed decoding with shorter data.
 		_, _, ok = readNullString(test.nullEncoded[:len(test.nullEncoded)-1], 0)
-		assert.False(t, ok, "readNullString returned ok=true for shorter value %v", test.value)
+		if ok {
+			t.Errorf("readNullString returned ok=true for shorter value %v", test.value)
+		}
 
 		// EOF encoded tests.
 
 		// Check successful encoding.
 		data = make([]byte, len(test.eofEncoded))
 		pos = writeEOFString(data, 0, test.value)
-		assert.Equal(t, len(test.eofEncoded), pos, "unexpected pos %v after writeEOFString(%v), expected %v", pos, test.value, len(test.eofEncoded))
-		assert.True(t, bytes.Equal(data, test.eofEncoded[:len(test.eofEncoded)]), "unexpected eofEncoded value for %v, got %v expected %v", test.value, data, test.eofEncoded)
+		if pos != len(test.eofEncoded) {
+			t.Errorf("unexpected pos %v after writeEOFString(%v), expected %v", pos, test.value, len(test.eofEncoded))
+		}
+		if !bytes.Equal(data, test.eofEncoded[:len(test.eofEncoded)]) {
+			t.Errorf("unexpected eofEncoded value for %v, got %v expected %v", test.value, data, test.eofEncoded)
+		}
 
 		// Check successful decoding.
 		got, pos, ok = readEOFString(test.eofEncoded, 0)

@@ -17,7 +17,7 @@ jobs:
 
     steps:
       - name: Check out to HEAD
-        uses: actions/checkout@v3
+        uses: actions/checkout@v2
         with:
           fetch-depth: 0
 
@@ -26,7 +26,7 @@ jobs:
         run: |
           next_release_ref=$(./tools/get_next_release.sh ${{github.base_ref}} ${{github.ref}})
           echo $next_release_ref
-          echo "next_release_ref=${next_release_ref}" >> $GITHUB_OUTPUT
+          echo "::set-output name=next_release_ref::${next_release_ref}"
 
   # This job usually execute in ± 20 minutes
   upgrade_downgrade_test_manual:
@@ -38,13 +38,6 @@ jobs:
       - get_next_release
 
     steps:
-    - name: Skip CI
-      run: |
-        if [[ "${{contains( github.event.pull_request.labels.*.name, 'Skip CI')}}" == "true" ]]; then
-          echo "skipping CI due to the 'Skip CI' label"
-          exit 1
-        fi
-
     - name: Check if workflow needs to be skipped
       id: skip-workflow
       run: |
@@ -56,12 +49,12 @@ jobs:
           skip='true'
         fi
         echo Skip ${skip}
-        echo "skip-workflow=${skip}" >> $GITHUB_OUTPUT
+        echo "::set-output name=skip-workflow::${skip}"
 
     # Checkout to this build's commit
     - name: Checkout to commit's code
       if: steps.skip-workflow.outputs.skip-workflow == 'false'
-      uses: actions/checkout@v3
+      uses: actions/checkout@v2
 
     - name: Check for changes in relevant files
       if: steps.skip-workflow.outputs.skip-workflow == 'false'
@@ -76,8 +69,7 @@ jobs:
             - 'test.go'
             - 'Makefile'
             - 'build.env'
-            - 'go.sum'
-            - 'go.mod'
+            - 'go.[sumod]'
             - 'proto/*.proto'
             - 'tools/**'
             - 'config/**'
@@ -86,18 +78,18 @@ jobs:
 
     - name: Set up Go
       if: steps.skip-workflow.outputs.skip-workflow == 'false' && steps.changes.outputs.end_to_end == 'true'
-      uses: actions/setup-go@v3
+      uses: actions/setup-go@v2
       with:
-        go-version: 1.19.3
+        go-version: 1.18.5
 
     - name: Set up python
       if: steps.skip-workflow.outputs.skip-workflow == 'false' && steps.changes.outputs.end_to_end == 'true'
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v2
 
     - name: Tune the OS
       if: steps.skip-workflow.outputs.skip-workflow == 'false' && steps.changes.outputs.end_to_end == 'true'
       run: |
-        sudo sysctl -w net.ipv4.ip_local_port_range="22768 65535"
+        echo '1024 65535' | sudo tee -a /proc/sys/net/ipv4/ip_local_port_range
 
     # TEMPORARY WHILE GITHUB FIXES THIS https://github.com/actions/virtual-environments/issues/3185
     - name: Add the current IP address, long hostname and short hostname record to /etc/hosts file
@@ -161,7 +153,7 @@ jobs:
     # Checkout to the next release of Vitess
     - name: Checkout to the other version's code (${{ needs.get_next_release.outputs.next_release }})
       if: steps.skip-workflow.outputs.skip-workflow == 'false' && steps.changes.outputs.end_to_end == 'true'
-      uses: actions/checkout@v3
+      uses: actions/checkout@v2
       with:
         ref: ${{ needs.get_next_release.outputs.next_release }}
 
@@ -183,7 +175,7 @@ jobs:
     # Checkout to this build's commit
     - name: Checkout to commit's code
       if: steps.skip-workflow.outputs.skip-workflow == 'false' && steps.changes.outputs.end_to_end == 'true'
-      uses: actions/checkout@v3
+      uses: actions/checkout@v2
 
     - name: Get dependencies for this commit
       if: steps.skip-workflow.outputs.skip-workflow == 'false' && steps.changes.outputs.end_to_end == 'true'

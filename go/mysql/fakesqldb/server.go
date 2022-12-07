@@ -23,7 +23,6 @@ import (
 	"os"
 	"path"
 	"regexp"
-	"runtime/debug"
 	"strings"
 	"sync"
 	"testing"
@@ -98,8 +97,8 @@ type DB struct {
 	data map[string]*ExpectedResult
 	// rejectedData maps tolower(query) to an error.
 	rejectedData map[string]error
-	// patternData is a map of regexp queries to results.
-	patternData map[string]exprResult
+	// patternData is a list of regexp to results.
+	patternData []exprResult
 	// queryCalled keeps track of how many times a query was called.
 	queryCalled map[string]int
 	// querylog keeps track of all called queries
@@ -111,6 +110,9 @@ type DB struct {
 	expectedExecuteFetch []ExpectedExecuteFetch
 	// expectedExecuteFetchIndex is the current index of the query.
 	expectedExecuteFetchIndex int
+	// Infinite is true when executed queries beyond our expectation list
+	// should respond with the last entry from the list.
+	infinite bool
 
 	// connections tracks all open connections.
 	// The key for the map is the value of mysql.Conn.ConnectionID.
@@ -118,10 +120,6 @@ type DB struct {
 
 	// queryPatternUserCallback stores optional callbacks when a query with a pattern is called
 	queryPatternUserCallback map[*regexp.Regexp]func(string)
-
-	// if fakesqldb is asked to serve queries or query patterns that it has not been explicitly told about it will
-	// error out by default. However if you set this flag then any unmatched query results in an empty result
-	neverFail bool
 }
 
 // QueryHandler is the interface used by the DB to simulate executed queries
@@ -172,7 +170,6 @@ func New(t testing.TB) *DB {
 		queryCalled:              make(map[string]int),
 		connections:              make(map[uint32]*mysql.Conn),
 		queryPatternUserCallback: make(map[*regexp.Regexp]func(string)),
-		patternData:              make(map[string]exprResult),
 	}
 
 	db.Handler = db
@@ -180,7 +177,7 @@ func New(t testing.TB) *DB {
 	authServer := mysql.NewAuthServerNone()
 
 	// Start listening.
-	db.listener, err = mysql.NewListener("unix", socketFile, authServer, db, 0, 0, false, false)
+	db.listener, err = mysql.NewListener("unix", socketFile, authServer, db, 0, 0, false)
 	if err != nil {
 		t.Fatalf("NewListener failed: %v", err)
 	}
@@ -191,17 +188,8 @@ func New(t testing.TB) *DB {
 		db.listener.Accept()
 	}()
 
-	db.AddQuery("use `fakesqldb`", &sqltypes.Result{})
 	// Return the db.
 	return db
-}
-
-// Name returns the name of the DB.
-func (db *DB) Name() string {
-	db.mu.Lock()
-	defer db.mu.Unlock()
-
-	return db.name
 }
 
 // SetName sets the name of the DB. to differentiate them in tests if needed.
@@ -284,7 +272,6 @@ func (db *DB) ConnParams() dbconfigs.Connector {
 		UnixSocket: db.socketFile,
 		Uname:      "user1",
 		Pass:       "password1",
-		DbName:     "fakesqldb",
 	})
 }
 
@@ -294,7 +281,6 @@ func (db *DB) ConnParamsWithUname(uname string) dbconfigs.Connector {
 		UnixSocket: db.socketFile,
 		Uname:      uname,
 		Pass:       "password1",
-		DbName:     "fakesqldb",
 	})
 }
 
@@ -355,6 +341,7 @@ func (db *DB) HandleQuery(c *mysql.Conn, query string, callback func(*sqltypes.R
 		}
 		return callback(result)
 	}
+
 	key := strings.ToLower(query)
 	db.mu.Lock()
 	defer db.mu.Unlock()
@@ -410,81 +397,60 @@ func (db *DB) HandleQuery(c *mysql.Conn, query string, callback func(*sqltypes.R
 		}
 	}
 
-	if db.neverFail {
-		return callback(&sqltypes.Result{})
-	}
 	// Nothing matched.
-	err := fmt.Errorf("fakesqldb:: query: '%s' is not supported on %v", query, db.name)
-	log.Errorf("Query not found: %s:%s", query, debug.Stack())
-
-	return err
+	return fmt.Errorf("query: '%s' is not supported on %v", query, db.name)
 }
 
 func (db *DB) comQueryOrdered(query string) (*sqltypes.Result, error) {
-	var (
-		afterFn  func()
-		entry    ExpectedExecuteFetch
-		err      error
-		expected string
-		result   *sqltypes.Result
-	)
-
-	defer func() {
-		if afterFn != nil {
-			afterFn()
-		}
-	}()
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
 	// when creating a connection to the database, we send an initial query to set the connection's
 	// collation, we want to skip the query check if we get such initial query.
 	// this is done to ease the test readability.
-	if strings.HasPrefix(query, "SET collation_connection =") || strings.EqualFold(query, "use `fakesqldb`") {
+	if strings.HasPrefix(query, "SET collation_connection =") {
 		return &sqltypes.Result{}, nil
 	}
 
 	index := db.expectedExecuteFetchIndex
-
+	if db.infinite && index == len(db.expectedExecuteFetch) {
+		// Although we already executed all queries, we'll continue to answer the
+		// last one in the infinite mode.
+		index--
+	}
 	if index >= len(db.expectedExecuteFetch) {
-		if db.neverFail {
-			return &sqltypes.Result{}, nil
-		}
 		db.t.Errorf("%v: got unexpected out of bound fetch: %v >= %v", db.name, index, len(db.expectedExecuteFetch))
 		return nil, errors.New("unexpected out of bound fetch")
 	}
+	entry := db.expectedExecuteFetch[index]
 
-	entry = db.expectedExecuteFetch[index]
-	afterFn = entry.AfterFunc
-	err = entry.Error
-	expected = entry.Query
-	result = entry.QueryResult
+	db.expectedExecuteFetchIndex++
+	// If the infinite mode is on, reverse the increment and keep the index at
+	// len(db.expectedExecuteFetch).
+	if db.infinite && db.expectedExecuteFetchIndex > len(db.expectedExecuteFetch) {
+		db.expectedExecuteFetchIndex--
+	}
 
+	if entry.AfterFunc != nil {
+		defer entry.AfterFunc()
+	}
+
+	expected := entry.Query
 	if strings.HasSuffix(expected, "*") {
 		if !strings.HasPrefix(query, expected[0:len(expected)-1]) {
-			if db.neverFail {
-				return &sqltypes.Result{}, nil
-			}
 			db.t.Errorf("%v: got unexpected query start (index=%v): %v != %v", db.name, index, query, expected)
-			return nil, errors.New("unexpected query")
 		}
 	} else {
 		if query != expected {
-			if db.neverFail {
-				return &sqltypes.Result{}, nil
-			}
 			db.t.Errorf("%v: got unexpected query (index=%v): %v != %v", db.name, index, query, expected)
 			return nil, errors.New("unexpected query")
 		}
 	}
-
-	db.expectedExecuteFetchIndex++
 	db.t.Logf("ExecuteFetch: %v: %v", db.name, query)
-
-	if err != nil {
-		return nil, err
+	if entry.Error != nil {
+		return nil, entry.Error
 	}
-	return result, nil
+	return entry.QueryResult, nil
 }
 
 // ComPrepare is part of the mysql.Handler interface.
@@ -494,11 +460,6 @@ func (db *DB) ComPrepare(c *mysql.Conn, query string, bindVars map[string]*query
 
 // ComStmtExecute is part of the mysql.Handler interface.
 func (db *DB) ComStmtExecute(c *mysql.Conn, prepare *mysql.PrepareData, callback func(*sqltypes.Result) error) error {
-	return nil
-}
-
-// ComBinlogDumpGTID is part of the mysql.Handler interface.
-func (db *DB) ComBinlogDumpGTID(c *mysql.Conn, gtidSet mysql.GTIDSet) error {
 	return nil
 }
 
@@ -547,7 +508,7 @@ func (db *DB) AddQueryPattern(queryPattern string, expectedResult *sqltypes.Resu
 	result := *expectedResult
 	db.mu.Lock()
 	defer db.mu.Unlock()
-	db.patternData[queryPattern] = exprResult{expr: expr, result: &result}
+	db.patternData = append(db.patternData, exprResult{expr: expr, result: &result})
 }
 
 // RejectQueryPattern allows a query pattern to be rejected with an error
@@ -555,19 +516,19 @@ func (db *DB) RejectQueryPattern(queryPattern, error string) {
 	expr := regexp.MustCompile("(?is)^" + queryPattern + "$")
 	db.mu.Lock()
 	defer db.mu.Unlock()
-	db.patternData[queryPattern] = exprResult{expr: expr, err: error}
+	db.patternData = append(db.patternData, exprResult{expr: expr, err: error})
 }
 
 // ClearQueryPattern removes all query patterns set up
 func (db *DB) ClearQueryPattern() {
-	db.patternData = make(map[string]exprResult)
+	db.patternData = nil
 }
 
 // AddQueryPatternWithCallback is similar to AddQueryPattern: in addition it calls the provided callback function
 // The callback can be used to set user counters/variables for testing specific usecases
 func (db *DB) AddQueryPatternWithCallback(queryPattern string, expectedResult *sqltypes.Result, callback func(string)) {
 	db.AddQueryPattern(queryPattern, expectedResult)
-	db.queryPatternUserCallback[db.patternData[queryPattern].expr] = callback
+	db.queryPatternUserCallback[db.patternData[len(db.patternData)-1].expr] = callback
 }
 
 // DeleteQuery deletes query from the fake DB.
@@ -604,12 +565,12 @@ func (db *DB) GetQueryCalledNum(query string) int {
 	return num
 }
 
-// QueryLog returns the query log in a semicomma separated string
+//QueryLog returns the query log in a semicomma separated string
 func (db *DB) QueryLog() string {
 	return strings.Join(db.querylog, ";")
 }
 
-// ResetQueryLog resets the query log
+//ResetQueryLog resets the query log
 func (db *DB) ResetQueryLog() {
 	db.querylog = nil
 }
@@ -649,6 +610,14 @@ func (db *DB) EnableShouldClose() {
 // AddExpectedExecuteFetch adds an ExpectedExecuteFetch directly.
 func (db *DB) AddExpectedExecuteFetch(entry ExpectedExecuteFetch) {
 	db.AddExpectedExecuteFetchAtIndex(appendEntry, entry)
+}
+
+// EnableInfinite turns on the infinite flag (the last ordered query is used).
+func (db *DB) EnableInfinite() {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	db.infinite = true
 }
 
 // AddExpectedExecuteFetchAtIndex inserts a new entry at index.
@@ -742,31 +711,4 @@ func (db *DB) VerifyAllExecutedOrFail() {
 	if db.expectedExecuteFetchIndex != len(db.expectedExecuteFetch) {
 		db.t.Errorf("%v: not all expected queries were executed. leftovers: %v", db.name, db.expectedExecuteFetch[db.expectedExecuteFetchIndex:])
 	}
-}
-
-func (db *DB) SetNeverFail(neverFail bool) {
-	db.neverFail = neverFail
-}
-
-func (db *DB) MockQueriesForTable(table string, result *sqltypes.Result) {
-	// pattern for selecting explicit list of columns where database is specified
-	selectQueryPattern := fmt.Sprintf("select .* from `%s`.`%s` where 1 != 1", db.name, table)
-	db.AddQueryPattern(selectQueryPattern, result)
-
-	// pattern for selecting explicit list of columns where database is not specified
-	selectQueryPattern = fmt.Sprintf("select .* from %s where 1 != 1", table)
-	db.AddQueryPattern(selectQueryPattern, result)
-
-	// mock query for returning columns from information_schema.columns based on specified result
-	var cols []string
-	for _, field := range result.Fields {
-		cols = append(cols, field.Name)
-	}
-	db.AddQueryPattern(fmt.Sprintf(mysql.GetColumnNamesQueryPatternForTable, table), sqltypes.MakeTestResult(
-		sqltypes.MakeTestFields(
-			"column_name",
-			"varchar",
-		),
-		cols...,
-	))
 }

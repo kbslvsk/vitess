@@ -100,12 +100,10 @@ func ResultToProto3(qr *Result) *querypb.QueryResult {
 		return nil
 	}
 	return &querypb.QueryResult{
-		Fields:              qr.Fields,
-		RowsAffected:        qr.RowsAffected,
-		InsertId:            qr.InsertID,
-		Rows:                RowsToProto3(qr.Rows),
-		Info:                qr.Info,
-		SessionStateChanges: qr.SessionStateChanges,
+		Fields:       qr.Fields,
+		RowsAffected: qr.RowsAffected,
+		InsertId:     qr.InsertID,
+		Rows:         RowsToProto3(qr.Rows),
 	}
 }
 
@@ -116,12 +114,10 @@ func Proto3ToResult(qr *querypb.QueryResult) *Result {
 		return nil
 	}
 	return &Result{
-		Fields:              qr.Fields,
-		RowsAffected:        qr.RowsAffected,
-		InsertID:            qr.InsertId,
-		Rows:                proto3ToRows(qr.Fields, qr.Rows),
-		Info:                qr.Info,
-		SessionStateChanges: qr.SessionStateChanges,
+		Fields:       qr.Fields,
+		RowsAffected: qr.RowsAffected,
+		InsertID:     qr.InsertId,
+		Rows:         proto3ToRows(qr.Fields, qr.Rows),
 	}
 }
 
@@ -133,12 +129,10 @@ func CustomProto3ToResult(fields []*querypb.Field, qr *querypb.QueryResult) *Res
 		return nil
 	}
 	return &Result{
-		Fields:              qr.Fields,
-		RowsAffected:        qr.RowsAffected,
-		InsertID:            qr.InsertId,
-		Rows:                proto3ToRows(fields, qr.Rows),
-		Info:                qr.Info,
-		SessionStateChanges: qr.SessionStateChanges,
+		Fields:       qr.Fields,
+		RowsAffected: qr.RowsAffected,
+		InsertID:     qr.InsertId,
+		Rows:         proto3ToRows(fields, qr.Rows),
 	}
 }
 

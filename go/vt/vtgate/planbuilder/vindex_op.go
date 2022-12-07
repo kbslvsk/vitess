@@ -22,19 +22,19 @@ import (
 	"vitess.io/vitess/go/vt/vterrors"
 	"vitess.io/vitess/go/vt/vtgate/engine"
 	"vitess.io/vitess/go/vt/vtgate/evalengine"
-	"vitess.io/vitess/go/vt/vtgate/planbuilder/operators"
 	"vitess.io/vitess/go/vt/vtgate/planbuilder/plancontext"
 
+	"vitess.io/vitess/go/vt/vtgate/planbuilder/physical"
 	"vitess.io/vitess/go/vt/vtgate/vindexes"
 )
 
-func transformVindexPlan(ctx *plancontext.PlanningContext, op *operators.Vindex) (logicalPlan, error) {
+func transformVindexPlan(ctx *plancontext.PlanningContext, op *physical.Vindex) (logicalPlan, error) {
 	single, ok := op.Vindex.(vindexes.SingleColumn)
 	if !ok {
 		return nil, vterrors.Errorf(vtrpcpb.Code_UNIMPLEMENTED, "multi-column vindexes not supported")
 	}
 
-	expr, err := evalengine.Translate(op.Value, ctx.SemTable)
+	expr, err := evalengine.Convert(op.Value, ctx.SemTable)
 	if err != nil {
 		return nil, err
 	}
@@ -52,7 +52,7 @@ func transformVindexPlan(ctx *plancontext.PlanningContext, op *operators.Vindex)
 	for _, col := range op.Columns {
 		_, err := plan.SupplyProjection(&sqlparser.AliasedExpr{
 			Expr: col,
-			As:   sqlparser.IdentifierCI{},
+			As:   sqlparser.ColIdent{},
 		}, false)
 		if err != nil {
 			return nil, err

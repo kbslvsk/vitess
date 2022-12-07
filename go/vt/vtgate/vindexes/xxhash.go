@@ -18,7 +18,6 @@ package vindexes
 
 import (
 	"bytes"
-	"context"
 	"encoding/binary"
 
 	"github.com/cespare/xxhash/v2"
@@ -64,7 +63,7 @@ func (vind *XXHash) NeedsVCursor() bool {
 }
 
 // Map can map ids to key.Destination objects.
-func (vind *XXHash) Map(ctx context.Context, vcursor VCursor, ids []sqltypes.Value) ([]key.Destination, error) {
+func (vind *XXHash) Map(_ VCursor, ids []sqltypes.Value) ([]key.Destination, error) {
 	out := make([]key.Destination, 0, len(ids))
 	for _, id := range ids {
 		ksid, err := vind.Hash(id)
@@ -77,7 +76,7 @@ func (vind *XXHash) Map(ctx context.Context, vcursor VCursor, ids []sqltypes.Val
 }
 
 // Verify returns true if ids maps to ksids.
-func (vind *XXHash) Verify(ctx context.Context, vcursor VCursor, ids []sqltypes.Value, ksids [][]byte) ([]bool, error) {
+func (vind *XXHash) Verify(_ VCursor, ids []sqltypes.Value, ksids [][]byte) ([]bool, error) {
 	out := make([]bool, 0, len(ids))
 	for i, id := range ids {
 		ksid, err := vind.Hash(id)

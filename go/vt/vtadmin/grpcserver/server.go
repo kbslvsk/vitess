@@ -22,7 +22,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -33,10 +32,8 @@ import (
 	otgrpc "github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing"
 	grpc_prometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/opentracing/opentracing-go"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/soheilhy/cmux"
 	"google.golang.org/grpc"
-	channelz "google.golang.org/grpc/channelz/service"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/reflection"
 
@@ -66,22 +63,25 @@ type Options struct {
 	// EnableTracing specifies whether to install opentracing interceptors on
 	// the gRPC server.
 	EnableTracing bool
-	// EnableChannelz specifies whether to register the channelz service on the
-	// gRPC server.
-	EnableChannelz bool
-
-	// MetricsEndpoint is the route to serve promhttp metrics on, including
-	// those collected be grpc_prometheus interceptors.
+	// Services is a list of service names to declare as SERVING in health
+	// checks. Names should be fully-qualified (package_name.service_name, e.g.
+	// vtadmin.VTAdminServer, not VTAdminServer), and must be unique for a
+	// single Server instance. Users of this package are responsible for
+	// ensuring they do not pass a list with duplicate service names.
 	//
-	// It is the user's responsibility to ensure this does not conflict with
-	// other endpoints.
+	// The service name "grpc.health.v1.Health" is reserved by this package in
+	// order to power the healthcheck service. Attempting to pass this in the
+	// Services list to a grpcserver will be ignored.
 	//
-	// Omit to not export metrics.
-	MetricsEndpoint string
+	// See https://github.com/grpc/grpc/blob/7324556353e831c57d30973db33df489c3ed3576/doc/health-checking.md
+	// for more details on healthchecking.
+	Services []string
 
 	StreamInterceptors []grpc.StreamServerInterceptor
 	UnaryInterceptors  []grpc.UnaryServerInterceptor
 }
+
+const healthServiceName = "grpc.health.v1.Health" // reserved health service name
 
 // Server provides a multiplexed gRPC/HTTP server.
 type Server struct {
@@ -100,8 +100,8 @@ type Server struct {
 // options.
 //
 // The underlying gRPC server always has the following interceptors:
-//   - prometheus
-//   - recovery: this handles recovering from panics.
+//	- prometheus
+//	- recovery: this handles recovering from panics.
 //
 // The full list of interceptors is as follows:
 // - (optional) interceptors defined on the Options struct
@@ -118,7 +118,7 @@ func New(name string, opts Options) *Server {
 		unaryInterceptors = append(unaryInterceptors, otgrpc.UnaryServerInterceptor(otgrpc.WithTracer(tracer)))
 	}
 
-	recoveryHandler := grpc_recovery.WithRecoveryHandler(func(p any) (err error) {
+	recoveryHandler := grpc_recovery.WithRecoveryHandler(func(p interface{}) (err error) {
 		return vterrors.Errorf(vtrpcpb.Code_INTERNAL, "panic triggered: %v", p)
 	})
 
@@ -136,10 +136,6 @@ func New(name string, opts Options) *Server {
 
 	healthServer := health.NewServer()
 	healthpb.RegisterHealthServer(gserv, healthServer)
-
-	if opts.EnableChannelz {
-		channelz.RegisterChannelzServiceToServer(gserv)
-	}
 
 	return &Server{
 		name:         name,
@@ -206,15 +202,6 @@ func (s *Server) ListenAndServe() error { // nolint:funlen
 		shutdown <- err
 	}()
 
-	if s.opts.MetricsEndpoint != "" {
-		if !strings.HasPrefix(s.opts.MetricsEndpoint, "/") {
-			s.opts.MetricsEndpoint = "/" + s.opts.MetricsEndpoint
-		}
-
-		grpc_prometheus.Register(s.gRPCServer)
-		s.router.Handle(s.opts.MetricsEndpoint, promhttp.Handler())
-	}
-
 	// Start the servers
 	go func() {
 		err := s.gRPCServer.Serve(grpcLis)
@@ -238,8 +225,15 @@ func (s *Server) ListenAndServe() error { // nolint:funlen
 		shutdown <- err
 	}()
 
-	for service := range s.gRPCServer.GetServiceInfo() {
-		s.healthServer.SetServingStatus(service, healthpb.HealthCheckResponse_SERVING)
+	s.healthServer.SetServingStatus(healthServiceName, healthpb.HealthCheckResponse_SERVING)
+
+	for _, name := range s.opts.Services {
+		if name == healthServiceName {
+			log.Warningf("Attempted to register a service under the reserved healthcheck service name %s; ignoring", healthServiceName)
+			continue
+		}
+
+		s.healthServer.SetServingStatus(name, healthpb.HealthCheckResponse_SERVING)
 	}
 
 	s.setServing(true)

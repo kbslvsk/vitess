@@ -46,11 +46,10 @@ func TestWebSocket(t *testing.T) {
 
 	// Start a client websocket.
 	u := url.URL{Scheme: "ws", Host: listener.Addr().String(), Path: "/workflow"}
-	c, resp, err := websocket.DefaultDialer.Dial(u.String(), nil)
+	c, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
 	if err != nil {
 		t.Fatalf("WebSocket dial failed: %v", err)
 	}
-	defer resp.Body.Close()
 
 	// Read the original full dump.
 	_, tree, err := c.ReadMessage()

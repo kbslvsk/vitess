@@ -25,8 +25,6 @@ import (
 	"text/template"
 	"time"
 
-	"vitess.io/vitess/go/vt/vtgate/logstats"
-
 	"vitess.io/vitess/go/acl"
 	"vitess.io/vitess/go/vt/log"
 	"vitess.io/vitess/go/vt/logz"
@@ -41,7 +39,6 @@ var (
 				<th>Context</th>
 				<th>Effective Caller</th>
 				<th>Immediate Caller</th>
-				<th>SessionUUID</th>
 				<th>Start</th>
 				<th>End</th>
 				<th>Duration</th>
@@ -68,7 +65,6 @@ var (
 			<td>{{.ContextHTML}}</td>
 			<td>{{.EffectiveCaller}}</td>
 			<td>{{.ImmediateCaller}}</td>
-			<td>{{.SessionUUID}}</td>
 			<td>{{.StartTime | stampMicro}}</td>
 			<td>{{.EndTime | stampMicro}}</td>
 			<td>{{.TotalTime.Seconds}}</td>
@@ -86,7 +82,7 @@ var (
 
 // querylogzHandler serves a human readable snapshot of the
 // current query log.
-func querylogzHandler(ch chan any, w http.ResponseWriter, r *http.Request) {
+func querylogzHandler(ch chan interface{}, w http.ResponseWriter, r *http.Request) {
 	if err := acl.CheckAccessHTTP(r, acl.DEBUGGING); err != nil {
 		acl.SendError(w, err)
 		return
@@ -106,9 +102,9 @@ func querylogzHandler(ch chan any, w http.ResponseWriter, r *http.Request) {
 				return
 			default:
 			}
-			stats, ok := out.(*logstats.LogStats)
+			stats, ok := out.(*LogStats)
 			if !ok {
-				err := fmt.Errorf("unexpected value in %s: %#v (expecting value of type %T)", QueryLogger.Name(), out, &logstats.LogStats{})
+				err := fmt.Errorf("unexpected value in %s: %#v (expecting value of type %T)", QueryLogger.Name(), out, &LogStats{})
 				_, _ = io.WriteString(w, `<tr class="error">`)
 				_, _ = io.WriteString(w, err.Error())
 				_, _ = io.WriteString(w, "</tr>")
@@ -124,7 +120,7 @@ func querylogzHandler(ch chan any, w http.ResponseWriter, r *http.Request) {
 				level = "high"
 			}
 			tmplData := struct {
-				*logstats.LogStats
+				*LogStats
 				ColorLevel string
 			}{stats, level}
 			if err := querylogzTmpl.Execute(w, tmplData); err != nil {

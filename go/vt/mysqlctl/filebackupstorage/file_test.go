@@ -17,9 +17,11 @@ limitations under the License.
 package filebackupstorage
 
 import (
-	"context"
 	"io"
+	"os"
 	"testing"
+
+	"context"
 )
 
 // This file tests the file BackupStorage engine.
@@ -32,12 +34,22 @@ import (
 // setupFileBackupStorage creates a temporary directory, and
 // returns a FileBackupStorage based on it
 func setupFileBackupStorage(t *testing.T) *FileBackupStorage {
-	FileBackupStorageRoot = t.TempDir()
+	root, err := os.MkdirTemp("", "fbstest")
+	if err != nil {
+		t.Fatalf("os.TempDir failed: %v", err)
+	}
+	*FileBackupStorageRoot = root
 	return &FileBackupStorage{}
+}
+
+// cleanupFileBackupStorage removes the entire directory
+func cleanupFileBackupStorage(fbs *FileBackupStorage) {
+	os.RemoveAll(*FileBackupStorageRoot)
 }
 
 func TestListBackups(t *testing.T) {
 	fbs := setupFileBackupStorage(t)
+	defer cleanupFileBackupStorage(fbs)
 	ctx := context.Background()
 
 	// verify we have no entry now
@@ -140,6 +152,7 @@ func TestListBackups(t *testing.T) {
 
 func TestFileContents(t *testing.T) {
 	fbs := setupFileBackupStorage(t)
+	defer cleanupFileBackupStorage(fbs)
 	ctx := context.Background()
 
 	dir := "keyspace/shard"

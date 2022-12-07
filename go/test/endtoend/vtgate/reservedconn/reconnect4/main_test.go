@@ -22,8 +22,6 @@ import (
 	"os"
 	"testing"
 
-	"vitess.io/vitess/go/test/endtoend/utils"
-
 	"github.com/stretchr/testify/require"
 
 	"vitess.io/vitess/go/mysql"
@@ -39,55 +37,41 @@ var (
 	sqlSchema       = `create table test(id bigint primary key)Engine=InnoDB;`
 )
 
-var enableSettingsPool bool
-
 func TestMain(m *testing.M) {
 	defer cluster.PanicHandler(nil)
 	flag.Parse()
 
-	code := runAllTests(m)
-	if code != 0 {
-		os.Exit(code)
-	}
+	exitCode := func() int {
+		clusterInstance = cluster.NewCluster(cell, hostname)
+		defer clusterInstance.Teardown()
 
-	println("running with settings pool enabled")
-	// run again with settings pool enabled.
-	enableSettingsPool = true
-	code = runAllTests(m)
-	os.Exit(code)
-}
+		// Start topo server
+		if err := clusterInstance.StartTopo(); err != nil {
+			return 1
+		}
 
-func runAllTests(m *testing.M) int {
-	clusterInstance = cluster.NewCluster(cell, hostname)
-	defer clusterInstance.Teardown()
+		// Start keyspace
+		keyspace := &cluster.Keyspace{
+			Name:      keyspaceName,
+			SchemaSQL: sqlSchema,
+		}
+		if err := clusterInstance.StartUnshardedKeyspace(*keyspace, 2, false); err != nil {
+			return 1
+		}
 
-	// Start topo server
-	if err := clusterInstance.StartTopo(); err != nil {
-		return 1
-	}
+		// Start vtgate
+		clusterInstance.VtGateExtraArgs = []string{"--enable_system_settings=true"}
+		if err := clusterInstance.StartVtgate(); err != nil {
+			return 1
+		}
 
-	// Start keyspace
-	keyspace := &cluster.Keyspace{
-		Name:      keyspaceName,
-		SchemaSQL: sqlSchema,
-	}
-	if enableSettingsPool {
-		clusterInstance.VtTabletExtraArgs = append(clusterInstance.VtTabletExtraArgs, "--queryserver-enable-settings-pool")
-	}
-	if err := clusterInstance.StartUnshardedKeyspace(*keyspace, 2, false); err != nil {
-		return 1
-	}
-
-	// Start vtgate
-	if err := clusterInstance.StartVtgate(); err != nil {
-		return 1
-	}
-
-	vtParams = mysql.ConnParams{
-		Host: clusterInstance.Hostname,
-		Port: clusterInstance.VtgateMySQLPort,
-	}
-	return m.Run()
+		vtParams = mysql.ConnParams{
+			Host: clusterInstance.Hostname,
+			Port: clusterInstance.VtgateMySQLPort,
+		}
+		return m.Run()
+	}()
+	os.Exit(exitCode)
 }
 
 func TestVttabletDownServingChange(t *testing.T) {
@@ -95,8 +79,10 @@ func TestVttabletDownServingChange(t *testing.T) {
 	require.NoError(t, err)
 	defer conn.Close()
 
-	utils.Exec(t, conn, "set default_week_format = 1")
-	_ = utils.Exec(t, conn, "select /*vt+ PLANNER=gen4 */ * from test")
+	_, err = conn.ExecuteFetch("set default_week_format = 1", 5, false)
+	require.NoError(t, err)
+	_, err = conn.ExecuteFetch("select /*vt+ PLANNER=gen4 */ * from test", 5, false)
+	require.NoError(t, err)
 
 	primaryTablet := clusterInstance.Keyspaces[0].Shards[0].PrimaryTablet()
 	require.NoError(t,
@@ -104,8 +90,9 @@ func TestVttabletDownServingChange(t *testing.T) {
 	// kill vttablet process
 	_ = primaryTablet.VttabletProcess.TearDown()
 	require.NoError(t,
-		clusterInstance.VtctlclientProcess.ExecuteCommand("EmergencyReparentShard", "--", "--keyspace_shard", "ks/0"))
+		clusterInstance.VtctlclientProcess.ExecuteCommand("EmergencyReparentShard", "-keyspace_shard", "ks/0"))
 
 	// This should work without any error.
-	_ = utils.Exec(t, conn, "select /*vt+ PLANNER=gen4 */ * from test")
+	_, err = conn.ExecuteFetch("select /*vt+ PLANNER=gen4 */ * from test", 5, false)
+	require.NoError(t, err)
 }

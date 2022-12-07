@@ -1,1 +1,1 @@
-Foreign key found
+foreign key constraints are not supported in online DDL

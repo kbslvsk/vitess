@@ -33,26 +33,25 @@ time (using helpers/tee.go). This is to facilitate migrations between
 topo servers.
 
 There are two test sub-packages associated with this code:
-  - test/ contains a test suite that is run against all of our implementations.
-    It just performs a bunch of common topo server activities (create, list,
-    delete various objects, ...). If a topo implementation passes all these
-    tests, it most likely will work as expected in a real deployment.
-  - topotests/ contains tests that use a memorytopo to test the code in this
-    package.
+- test/ contains a test suite that is run against all of our implementations.
+  It just performs a bunch of common topo server activities (create, list,
+  delete various objects, ...). If a topo implementation passes all these
+  tests, it most likely will work as expected in a real deployment.
+- topotests/ contains tests that use a memorytopo to test the code in this
+  package.
 */
 package topo
 
 import (
-	"context"
+	"flag"
 	"fmt"
 	"sync"
 
-	"github.com/spf13/pflag"
+	"context"
+
+	"vitess.io/vitess/go/vt/vterrors"
 
 	"vitess.io/vitess/go/vt/log"
-	"vitess.io/vitess/go/vt/proto/topodata"
-	"vitess.io/vitess/go/vt/servenv"
-	"vitess.io/vitess/go/vt/vterrors"
 )
 
 const (
@@ -67,28 +66,29 @@ const (
 
 // Filenames for all object types.
 const (
-	CellInfoFile          = "CellInfo"
-	CellsAliasFile        = "CellsAlias"
-	KeyspaceFile          = "Keyspace"
-	ShardFile             = "Shard"
-	VSchemaFile           = "VSchema"
-	ShardReplicationFile  = "ShardReplication"
-	TabletFile            = "Tablet"
-	SrvVSchemaFile        = "SrvVSchema"
-	SrvKeyspaceFile       = "SrvKeyspace"
-	RoutingRulesFile      = "RoutingRules"
-	ExternalClustersFile  = "ExternalClusters"
-	ShardRoutingRulesFile = "ShardRoutingRules"
+	CellInfoFile         = "CellInfo"
+	CellsAliasFile       = "CellsAlias"
+	KeyspaceFile         = "Keyspace"
+	ShardFile            = "Shard"
+	VSchemaFile          = "VSchema"
+	ShardReplicationFile = "ShardReplication"
+	TabletFile           = "Tablet"
+	SrvVSchemaFile       = "SrvVSchema"
+	SrvKeyspaceFile      = "SrvKeyspace"
+	RoutingRulesFile     = "RoutingRules"
+	ExternalClustersFile = "ExternalClusters"
 )
 
 // Path for all object types.
 const (
-	CellsPath             = "cells"
-	CellsAliasesPath      = "cells_aliases"
-	KeyspacesPath         = "keyspaces"
-	ShardsPath            = "shards"
-	TabletsPath           = "tablets"
-	MetadataPath          = "metadata"
+	CellsPath        = "cells"
+	CellsAliasesPath = "cells_aliases"
+	KeyspacesPath    = "keyspaces"
+	ShardsPath       = "shards"
+	TabletsPath      = "tablets"
+	MetadataPath     = "metadata"
+
+	ExternalClusterMySQL  = "mysql"
 	ExternalClusterVitess = "vitess"
 )
 
@@ -111,14 +111,14 @@ type Factory interface {
 }
 
 // Server is the main topo.Server object. We support two ways of creating one:
-//  1. From an implementation, server address, and root path.
-//     This uses a plugin mechanism, and we have implementations for
-//     etcd, zookeeper and consul.
-//  2. Specific implementations may have higher level creation methods
-//     (in which case they may provide a more complex Factory).
-//     We support memorytopo (for tests and processes that only need an
-//     in-memory server), and tee (a helper implementation to transition
-//     between one server implementation and another).
+// 1. From an implementation, server address, and root path.
+//    This uses a plugin mechanism, and we have implementations for
+//    etcd, zookeeper and consul.
+// 2. Specific implementations may have higher level creation methods
+//    (in which case they may provide a more complex Factory).
+//    We support memorytopo (for tests and processes that only need an
+//    in-memory server), and tee (a helper implementation to transition
+//    between one server implementation and another).
 type Server struct {
 	// globalCell is the main connection to the global topo service.
 	// It is created once at construction time.
@@ -135,17 +135,12 @@ type Server struct {
 
 	// mu protects the following fields.
 	mu sync.Mutex
-	// cellConns contains clients configured to talk to a list of
+	// cells contains clients configured to talk to a list of
 	// topo instances representing local topo clusters. These
 	// should be accessed with the ConnForCell() method, which
 	// will read the list of addresses for that cell from the
 	// global cluster and create clients as needed.
-	cellConns map[string]cellConn
-}
-
-type cellConn struct {
-	cellInfo *topodata.CellInfo
-	conn     Conn
+	cells map[string]Conn
 }
 
 type cellsToAliasesMap struct {
@@ -156,15 +151,15 @@ type cellsToAliasesMap struct {
 
 var (
 	// topoImplementation is the flag for which implementation to use.
-	topoImplementation string
+	topoImplementation = flag.String("topo_implementation", "", "the topology implementation to use")
 
 	// topoGlobalServerAddress is the address of the global topology
 	// server.
-	topoGlobalServerAddress string
+	topoGlobalServerAddress = flag.String("topo_global_server_address", "", "the address of the global topology server")
 
 	// topoGlobalRoot is the root path to use for the global topology
 	// server.
-	topoGlobalRoot string
+	topoGlobalRoot = flag.String("topo_global_root", "", "the path of the global topology data in the global topology server")
 
 	// factories has the factories for the Conn objects.
 	factories = make(map[string]Factory)
@@ -172,22 +167,7 @@ var (
 	cellsAliases = cellsToAliasesMap{
 		cellsToAliases: make(map[string]string),
 	}
-
-	FlagBinaries = []string{"vttablet", "vtctl", "vtctld", "vtcombo", "vtgate",
-		"vtgr", "vtorc", "vtbackup"}
 )
-
-func init() {
-	for _, cmd := range FlagBinaries {
-		servenv.OnParseFor(cmd, registerTopoFlags)
-	}
-}
-
-func registerTopoFlags(fs *pflag.FlagSet) {
-	fs.StringVar(&topoImplementation, "topo_implementation", topoImplementation, "the topology implementation to use")
-	fs.StringVar(&topoGlobalServerAddress, "topo_global_server_address", topoGlobalServerAddress, "the address of the global topology server")
-	fs.StringVar(&topoGlobalRoot, "topo_global_root", topoGlobalRoot, "the path of the global topology data in the global topology server")
-}
 
 // RegisterFactory registers a Factory for an implementation for a Server.
 // If an implementation with that name already exists, it log.Fatals out.
@@ -223,7 +203,7 @@ func NewWithFactory(factory Factory, serverAddress, root string) (*Server, error
 		globalCell:         conn,
 		globalReadOnlyCell: connReadOnly,
 		factory:            factory,
-		cellConns:          make(map[string]cellConn),
+		cells:              make(map[string]Conn),
 	}, nil
 }
 
@@ -240,15 +220,15 @@ func OpenServer(implementation, serverAddress, root string) (*Server, error) {
 // Open returns a Server using the command line parameter flags
 // for implementation, address and root. It log.Exits out if an error occurs.
 func Open() *Server {
-	if topoGlobalServerAddress == "" && topoImplementation != "k8s" {
+	if *topoGlobalServerAddress == "" && *topoImplementation != "k8s" {
 		log.Exitf("topo_global_server_address must be configured")
 	}
-	if topoGlobalRoot == "" {
+	if *topoGlobalRoot == "" {
 		log.Exit("topo_global_root must be non-empty")
 	}
-	ts, err := OpenServer(topoImplementation, topoGlobalServerAddress, topoGlobalRoot)
+	ts, err := OpenServer(*topoImplementation, *topoGlobalServerAddress, *topoGlobalRoot)
 	if err != nil {
-		log.Exitf("Failed to open topo server (%v,%v,%v): %v", topoImplementation, topoGlobalServerAddress, topoGlobalRoot, err)
+		log.Exitf("Failed to open topo server (%v,%v,%v): %v", *topoImplementation, *topoGlobalServerAddress, *topoGlobalRoot, err)
 	}
 	return ts
 }
@@ -258,45 +238,42 @@ func Open() *Server {
 func (ts *Server) ConnForCell(ctx context.Context, cell string) (Conn, error) {
 	// Global cell is the easy case.
 	if cell == GlobalCell {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
 		return ts.globalCell, nil
 	}
 
+	// Return a cached client if present.
+	ts.mu.Lock()
+	conn, ok := ts.cells[cell]
+	ts.mu.Unlock()
+	if ok {
+		return conn, nil
+	}
+
 	// Fetch cell cluster addresses from the global cluster.
+	// These can proceed concurrently (we've released the lock).
 	// We can use the GlobalReadOnlyCell for this call.
 	ci, err := ts.GetCellInfo(ctx, cell, false /*strongRead*/)
 	if err != nil {
 		return nil, err
 	}
 
-	// Return a cached client if present.
-	ts.mu.Lock()
-	defer ts.mu.Unlock()
-	cc, ok := ts.cellConns[cell]
-	if ok {
-		// Client exists in cache.
-		// Let's verify that it is the same cell as we are looking for.
-		// The cell name can be re-used with a different ServerAddress and/or Root
-		// in which case we should get a new connection and update the cache
-		if ci.ServerAddress == cc.cellInfo.ServerAddress && ci.Root == cc.cellInfo.Root {
-			return cc.conn, nil
-		}
-		// Close the cached connection, we don't need it anymore
-		if cc.conn != nil {
-			cc.conn.Close()
-		}
-	}
-
 	// Connect to the cell topo server, while holding the lock.
 	// This ensures only one connection is established at any given time.
-	// Create the connection and cache it
-	conn, err := ts.factory.Create(cell, ci.ServerAddress, ci.Root)
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+
+	// Check if another goroutine beat us to creating a client for
+	// this cell.
+	if conn, ok = ts.cells[cell]; ok {
+		return conn, nil
+	}
+
+	// Create the connection.
+	conn, err = ts.factory.Create(cell, ci.ServerAddress, ci.Root)
 	switch {
 	case err == nil:
 		conn = NewStatsConn(cell, conn)
-		ts.cellConns[cell] = cellConn{ci, conn}
+		ts.cells[cell] = conn
 		return conn, nil
 	case IsErrType(err, NoNode):
 		err = vterrors.Wrap(err, fmt.Sprintf("failed to create topo connection to %v, %v", ci.ServerAddress, ci.Root))
@@ -345,10 +322,10 @@ func (ts *Server) Close() {
 	ts.globalReadOnlyCell = nil
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
-	for _, cc := range ts.cellConns {
-		cc.conn.Close()
+	for _, conn := range ts.cells {
+		conn.Close()
 	}
-	ts.cellConns = make(map[string]cellConn)
+	ts.cells = make(map[string]Conn)
 }
 
 func (ts *Server) clearCellAliasesCache() {
@@ -385,10 +362,10 @@ func (ts *Server) SetReadOnly(readOnly bool) error {
 	}
 	globalCellConn.SetReadOnly(readOnly)
 
-	for _, cc := range ts.cellConns {
-		localCellConn, ok := cc.conn.(*StatsConn)
+	for _, conn := range ts.cells {
+		localCellConn, ok := conn.(*StatsConn)
 		if !ok {
-			return fmt.Errorf("invalid local cell connection type, expected StatsConn but found: %T", cc.conn)
+			return fmt.Errorf("invalid local cell connection type, expected StatsConn but found: %T", conn)
 		}
 		localCellConn.SetReadOnly(true)
 	}
@@ -406,10 +383,10 @@ func (ts *Server) IsReadOnly() (bool, error) {
 		return false, nil
 	}
 
-	for _, cc := range ts.cellConns {
-		localCellConn, ok := cc.conn.(*StatsConn)
+	for _, conn := range ts.cells {
+		localCellConn, ok := conn.(*StatsConn)
 		if !ok {
-			return false, fmt.Errorf("invalid local cell connection type, expected StatsConn but found: %T", cc.conn)
+			return false, fmt.Errorf("invalid local cell connection type, expected StatsConn but found: %T", conn)
 		}
 		if !localCellConn.IsReadOnly() {
 			return false, nil

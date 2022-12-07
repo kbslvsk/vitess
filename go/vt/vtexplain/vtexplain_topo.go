@@ -105,6 +105,11 @@ func (et *ExplainTopo) GetSrvKeyspace(ctx context.Context, cell, keyspace string
 		},
 	}
 
+	if vschema.Sharded {
+		srvKeyspace.ShardingColumnName = "" // exact value is ignored
+		srvKeyspace.ShardingColumnType = 0
+	}
+
 	return srvKeyspace, nil
 }
 

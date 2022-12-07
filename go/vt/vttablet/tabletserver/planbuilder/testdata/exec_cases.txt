@@ -13,6 +13,7 @@
       "Role": 0
     }
   ],
+  "FieldQuery": "select * from a where 1 != 1 union select * from b where 1 != 1",
   "FullQuery": "select * from a union select * from b limit :#maxLimit"
 }
 
@@ -31,6 +32,7 @@
       "Role": 0
     }
   ],
+  "FieldQuery": "select * from a where 1 != 1 union select * from b where 1 != 1",
   "FullQuery": "select * from a union select * from b limit 10"
 }
 
@@ -45,6 +47,7 @@
       "Role": 0
     }
   ],
+  "FieldQuery": "select * from a where 1 != 1",
   "FullQuery": "select * from a limit :#maxLimit"
 }
 
@@ -59,6 +62,7 @@
       "Role": 0
     }
   ],
+  "FieldQuery": "select * from a where 1 != 1",
   "FullQuery": "select * from a where id = 1 limit :#maxLimit"
 }
 
@@ -73,6 +77,7 @@
       "Role": 0
     }
   ],
+  "FieldQuery": "select * from a where 1 != 1",
   "FullQuery": "select * from a limit 5"
 }
 
@@ -87,6 +92,7 @@
       "Role": 0
     }
   ],
+  "FieldQuery": "select * from a where 1 != 1",
   "FullQuery": "select * from a limit 10, 5"
 }
 
@@ -101,6 +107,7 @@
       "Role": 0
     }
   ],
+  "FieldQuery": "select * from a where 1 != 1",
   "FullQuery": "select * from a where 1 != 1 limit :#maxLimit"
 }
 
@@ -208,6 +215,7 @@
       "Role": 0
     }
   ],
+  "FieldQuery": "select eid from a where 1 != 1",
   "FullQuery": "select eid from a limit :#maxLimit for update"
 }
 
@@ -222,6 +230,7 @@
       "Role": 0
     }
   ],
+  "FieldQuery": "select eid from a where 1 != 1",
   "FullQuery": "select eid from a limit :#maxLimit lock in share mode"
 }
 
@@ -952,20 +961,5 @@ options:PassthroughDMLs
       "Role": 2
     }
   ],
-  "FullQuery": "create table function_default (\n\tx varchar(25) default (trim(' check '))\n)"
-}
-
-# temporary table
-"create temporary table temp(a int)"
-{
-  "PlanID": "DDL",
-  "TableName": "",
-  "Permissions": [
-    {
-      "TableName": "temp",
-      "Role": 2
-    }
-  ],
-  "FullQuery": "create temporary table temp (\n\ta int\n)",
-  "NeedsReservedConn": true
+  "FullQuery": "create table function_default (\n\tx varchar(25) default (TRIM(' check '))\n)"
 }

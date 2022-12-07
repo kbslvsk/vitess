@@ -17,6 +17,7 @@ limitations under the License.
 package semantics
 
 import (
+	"vitess.io/vitess/go/vt/key"
 	vtrpcpb "vitess.io/vitess/go/vt/proto/vtrpc"
 	"vitess.io/vitess/go/vt/sqlparser"
 	"vitess.io/vitess/go/vt/vterrors"
@@ -89,9 +90,13 @@ func (tc *tableCollector) up(cursor *sqlparser.Cursor) error {
 			isInfSchema = true
 		} else {
 			var err error
-			tbl, vindex, _, _, _, err = tc.si.FindTableOrVindex(t)
+			var target key.Destination
+			tbl, vindex, _, _, target, err = tc.si.FindTableOrVindex(t)
 			if err != nil {
 				return err
+			}
+			if target != nil {
+				return vterrors.Errorf(vtrpcpb.Code_UNIMPLEMENTED, "unsupported: SELECT with a target destination")
 			}
 			if tbl == nil && vindex != nil {
 				tbl = newVindexTable(t.Name)
@@ -106,14 +111,14 @@ func (tc *tableCollector) up(cursor *sqlparser.Cursor) error {
 	return nil
 }
 
-func newVindexTable(t sqlparser.IdentifierCS) *vindexes.Table {
+func newVindexTable(t sqlparser.TableIdent) *vindexes.Table {
 	vindexCols := []vindexes.Column{
-		{Name: sqlparser.NewIdentifierCI("id")},
-		{Name: sqlparser.NewIdentifierCI("keyspace_id")},
-		{Name: sqlparser.NewIdentifierCI("range_start")},
-		{Name: sqlparser.NewIdentifierCI("range_end")},
-		{Name: sqlparser.NewIdentifierCI("hex_keyspace_id")},
-		{Name: sqlparser.NewIdentifierCI("shard")},
+		{Name: sqlparser.NewColIdent("id")},
+		{Name: sqlparser.NewColIdent("keyspace_id")},
+		{Name: sqlparser.NewColIdent("range_start")},
+		{Name: sqlparser.NewColIdent("range_end")},
+		{Name: sqlparser.NewColIdent("hex_keyspace_id")},
+		{Name: sqlparser.NewColIdent("shard")},
 	}
 
 	return &vindexes.Table{
@@ -132,15 +137,6 @@ func (tc *tableCollector) tableSetFor(t *sqlparser.AliasedTableExpr) TableSet {
 		}
 	}
 	panic("unknown table")
-}
-
-// tableInfoFor returns the table info for the table set. It should contains only single table.
-func (tc *tableCollector) tableInfoFor(id TableSet) (TableInfo, error) {
-	offset := id.TableOffset()
-	if offset < 0 {
-		return nil, ErrMultipleTables
-	}
-	return tc.Tables[offset], nil
 }
 
 func (tc *tableCollector) createTable(

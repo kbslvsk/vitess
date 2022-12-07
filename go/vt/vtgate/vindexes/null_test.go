@@ -17,7 +17,6 @@ limitations under the License.
 package vindexes
 
 import (
-	"context"
 	"reflect"
 	"testing"
 
@@ -46,7 +45,7 @@ func TestNullInfo(t *testing.T) {
 }
 
 func TestNullMap(t *testing.T) {
-	got, err := null.Map(context.Background(), nil, []sqltypes.Value{
+	got, err := null.Map(nil, []sqltypes.Value{
 		sqltypes.NewInt64(1),
 		sqltypes.NewInt64(2),
 		sqltypes.NewInt64(3),
@@ -75,7 +74,7 @@ func TestNullMap(t *testing.T) {
 func TestNullVerify(t *testing.T) {
 	ids := []sqltypes.Value{sqltypes.NewInt64(1), sqltypes.NewInt64(2)}
 	ksids := [][]byte{{0}, {1}}
-	got, err := null.Verify(context.Background(), nil, ids, ksids)
+	got, err := null.Verify(nil, ids, ksids)
 	if err != nil {
 		t.Fatal(err)
 	}

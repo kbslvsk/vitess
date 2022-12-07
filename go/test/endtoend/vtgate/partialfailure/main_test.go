@@ -22,9 +22,9 @@ import (
 	"os"
 	"testing"
 
-	"vitess.io/vitess/go/test/endtoend/utils"
-
 	"github.com/stretchr/testify/require"
+
+	"vitess.io/vitess/go/test/endtoend/vtgate/utils"
 
 	"vitess.io/vitess/go/mysql"
 	"vitess.io/vitess/go/test/endtoend/cluster"
@@ -124,11 +124,15 @@ func TestMain(m *testing.M) {
 		}
 
 		// Start vtgate
-		clusterInstance.VtGateExtraArgs = append(clusterInstance.VtGateExtraArgs, "--planner-version", "Gen4Fallback")
+		clusterInstance.VtGateExtraArgs = append(clusterInstance.VtGateExtraArgs, "-planner_version", "Gen4Fallback")
 		if err := clusterInstance.StartVtgate(); err != nil {
 			return 1
 		}
-		vtParams = clusterInstance.GetVTParams(keyspaceName)
+
+		vtParams = mysql.ConnParams{
+			Host: clusterInstance.Hostname,
+			Port: clusterInstance.VtgateMySQLPort,
+		}
 		return m.Run()
 	}()
 	os.Exit(exitCode)

@@ -17,15 +17,12 @@ limitations under the License.
 package tabletserver
 
 import (
+	"flag"
 	"fmt"
 	"io"
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/spf13/pflag"
-
-	"vitess.io/vitess/go/vt/servenv"
 
 	"vitess.io/vitess/go/sqltypes"
 
@@ -59,17 +56,8 @@ var (
 
 	errUnintialized = "tabletserver uninitialized"
 
-	streamHealthBufferSize = uint(20)
+	streamHealthBufferSize = flag.Uint("stream_health_buffer_size", 20, "max streaming health entries to buffer per streaming health client")
 )
-
-func init() {
-	servenv.OnParseFor("vtcombo", registerHealthStreamerFlags)
-	servenv.OnParseFor("vttablet", registerHealthStreamerFlags)
-}
-
-func registerHealthStreamerFlags(fs *pflag.FlagSet) {
-	fs.UintVar(&streamHealthBufferSize, "stream_health_buffer_size", streamHealthBufferSize, "max streaming health entries to buffer per streaming health client")
-}
 
 // healthStreamer streams health information to callers.
 type healthStreamer struct {
@@ -205,7 +193,7 @@ func (hs *healthStreamer) register() (chan *querypb.StreamHealthResponse, contex
 		return nil, nil
 	}
 
-	ch := make(chan *querypb.StreamHealthResponse, streamHealthBufferSize)
+	ch := make(chan *querypb.StreamHealthResponse, *streamHealthBufferSize)
 	hs.clients[ch] = struct{}{}
 
 	// Send the current state immediately.
@@ -331,7 +319,7 @@ func (hs *healthStreamer) reload() error {
 	}
 
 	ctx := hs.ctx
-	conn, err := hs.conns.Get(ctx, nil)
+	conn, err := hs.conns.Get(ctx)
 	if err != nil {
 		return err
 	}

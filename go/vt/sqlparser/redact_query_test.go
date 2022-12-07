@@ -18,8 +18,6 @@ package sqlparser
 
 import (
 	"testing"
-
-	"github.com/stretchr/testify/require"
 )
 
 func TestRedactSQLStatements(t *testing.T) {
@@ -29,5 +27,7 @@ func TestRedactSQLStatements(t *testing.T) {
 		t.Fatalf("redacting sql failed: %v", err)
 	}
 
-	require.Equal(t, "select a, b, c from t where x = :x and y = :x and z = :z", redactedSQL)
+	if redactedSQL != "select a, b, c from t where x = :redacted1 and y = :redacted1 and z = :redacted2" {
+		t.Fatalf("Unknown sql redaction: %v", redactedSQL)
+	}
 }

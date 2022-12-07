@@ -76,14 +76,14 @@ func TestGenerateQuery(t *testing.T) {
 			desc:  "tuple *querypb.BindVariable",
 			query: "select * from a where id in ::vals",
 			bindVars: map[string]*querypb.BindVariable{
-				"vals": sqltypes.TestBindVariable([]any{1, "aa"}),
+				"vals": sqltypes.TestBindVariable([]interface{}{1, "aa"}),
 			},
 			output: "select * from a where id in (1, 'aa')",
 		}, {
 			desc:  "list bind vars 0 arguments",
 			query: "select * from a where id in ::vals",
 			bindVars: map[string]*querypb.BindVariable{
-				"vals": sqltypes.TestBindVariable([]any{}),
+				"vals": sqltypes.TestBindVariable([]interface{}{}),
 			},
 			output: "empty list supplied for vals",
 		}, {
@@ -97,7 +97,7 @@ func TestGenerateQuery(t *testing.T) {
 			desc:  "list bind var for non-list",
 			query: "select * from a where id = :vals",
 			bindVars: map[string]*querypb.BindVariable{
-				"vals": sqltypes.TestBindVariable([]any{1}),
+				"vals": sqltypes.TestBindVariable([]interface{}{1}),
 			},
 			output: "unexpected arg type (TUPLE) for non-list key vals",
 		}, {
@@ -105,7 +105,7 @@ func TestGenerateQuery(t *testing.T) {
 			query: "select * from a where b = :equality",
 			extras: map[string]Encodable{
 				"equality": &TupleEqualityList{
-					Columns: []IdentifierCI{NewIdentifierCI("pk")},
+					Columns: []ColIdent{NewColIdent("pk")},
 					Rows: [][]sqltypes.Value{
 						{sqltypes.NewInt64(1)},
 						{sqltypes.NewVarBinary("aa")},
@@ -118,7 +118,7 @@ func TestGenerateQuery(t *testing.T) {
 			query: "select * from a where b = :equality",
 			extras: map[string]Encodable{
 				"equality": &TupleEqualityList{
-					Columns: []IdentifierCI{NewIdentifierCI("pk1"), NewIdentifierCI("pk2")},
+					Columns: []ColIdent{NewColIdent("pk1"), NewColIdent("pk2")},
 					Rows: [][]sqltypes.Value{
 						{
 							sqltypes.NewInt64(1),

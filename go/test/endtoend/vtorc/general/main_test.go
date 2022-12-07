@@ -25,15 +25,15 @@ import (
 	"vitess.io/vitess/go/test/endtoend/vtorc/utils"
 )
 
-var clusterInfo *utils.VTOrcClusterInfo
+var clusterInfo *utils.VtOrcClusterInfo
 
 func TestMain(m *testing.M) {
 	// setup cellInfos before creating the cluster
 	var cellInfos []*utils.CellInfo
 	cellInfos = append(cellInfos, &utils.CellInfo{
 		CellName:    utils.Cell1,
-		NumReplicas: 4,
-		NumRdonly:   1,
+		NumReplicas: 6,
+		NumRdonly:   2,
 		UIDBase:     100,
 	})
 
@@ -52,8 +52,8 @@ func TestMain(m *testing.M) {
 	if clusterInfo != nil {
 		// stop vtorc first otherwise its logs get polluted
 		// with instances being unreachable triggering unnecessary operations
-		for _, vtorcProcess := range clusterInfo.ClusterInstance.VTOrcProcesses {
-			_ = vtorcProcess.TearDown()
+		if clusterInfo.ClusterInstance.VtorcProcess != nil {
+			_ = clusterInfo.ClusterInstance.VtorcProcess.TearDown()
 		}
 
 		for _, cellInfo := range clusterInfo.CellInfos {

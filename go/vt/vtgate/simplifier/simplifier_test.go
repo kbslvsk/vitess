@@ -74,7 +74,7 @@ func TestAbortExpressionCursor(t *testing.T) {
 		cursor.replace(sqlparser.NewIntLiteral("1"))
 		fmt.Println(sqlparser.String(ast))
 		cursor.replace(cursor.expr)
-		_, isFunc := cursor.expr.(sqlparser.AggrFunc)
+		_, isFunc := cursor.expr.(*sqlparser.FuncExpr)
 		return !isFunc
 	})
 }
@@ -111,7 +111,7 @@ func TestSimplifyEvalEngineExpr(t *testing.T) {
 	p0 := plus(p11, p12)
 
 	expr := SimplifyExpr(p0, func(expr sqlparser.Expr) bool {
-		local, err := evalengine.TranslateEx(expr, nil, true)
+		local, err := evalengine.ConvertEx(expr, nil, true)
 		if err != nil {
 			return false
 		}

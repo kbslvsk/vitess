@@ -18,6 +18,7 @@ package withddl
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
 	"testing"
@@ -29,7 +30,6 @@ import (
 	"vitess.io/vitess/go/sqltypes"
 	vttestpb "vitess.io/vitess/go/vt/proto/vttest"
 	"vitess.io/vitess/go/vt/vttablet/tabletserver/tabletenv"
-	"vitess.io/vitess/go/vt/vttablet/tabletserver/tabletenv/tabletenvtest"
 	"vitess.io/vitess/go/vt/vttest"
 )
 
@@ -155,7 +155,7 @@ func TestExec(t *testing.T) {
 
 	funcs := []struct {
 		name string
-		f    any
+		f    interface{}
 	}{{
 		name: "f1",
 		f: func(query string) (*sqltypes.Result, error) {
@@ -275,7 +275,7 @@ func checkResult(t *testing.T, wantqr *sqltypes.Result, wanterr string, qr *sqlt
 }
 
 func TestMain(m *testing.M) {
-	tabletenvtest.LoadTabletEnvFlags()
+	flag.Parse() // Do not remove this comment, import into google3 depends on it
 	tabletenv.Init()
 
 	exitCode := func() int {

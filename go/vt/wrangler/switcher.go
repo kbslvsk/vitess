@@ -40,10 +40,6 @@ func (r *switcher) deleteRoutingRules(ctx context.Context) error {
 	return r.ts.deleteRoutingRules(ctx)
 }
 
-func (r *switcher) deleteShardRoutingRules(ctx context.Context) error {
-	return r.ts.deleteShardRoutingRules(ctx)
-}
-
 func (r *switcher) dropSourceDeniedTables(ctx context.Context) error {
 	return r.ts.dropSourceDeniedTables(ctx)
 }

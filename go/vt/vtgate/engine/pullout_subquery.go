@@ -17,7 +17,6 @@ limitations under the License.
 package engine
 
 import (
-	"context"
 	"fmt"
 
 	"vitess.io/vitess/go/sqltypes"
@@ -63,25 +62,25 @@ func (ps *PulloutSubquery) GetTableName() string {
 }
 
 // TryExecute satisfies the Primitive interface.
-func (ps *PulloutSubquery) TryExecute(ctx context.Context, vcursor VCursor, bindVars map[string]*querypb.BindVariable, wantfields bool) (*sqltypes.Result, error) {
-	combinedVars, err := ps.execSubquery(ctx, vcursor, bindVars)
+func (ps *PulloutSubquery) TryExecute(vcursor VCursor, bindVars map[string]*querypb.BindVariable, wantfields bool) (*sqltypes.Result, error) {
+	combinedVars, err := ps.execSubquery(vcursor, bindVars)
 	if err != nil {
 		return nil, err
 	}
-	return vcursor.ExecutePrimitive(ctx, ps.Underlying, combinedVars, wantfields)
+	return vcursor.ExecutePrimitive(ps.Underlying, combinedVars, wantfields)
 }
 
 // TryStreamExecute performs a streaming exec.
-func (ps *PulloutSubquery) TryStreamExecute(ctx context.Context, vcursor VCursor, bindVars map[string]*querypb.BindVariable, wantfields bool, callback func(*sqltypes.Result) error) error {
-	combinedVars, err := ps.execSubquery(ctx, vcursor, bindVars)
+func (ps *PulloutSubquery) TryStreamExecute(vcursor VCursor, bindVars map[string]*querypb.BindVariable, wantfields bool, callback func(*sqltypes.Result) error) error {
+	combinedVars, err := ps.execSubquery(vcursor, bindVars)
 	if err != nil {
 		return err
 	}
-	return vcursor.StreamExecutePrimitive(ctx, ps.Underlying, combinedVars, wantfields, callback)
+	return vcursor.StreamExecutePrimitive(ps.Underlying, combinedVars, wantfields, callback)
 }
 
 // GetFields fetches the field info.
-func (ps *PulloutSubquery) GetFields(ctx context.Context, vcursor VCursor, bindVars map[string]*querypb.BindVariable) (*sqltypes.Result, error) {
+func (ps *PulloutSubquery) GetFields(vcursor VCursor, bindVars map[string]*querypb.BindVariable) (*sqltypes.Result, error) {
 	combinedVars := make(map[string]*querypb.BindVariable, len(bindVars)+1)
 	for k, v := range bindVars {
 		combinedVars[k] = v
@@ -98,7 +97,7 @@ func (ps *PulloutSubquery) GetFields(ctx context.Context, vcursor VCursor, bindV
 	case PulloutExists:
 		combinedVars[ps.HasValues] = sqltypes.Int64BindVariable(0)
 	}
-	return ps.Underlying.GetFields(ctx, vcursor, combinedVars)
+	return ps.Underlying.GetFields(vcursor, combinedVars)
 }
 
 // NeedsTransaction implements the Primitive interface
@@ -111,12 +110,12 @@ var (
 	errSqColumn = vterrors.New(vtrpcpb.Code_INVALID_ARGUMENT, "subquery returned more than one column")
 )
 
-func (ps *PulloutSubquery) execSubquery(ctx context.Context, vcursor VCursor, bindVars map[string]*querypb.BindVariable) (map[string]*querypb.BindVariable, error) {
+func (ps *PulloutSubquery) execSubquery(vcursor VCursor, bindVars map[string]*querypb.BindVariable) (map[string]*querypb.BindVariable, error) {
 	subqueryBindVars := make(map[string]*querypb.BindVariable, len(bindVars))
 	for k, v := range bindVars {
 		subqueryBindVars[k] = v
 	}
-	result, err := vcursor.ExecutePrimitive(ctx, ps.Subquery, subqueryBindVars, false)
+	result, err := vcursor.ExecutePrimitive(ps.Subquery, subqueryBindVars, false)
 	if err != nil {
 		return nil, err
 	}
@@ -172,7 +171,7 @@ func (ps *PulloutSubquery) execSubquery(ctx context.Context, vcursor VCursor, bi
 }
 
 func (ps *PulloutSubquery) description() PrimitiveDescription {
-	other := map[string]any{}
+	other := map[string]interface{}{}
 	var pulloutVars []string
 	if ps.HasValues != "" {
 		pulloutVars = append(pulloutVars, ps.HasValues)

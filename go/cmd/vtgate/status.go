@@ -25,20 +25,26 @@ import (
 )
 
 func addStatusParts(vtg *vtgate.VTGate) {
-	servenv.AddStatusPart("Executor", vtgate.ExecutorTemplate, func() any {
+	servenv.AddStatusPart("Executor", vtgate.ExecutorTemplate, func() interface{} {
 		return nil
 	})
-	servenv.AddStatusPart("VSchema", vtgate.VSchemaTemplate, func() any {
+	servenv.AddStatusPart("VSchema", vtgate.VSchemaTemplate, func() interface{} {
 		return vtg.VSchemaStats()
 	})
 	servenv.AddStatusFuncs(srvtopo.StatusFuncs)
-	servenv.AddStatusPart("Topology Cache", srvtopo.TopoTemplate, func() any {
+	servenv.AddStatusPart("Topology Cache", srvtopo.TopoTemplate, func() interface{} {
 		return resilientServer.CacheStatus()
 	})
-	servenv.AddStatusPart("Gateway Status", vtgate.StatusTemplate, func() any {
+	servenv.AddStatusPart("Gateway Status", vtgate.StatusTemplate, func() interface{} {
 		return vtg.GetGatewayCacheStatus()
 	})
-	servenv.AddStatusPart("Health Check Cache", discovery.HealthCheckTemplate, func() any {
-		return vtg.Gateway().TabletsCacheStatus()
-	})
+	if vtgate.UsingLegacyGateway() {
+		servenv.AddStatusPart("Health Check Cache", discovery.LegacyHealthCheckTemplate, func() interface{} {
+			return legacyHealthCheck.CacheStatus()
+		})
+	} else {
+		servenv.AddStatusPart("Health Check Cache", discovery.HealthCheckTemplate, func() interface{} {
+			return vtg.Gateway().TabletsCacheStatus()
+		})
+	}
 }

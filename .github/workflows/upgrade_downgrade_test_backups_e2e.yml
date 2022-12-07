@@ -8,16 +8,34 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  get_upgrade_downgrade_label:
+    timeout-minutes: 10
+    if: github.repository == 'vitessio/vitess'
+    name: Get the Upgrade Downgrade pull request label
+    runs-on: ubuntu-latest
+    outputs:
+      hasLabel: ${{ steps.check_label.outputs.hasLabel }}
+
+    steps:
+      - name: Check Label for PR
+        if: github.event_name == 'pull_request'
+        uses: Dreamcodeio/pr-has-label-action@master
+        id: check_label
+        with:
+          label: Skip Upgrade Downgrade
+
   get_previous_release:
-    if: always()
+    if: always() && (github.event_name != 'pull_request' || needs.get_upgrade_downgrade_label.outputs.hasLabel != 'true')
     name: Get latest release
     runs-on: ubuntu-latest
+    needs:
+      - get_upgrade_downgrade_label
     outputs:
       previous_release: ${{ steps.output-previous-release-ref.outputs.previous_release_ref }}
 
     steps:
       - name: Check out to HEAD
-        uses: actions/checkout@v3
+        uses: actions/checkout@v2
         with:
           fetch-depth: 0
 
@@ -26,24 +44,18 @@ jobs:
         run: |
           previous_release_ref=$(./tools/get_previous_release.sh ${{github.base_ref}} ${{github.ref}})
           echo $previous_release_ref
-          echo "previous_release_ref=${previous_release_ref}" >> $GITHUB_OUTPUT
+          echo "::set-output name=previous_release_ref::${previous_release_ref}"
 
   upgrade_downgrade_test_e2e:
     timeout-minutes: 60
     if: always() && needs.get_previous_release.result == 'success'
     name: Run Upgrade Downgrade Test
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-18.04
     needs:
+      - get_upgrade_downgrade_label
       - get_previous_release
 
     steps:
-    - name: Skip CI
-      run: |
-        if [[ "${{contains( github.event.pull_request.labels.*.name, 'Skip CI')}}" == "true" ]]; then
-          echo "skipping CI due to the 'Skip CI' label"
-          exit 1
-        fi
-
     - name: Check if workflow needs to be skipped
       id: skip-workflow
       run: |
@@ -52,50 +64,29 @@ jobs:
         skip='true'
         fi
         echo Skip ${skip}
-        echo "skip-workflow=${skip}" >> $GITHUB_OUTPUT
+        echo "::set-output name=skip-workflow::${skip}"
+
+    - name: Set up Go
+      if: steps.skip-workflow.outputs.skip-workflow == 'false'
+      uses: actions/setup-go@v2
+      with:
+        go-version: 1.18.5
+
+    - name: Set up python
+      if: steps.skip-workflow.outputs.skip-workflow == 'false'
+      uses: actions/setup-python@v2
+
+    - name: Tune the OS
+      if: steps.skip-workflow.outputs.skip-workflow == 'false'
+      run: |
+        echo '1024 65535' | sudo tee -a /proc/sys/net/ipv4/ip_local_port_range
 
     - name: Check out commit's code
       if: steps.skip-workflow.outputs.skip-workflow == 'false'
-      uses: actions/checkout@v3
-
-    - name: Check for changes in relevant files
-      if: steps.skip-workflow.outputs.skip-workflow == 'false'
-      uses: frouioui/paths-filter@main
-      id: changes
-      with:
-        token: ''
-        filters: |
-          end_to_end:
-            - 'go/**'
-            - 'go/**/*.go'
-            - 'test.go'
-            - 'Makefile'
-            - 'build.env'
-            - 'go.sum'
-            - 'go.mod'
-            - 'proto/*.proto'
-            - 'tools/**'
-            - 'config/**'
-            - 'bootstrap.sh'
-            - '.github/workflows/upgrade_downgrade_test_backups_e2e.yml'
-
-    - name: Set up Go
-      if: steps.skip-workflow.outputs.skip-workflow == 'false' && steps.changes.outputs.end_to_end == 'true'
-      uses: actions/setup-go@v3
-      with:
-        go-version: 1.19.3
-
-    - name: Set up python
-      if: steps.skip-workflow.outputs.skip-workflow == 'false' && steps.changes.outputs.end_to_end == 'true'
-      uses: actions/setup-python@v4
-
-    - name: Tune the OS
-      if: steps.skip-workflow.outputs.skip-workflow == 'false' && steps.changes.outputs.end_to_end == 'true'
-      run: |
-        sudo sysctl -w net.ipv4.ip_local_port_range="22768 65535"
+      uses: actions/checkout@v2
 
     - name: Get base dependencies
-      if: steps.skip-workflow.outputs.skip-workflow == 'false' && steps.changes.outputs.end_to_end == 'true'
+      if: steps.skip-workflow.outputs.skip-workflow == 'false'
       run: |
         sudo apt-get update
         sudo apt-get install -y mysql-server mysql-client make unzip g++ etcd curl git wget eatmydata
@@ -106,28 +97,30 @@ jobs:
         go mod download
 
         # install JUnit report formatter
-        go install github.com/vitessio/go-junit-report@HEAD
+        go get -u github.com/vitessio/go-junit-report@HEAD
 
         wget https://repo.percona.com/apt/percona-release_latest.$(lsb_release -sc)_all.deb
         sudo apt-get install -y gnupg2
         sudo dpkg -i percona-release_latest.$(lsb_release -sc)_all.deb
         sudo apt-get update
         sudo apt-get install percona-xtrabackup-24
+        echo 'mysql version: '
+        mysql --version
 
     # Checkout to the last release of Vitess
     - name: Check out other version's code (${{ needs.get_previous_release.outputs.previous_release }})
-      if: steps.skip-workflow.outputs.skip-workflow == 'false' && steps.changes.outputs.end_to_end == 'true'
-      uses: actions/checkout@v3
+      if: steps.skip-workflow.outputs.skip-workflow == 'false'
+      uses: actions/checkout@v2
       with:
         ref: ${{ needs.get_previous_release.outputs.previous_release }}
 
     - name: Get dependencies for the last release
-      if: steps.skip-workflow.outputs.skip-workflow == 'false' && steps.changes.outputs.end_to_end == 'true'
+      if: steps.skip-workflow.outputs.skip-workflow == 'false'
       run: |
         go mod download
 
     - name: Building last release's binaries
-      if: steps.skip-workflow.outputs.skip-workflow == 'false' && steps.changes.outputs.end_to_end == 'true'
+      if: steps.skip-workflow.outputs.skip-workflow == 'false'
       timeout-minutes: 10
       run: |
         source build.env
@@ -138,16 +131,16 @@ jobs:
 
     # Checkout to this build's commit
     - name: Check out commit's code
-      if: steps.skip-workflow.outputs.skip-workflow == 'false' && steps.changes.outputs.end_to_end == 'true'
-      uses: actions/checkout@v3
+      if: steps.skip-workflow.outputs.skip-workflow == 'false'
+      uses: actions/checkout@v2
 
     - name: Get dependencies for this commit
-      if: steps.skip-workflow.outputs.skip-workflow == 'false' && steps.changes.outputs.end_to_end == 'true'
+      if: steps.skip-workflow.outputs.skip-workflow == 'false'
       run: |
         go mod download
 
     - name: Building the binaries for this commit
-      if: steps.skip-workflow.outputs.skip-workflow == 'false' && steps.changes.outputs.end_to_end == 'true'
+      if: steps.skip-workflow.outputs.skip-workflow == 'false'
       timeout-minutes: 10
       run: |
         source build.env
@@ -157,7 +150,7 @@ jobs:
 
     # Swap binaries, use last release's VTTablet
     - name: Use last release's VTTablet
-      if: steps.skip-workflow.outputs.skip-workflow == 'false' && steps.changes.outputs.end_to_end == 'true'
+      if: steps.skip-workflow.outputs.skip-workflow == 'false'
       run: |
         source build.env
 
@@ -167,7 +160,7 @@ jobs:
 
     # Run test with VTTablet at version N-1 and VTBackup at version N
     - name: Run backups tests (vttablet=N-1, vtbackup=N)
-      if: steps.skip-workflow.outputs.skip-workflow == 'false' && steps.changes.outputs.end_to_end == 'true'
+      if: steps.skip-workflow.outputs.skip-workflow == 'false'
       run: |
         rm -rf /tmp/vtdataroot
         mkdir -p /tmp/vtdataroot
@@ -177,7 +170,7 @@ jobs:
 
     # Swap binaries again, use current version's VTTablet, and last release's VTBackup
     - name: Use current version VTTablet, and other version VTBackup
-      if: steps.skip-workflow.outputs.skip-workflow == 'false' && steps.changes.outputs.end_to_end == 'true'
+      if: steps.skip-workflow.outputs.skip-workflow == 'false'
       run: |
         source build.env
 
@@ -189,7 +182,7 @@ jobs:
 
     # Run test again with VTTablet at version N, and VTBackup at version N-1
     - name: Run backups tests (vttablet=N, vtbackup=N-1)
-      if: steps.skip-workflow.outputs.skip-workflow == 'false' && steps.changes.outputs.end_to_end == 'true'
+      if: steps.skip-workflow.outputs.skip-workflow == 'false'
       run: |
         rm -rf /tmp/vtdataroot
         mkdir -p /tmp/vtdataroot

@@ -21,16 +21,16 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/require"
+	"vitess.io/vitess/go/sqltypes"
+
+	"vitess.io/vitess/go/mysql/fakesqldb"
 
 	"vitess.io/vitess/go/mysql"
-	"vitess.io/vitess/go/mysql/fakesqldb"
-	"vitess.io/vitess/go/sqltypes"
 	"vitess.io/vitess/go/vt/dbconfigs"
 	"vitess.io/vitess/go/vt/mysqlctl/fakemysqldaemon"
 	"vitess.io/vitess/go/vt/vttablet/tabletservermock"
 
-	tabletmanagerdatapb "vitess.io/vitess/go/vt/proto/tabletmanagerdata"
+	"github.com/stretchr/testify/require"
 )
 
 func TestTabletManager_ExecuteFetchAsDba(t *testing.T) {
@@ -47,11 +47,7 @@ func TestTabletManager_ExecuteFetchAsDba(t *testing.T) {
 		QueryServiceControl: tabletservermock.NewController(),
 	}
 
-	_, err := tm.ExecuteFetchAsDba(ctx, &tabletmanagerdatapb.ExecuteFetchAsDbaRequest{
-		Query:   []byte("select 42"),
-		DbName:  dbName,
-		MaxRows: 10,
-	})
+	_, err := tm.ExecuteFetchAsDba(ctx, []byte("select 42"), dbName, 10, false, false)
 	require.NoError(t, err)
 	want := []string{
 		"use ` escap``e me `",

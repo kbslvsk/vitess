@@ -21,7 +21,7 @@
 # TODO(mberlin): Remove the symlink and this note once
 # https://github.com/docker/hub-feedback/issues/292 is fixed.
 
-ARG bootstrap_version=13
+ARG bootstrap_version=4.4
 ARG image="vitess/bootstrap:${bootstrap_version}-mysql57"
 
 FROM "${image}"
@@ -42,3 +42,4 @@ RUN make build
 # Fix permissions
 RUN chown -R vitess:vitess /vt
 USER vitess
+

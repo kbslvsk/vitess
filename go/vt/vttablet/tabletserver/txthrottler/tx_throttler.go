@@ -18,7 +18,6 @@ package txthrottler
 
 import (
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -41,27 +40,26 @@ import (
 
 // TxThrottler throttles transactions based on replication lag.
 // It's a thin wrapper around the throttler found in vitess/go/vt/throttler.
-// It uses a discovery.HealthCheck to send replication-lag updates to the wrapped throttler.
+// It uses a discovery.LegacyHealthCheck to send replication-lag updates to the wrapped throttler.
 //
 // Intended Usage:
+//   // Assuming topoServer is a topo.Server variable pointing to a Vitess topology server.
+//   t := NewTxThrottler(config, topoServer)
 //
-//	// Assuming topoServer is a topo.Server variable pointing to a Vitess topology server.
-//	t := NewTxThrottler(config, topoServer)
+//   // A transaction throttler must be opened before its first use:
+//   if err := t.Open(keyspace, shard); err != nil {
+//     return err
+//   }
 //
-//	// A transaction throttler must be opened before its first use:
-//	if err := t.Open(keyspace, shard); err != nil {
-//	  return err
-//	}
+//   // Checking whether to throttle can be done as follows before starting a transaction.
+//   if t.Throttle() {
+//     return fmt.Errorf("Transaction throttled!")
+//   } else {
+//     // execute transaction.
+//   }
 //
-//	// Checking whether to throttle can be done as follows before starting a transaction.
-//	if t.Throttle() {
-//	  return fmt.Errorf("Transaction throttled!")
-//	} else {
-//	  // execute transaction.
-//	}
-//
-//	// To release the resources used by the throttler the caller should call Close().
-//	t.Close()
+//   // To release the resources used by the throttler the caller should call Close().
+//   t.Close()
 //
 // A TxThrottler object is generally not thread-safe: at any given time at most one goroutine should
 // be executing a method. The only exception is the 'Throttle' method where multiple goroutines are
@@ -150,7 +148,7 @@ type ThrottlerInterface interface {
 	Close()
 	MaxRate() int64
 	SetMaxRate(rate int64)
-	RecordReplicationLag(time time.Time, th *discovery.TabletHealth)
+	RecordReplicationLag(time time.Time, ts *discovery.LegacyTabletStats)
 	GetConfiguration() *throttlerdatapb.Configuration
 	UpdateConfiguration(configuration *throttlerdatapb.Configuration, copyZeroValues bool) error
 	ResetConfiguration()
@@ -160,7 +158,7 @@ type ThrottlerInterface interface {
 // discovery.LegacyTopologyWatcher. It is only used here to allow mocking out
 // go/vt/discovery.LegacyTopologyWatcher.
 type TopologyWatcherInterface interface {
-	Start()
+	WaitForInitialTopology() error
 	Stop()
 }
 
@@ -168,19 +166,18 @@ type TopologyWatcherInterface interface {
 type txThrottlerState struct {
 	// throttleMu serializes calls to throttler.Throttler.Throttle(threadId).
 	// That method is required to be called in serial for each threadId.
-	throttleMu      sync.Mutex
-	throttler       ThrottlerInterface
-	stopHealthCheck context.CancelFunc
+	throttleMu sync.Mutex
+	throttler  ThrottlerInterface
 
-	healthCheck      discovery.HealthCheck
+	healthCheck      discovery.LegacyHealthCheck
 	topologyWatchers []TopologyWatcherInterface
 }
 
 // These vars store the functions used to create the topo server, healthcheck,
 // topology watchers and go/vt/throttler. These are provided here so that they can be overridden
 // in tests to generate mocks.
-type healthCheckFactoryFunc func(topoServer *topo.Server, cell string, cellsToWatch []string) discovery.HealthCheck
-type topologyWatcherFactoryFunc func(topoServer *topo.Server, hc discovery.HealthCheck, cell, keyspace, shard string, refreshInterval time.Duration, topoReadConcurrency int) TopologyWatcherInterface
+type healthCheckFactoryFunc func() discovery.LegacyHealthCheck
+type topologyWatcherFactoryFunc func(topoServer *topo.Server, tr discovery.LegacyTabletRecorder, cell, keyspace, shard string, refreshInterval time.Duration, topoReadConcurrency int) TopologyWatcherInterface
 type throttlerFactoryFunc func(name, unit string, threadCount int, maxRate, maxReplicationLag int64) (ThrottlerInterface, error)
 
 var (
@@ -194,11 +191,9 @@ func init() {
 }
 
 func resetTxThrottlerFactories() {
-	healthCheckFactory = func(topoServer *topo.Server, cell string, cellsToWatch []string) discovery.HealthCheck {
-		return discovery.NewHealthCheck(context.Background(), discovery.DefaultHealthCheckRetryDelay, discovery.DefaultHealthCheckTimeout, topoServer, cell, strings.Join(cellsToWatch, ","))
-	}
-	topologyWatcherFactory = func(topoServer *topo.Server, hc discovery.HealthCheck, cell, keyspace, shard string, refreshInterval time.Duration, topoReadConcurrency int) TopologyWatcherInterface {
-		return discovery.NewCellTabletsWatcher(context.Background(), topoServer, hc, discovery.NewFilterByKeyspace([]string{keyspace}), cell, refreshInterval, true, topoReadConcurrency)
+	healthCheckFactory = discovery.NewLegacyDefaultHealthCheck
+	topologyWatcherFactory = func(topoServer *topo.Server, tr discovery.LegacyTabletRecorder, cell, keyspace, shard string, refreshInterval time.Duration, topoReadConcurrency int) TopologyWatcherInterface {
+		return discovery.NewLegacyShardReplicationWatcher(context.Background(), topoServer, tr, cell, keyspace, shard, refreshInterval, topoReadConcurrency)
 	}
 	throttlerFactory = func(name, unit string, threadCount int, maxRate, maxReplicationLag int64) (ThrottlerInterface, error) {
 		return throttler.NewThrottler(name, unit, threadCount, maxRate, maxReplicationLag)
@@ -235,7 +230,7 @@ func (t *TxThrottler) Open() error {
 	}
 	log.Info("TxThrottler: opening")
 	var err error
-	t.state, err = newTxThrottlerState(t.config, t.target.Keyspace, t.target.Shard, t.target.Cell)
+	t.state, err = newTxThrottlerState(t.config, t.target.Keyspace, t.target.Shard)
 	return err
 }
 
@@ -268,7 +263,8 @@ func (t *TxThrottler) Throttle() (result bool) {
 	return t.state.throttle()
 }
 
-func newTxThrottlerState(config *txThrottlerConfig, keyspace, shard, cell string) (*txThrottlerState, error) {
+func newTxThrottlerState(config *txThrottlerConfig, keyspace, shard string,
+) (*txThrottlerState, error) {
 	t, err := throttlerFactory(
 		TxThrottlerName,
 		"TPS",                           /* unit */
@@ -285,8 +281,8 @@ func newTxThrottlerState(config *txThrottlerConfig, keyspace, shard, cell string
 	result := &txThrottlerState{
 		throttler: t,
 	}
-	createTxThrottlerHealthCheck(config, result, cell)
-
+	result.healthCheck = healthCheckFactory()
+	result.healthCheck.SetListener(result, false /* sendDownEvents */)
 	result.topologyWatchers = make(
 		[]TopologyWatcherInterface, 0, len(config.healthCheckCells))
 	for _, cell := range config.healthCheckCells {
@@ -294,7 +290,7 @@ func newTxThrottlerState(config *txThrottlerConfig, keyspace, shard, cell string
 			result.topologyWatchers,
 			topologyWatcherFactory(
 				config.topoServer,
-				result.healthCheck,
+				result.healthCheck, /* LegacyTabletRecorder */
 				cell,
 				keyspace,
 				shard,
@@ -302,23 +298,6 @@ func newTxThrottlerState(config *txThrottlerConfig, keyspace, shard, cell string
 				discovery.DefaultTopoReadConcurrency))
 	}
 	return result, nil
-}
-
-func createTxThrottlerHealthCheck(config *txThrottlerConfig, result *txThrottlerState, cell string) {
-	ctx, cancel := context.WithCancel(context.Background())
-	result.stopHealthCheck = cancel
-	result.healthCheck = healthCheckFactory(config.topoServer, cell, config.healthCheckCells)
-	ch := result.healthCheck.Subscribe()
-	go func(ctx context.Context) {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case th := <-ch:
-				result.StatsUpdate(th)
-			}
-		}
-	}(ctx)
 }
 
 func (ts *txThrottlerState) throttle() bool {
@@ -349,8 +328,8 @@ func (ts *txThrottlerState) deallocateResources() {
 	ts.throttler = nil
 }
 
-// StatsUpdate updates the health of a tablet with the given healthcheck.
-func (ts *txThrottlerState) StatsUpdate(tabletStats *discovery.TabletHealth) {
+// StatsUpdate is part of the LegacyHealthCheckStatsListener interface.
+func (ts *txThrottlerState) StatsUpdate(tabletStats *discovery.LegacyTabletStats) {
 	// Ignore PRIMARY and RDONLY stats.
 	// We currently do not monitor RDONLY tablets for replication lag. RDONLY tablets are not
 	// candidates for becoming primary during failover, and it's acceptable to serve somewhat

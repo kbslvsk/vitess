@@ -71,8 +71,7 @@ const (
 // Calls of Throttle() and ThreadFinished() take threadID as parameter which is
 // in the range [0, threadCount). (threadCount is set in NewThrottler().)
 // NOTE: Trottle() and ThreadFinished() assume that *per thread* calls to them
-//
-//	are serialized and must not happen concurrently.
+//       are serialized and must not happen concurrently.
 type Throttler struct {
 	// name describes the Throttler instance and is used e.g. in the webinterface.
 	name string
@@ -296,8 +295,8 @@ func (t *Throttler) SetMaxRate(rate int64) {
 // RecordReplicationLag must be called by users to report the "ts" tablet health
 // data observed at "time".
 // Note: After Close() is called, this method must not be called anymore.
-func (t *Throttler) RecordReplicationLag(time time.Time, th *discovery.TabletHealth) {
-	t.maxReplicationLagModule.RecordReplicationLag(time, th)
+func (t *Throttler) RecordReplicationLag(time time.Time, ts *discovery.LegacyTabletStats) {
+	t.maxReplicationLagModule.RecordReplicationLag(time, ts)
 }
 
 // GetConfiguration returns the configuration of the MaxReplicationLag module.
@@ -316,7 +315,7 @@ func (t *Throttler) ResetConfiguration() {
 	t.maxReplicationLagModule.resetConfiguration()
 }
 
-// log returns the most recent changes of the MaxReplicationLag module.
-func (t *Throttler) log() []result {
+// Log returns the most recent changes of the MaxReplicationLag module.
+func (t *Throttler) Log() []result {
 	return t.maxReplicationLagModule.log()
 }

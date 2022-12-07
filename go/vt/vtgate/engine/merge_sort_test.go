@@ -17,7 +17,6 @@ limitations under the License.
 package engine
 
 import (
-	"context"
 	"errors"
 	"testing"
 
@@ -398,7 +397,7 @@ func testMergeSort(shardResults []*shardResult, orderBy []OrderByParams, callbac
 		Primitives: prims,
 		OrderBy:    orderBy,
 	}
-	return ms.TryStreamExecute(context.Background(), &noopVCursor{}, nil, true, callback)
+	return ms.TryStreamExecute(&noopVCursor{}, nil, true, callback)
 }
 
 type shardResult struct {
@@ -409,7 +408,7 @@ type shardResult struct {
 	sendErr error
 }
 
-func (sr *shardResult) StreamExecute(ctx context.Context, vcursor VCursor, bindVars map[string]*querypb.BindVariable, wantfields bool, callback func(*sqltypes.Result) error) error {
+func (sr *shardResult) StreamExecute(vcursor VCursor, bindVars map[string]*querypb.BindVariable, wantfields bool, callback func(*sqltypes.Result) error) error {
 	for _, r := range sr.results {
 		if err := callback(r); err != nil {
 			return err

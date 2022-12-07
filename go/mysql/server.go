@@ -116,9 +116,6 @@ type Handler interface {
 	// execute query.
 	ComStmtExecute(c *Conn, prepare *PrepareData, callback func(*sqltypes.Result) error) error
 
-	// ComBinlogDumpGTID is called when a connection receives a ComBinlogDumpGTID request
-	ComBinlogDumpGTID(c *Conn, gtidSet GTIDSet) error
-
 	// WarningCount is called at the end of each query to obtain
 	// the value to be returned to the client in the EOF packet.
 	// Note that this will be called either in the context of the
@@ -188,9 +185,6 @@ type Listener struct {
 	// Reads are unbuffered if it's <=0.
 	connReadBufferSize int
 
-	// connBufferPooling configures if vtgate server pools connection buffers
-	connBufferPooling bool
-
 	// shutdown indicates that Shutdown method was called.
 	shutdown sync2.AtomicBool
 
@@ -206,14 +200,7 @@ type Listener struct {
 }
 
 // NewFromListener creates a new mysql listener from an existing net.Listener
-func NewFromListener(
-	l net.Listener,
-	authServer AuthServer,
-	handler Handler,
-	connReadTimeout time.Duration,
-	connWriteTimeout time.Duration,
-	connBufferPooling bool,
-) (*Listener, error) {
+func NewFromListener(l net.Listener, authServer AuthServer, handler Handler, connReadTimeout time.Duration, connWriteTimeout time.Duration) (*Listener, error) {
 	cfg := ListenerConfig{
 		Listener:           l,
 		AuthServer:         authServer,
@@ -221,31 +208,22 @@ func NewFromListener(
 		ConnReadTimeout:    connReadTimeout,
 		ConnWriteTimeout:   connWriteTimeout,
 		ConnReadBufferSize: connBufferSize,
-		ConnBufferPooling:  connBufferPooling,
 	}
 	return NewListenerWithConfig(cfg)
 }
 
 // NewListener creates a new Listener.
-func NewListener(
-	protocol, address string,
-	authServer AuthServer,
-	handler Handler,
-	connReadTimeout time.Duration,
-	connWriteTimeout time.Duration,
-	proxyProtocol bool,
-	connBufferPooling bool,
-) (*Listener, error) {
+func NewListener(protocol, address string, authServer AuthServer, handler Handler, connReadTimeout time.Duration, connWriteTimeout time.Duration, proxyProtocol bool) (*Listener, error) {
 	listener, err := net.Listen(protocol, address)
 	if err != nil {
 		return nil, err
 	}
 	if proxyProtocol {
 		proxyListener := &proxyproto.Listener{Listener: listener}
-		return NewFromListener(proxyListener, authServer, handler, connReadTimeout, connWriteTimeout, connBufferPooling)
+		return NewFromListener(proxyListener, authServer, handler, connReadTimeout, connWriteTimeout)
 	}
 
-	return NewFromListener(listener, authServer, handler, connReadTimeout, connWriteTimeout, connBufferPooling)
+	return NewFromListener(listener, authServer, handler, connReadTimeout, connWriteTimeout)
 }
 
 // ListenerConfig should be used with NewListenerWithConfig to specify listener parameters.
@@ -259,7 +237,6 @@ type ListenerConfig struct {
 	ConnReadTimeout    time.Duration
 	ConnWriteTimeout   time.Duration
 	ConnReadBufferSize int
-	ConnBufferPooling  bool
 }
 
 // NewListenerWithConfig creates new listener using provided config. There are
@@ -285,7 +262,6 @@ func NewListenerWithConfig(cfg ListenerConfig) (*Listener, error) {
 		connReadTimeout:    cfg.ConnReadTimeout,
 		connWriteTimeout:   cfg.ConnWriteTimeout,
 		connReadBufferSize: cfg.ConnReadBufferSize,
-		connBufferPooling:  cfg.ConnBufferPooling,
 	}, nil
 }
 
@@ -345,10 +321,6 @@ func (l *Listener) handle(conn net.Conn, connectionID uint32, acceptTime time.Ti
 		// We call endWriterBuffering here in case there's a premature return after
 		// startWriterBuffering is called
 		c.endWriterBuffering()
-
-		if l.connBufferPooling {
-			c.returnReader()
-		}
 
 		conn.Close()
 	}()

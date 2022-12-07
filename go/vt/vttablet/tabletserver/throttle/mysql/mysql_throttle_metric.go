@@ -12,8 +12,7 @@ import (
 	"time"
 
 	"github.com/patrickmn/go-cache"
-
-	"vitess.io/vitess/go/stats"
+	metrics "github.com/rcrowley/go-metrics"
 )
 
 // MetricsQueryType indicates the type of metrics query on MySQL backend. See following.
@@ -109,10 +108,10 @@ func ReadThrottleMetric(probe *Probe, clusterName string, overrideGetMetricFunc 
 
 	defer func(metric *MySQLThrottleMetric, started time.Time) {
 		go func() {
-			stats.GetOrNewGauge("ThrottlerProbesLatency", "probes latency").Set(time.Since(started).Nanoseconds())
-			stats.GetOrNewCounter("ThrottlerProbesTotal", "total probes").Add(1)
+			metrics.GetOrRegisterTimer("probes.latency", nil).Update(time.Since(started))
+			metrics.GetOrRegisterCounter("probes.total", nil).Inc(1)
 			if metric.Err != nil {
-				stats.GetOrNewCounter("ThrottlerProbesError", "total probes errors").Add(1)
+				metrics.GetOrRegisterCounter("probes.error", nil).Inc(1)
 			}
 		}()
 	}(mySQLThrottleMetric, started)

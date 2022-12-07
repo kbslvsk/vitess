@@ -17,7 +17,6 @@ limitations under the License.
 package engine
 
 import (
-	"context"
 	"fmt"
 	"reflect"
 	"strings"
@@ -66,7 +65,7 @@ func (f *fakePrimitive) GetTableName() string {
 	return "fakeTable"
 }
 
-func (f *fakePrimitive) TryExecute(ctx context.Context, vcursor VCursor, bindVars map[string]*querypb.BindVariable, wantfields bool) (*sqltypes.Result, error) {
+func (f *fakePrimitive) TryExecute(vcursor VCursor, bindVars map[string]*querypb.BindVariable, wantfields bool) (*sqltypes.Result, error) {
 	f.log = append(f.log, fmt.Sprintf("Execute %v %v", printBindVars(bindVars), wantfields))
 	if f.results == nil {
 		return nil, f.sendErr
@@ -80,7 +79,7 @@ func (f *fakePrimitive) TryExecute(ctx context.Context, vcursor VCursor, bindVar
 	return r, nil
 }
 
-func (f *fakePrimitive) TryStreamExecute(ctx context.Context, vcursor VCursor, bindVars map[string]*querypb.BindVariable, wantfields bool, callback func(*sqltypes.Result) error) error {
+func (f *fakePrimitive) TryStreamExecute(vcursor VCursor, bindVars map[string]*querypb.BindVariable, wantfields bool, callback func(*sqltypes.Result) error) error {
 	f.log = append(f.log, fmt.Sprintf("StreamExecute %v %v", printBindVars(bindVars), wantfields))
 	if f.results == nil {
 		return f.sendErr
@@ -119,9 +118,9 @@ func (f *fakePrimitive) TryStreamExecute(ctx context.Context, vcursor VCursor, b
 
 	return nil
 }
-func (f *fakePrimitive) GetFields(ctx context.Context, vcursor VCursor, bindVars map[string]*querypb.BindVariable) (*sqltypes.Result, error) {
+func (f *fakePrimitive) GetFields(vcursor VCursor, bindVars map[string]*querypb.BindVariable) (*sqltypes.Result, error) {
 	f.log = append(f.log, fmt.Sprintf("GetFields %v", printBindVars(bindVars)))
-	return f.TryExecute(ctx, vcursor, bindVars, true /* wantfields */)
+	return f.TryExecute(vcursor, bindVars, true /* wantfields */)
 }
 
 func (f *fakePrimitive) ExpectLog(t *testing.T, want []string) {
@@ -137,7 +136,7 @@ func (f *fakePrimitive) NeedsTransaction() bool {
 
 func wrapStreamExecute(prim Primitive, vcursor VCursor, bindVars map[string]*querypb.BindVariable, wantfields bool) (*sqltypes.Result, error) {
 	var result *sqltypes.Result
-	err := prim.TryStreamExecute(context.Background(), vcursor, bindVars, wantfields, func(r *sqltypes.Result) error {
+	err := prim.TryStreamExecute(vcursor, bindVars, wantfields, func(r *sqltypes.Result) error {
 		if result == nil {
 			result = r
 		} else {

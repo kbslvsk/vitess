@@ -22,8 +22,6 @@ import (
 	"testing"
 	"time"
 
-	"google.golang.org/grpc/credentials/insecure"
-
 	"google.golang.org/grpc"
 
 	vtgatepb "vitess.io/vitess/go/vt/proto/vtgate"
@@ -38,7 +36,7 @@ func TestDialErrors(t *testing.T) {
 	}
 	wantErr := "Unavailable"
 	for _, address := range addresses {
-		gconn, err := Dial(address, true, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		gconn, err := Dial(address, FailFast(true), grpc.WithInsecure())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -54,7 +52,7 @@ func TestDialErrors(t *testing.T) {
 
 	wantErr = "DeadlineExceeded"
 	for _, address := range addresses {
-		gconn, err := Dial(address, false, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		gconn, err := Dial(address, FailFast(false), grpc.WithInsecure())
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -39,14 +39,13 @@ import (
 	"testing"
 	"time"
 
-	"vitess.io/vitess/go/test/endtoend/utils"
-
 	"vitess.io/vitess/go/vt/log"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"vitess.io/vitess/go/mysql"
+	"vitess.io/vitess/go/sqltypes"
 	"vitess.io/vitess/go/test/endtoend/cluster"
 )
 
@@ -67,7 +66,7 @@ const (
 	updateRowID       = 2
 )
 
-// threadParams is set of params passed into read and write threads
+//threadParams is set of params passed into read and write threads
 type threadParams struct {
 	quit                       bool
 	rpcs                       int        // Number of queries successfully executed.
@@ -216,7 +215,7 @@ func (bt *BufferingTest) createCluster() (*cluster.LocalProcessCluster, int) {
 	clusterInstance := cluster.NewCluster(cell, hostname)
 
 	// Start topo server
-	clusterInstance.VtctldExtraArgs = []string{"--remote_operation_timeout", "30s", "--topo_etcd_lease_ttl", "40"}
+	clusterInstance.VtctldExtraArgs = []string{"-remote_operation_timeout", "30s", "-topo_etcd_lease_ttl", "40"}
 	if err := clusterInstance.StartTopo(); err != nil {
 		return nil, 1
 	}
@@ -227,22 +226,22 @@ func (bt *BufferingTest) createCluster() (*cluster.LocalProcessCluster, int) {
 		SchemaSQL: sqlSchema,
 		VSchema:   bt.VSchema,
 	}
-	clusterInstance.VtTabletExtraArgs = []string{
-		"--health_check_interval", "1s",
-		"--queryserver-config-transaction-timeout", "20",
+	clusterInstance.VtTabletExtraArgs = []string{"-health_check_interval", "1s",
+		"-queryserver-config-transaction-timeout", "20",
 	}
 	if err := clusterInstance.StartUnshardedKeyspace(*keyspace, 1, false); err != nil {
 		return nil, 1
 	}
 
 	clusterInstance.VtGateExtraArgs = []string{
-		"--enable_buffer",
+		"-enable_buffer",
 		// Long timeout in case failover is slow.
-		"--buffer_window", "10m",
-		"--buffer_max_failover_duration", "10m",
-		"--buffer_min_time_between_failovers", "20m",
-		"--buffer_implementation", "keyspace_events",
-		"--tablet_refresh_interval", "1s",
+		"-buffer_window", "10m",
+		"-buffer_max_failover_duration", "10m",
+		"-buffer_min_time_between_failovers", "20m",
+		"-gateway_implementation", "tabletgateway",
+		"-buffer_implementation", "keyspace_events",
+		"-tablet_refresh_interval", "1s",
 	}
 	clusterInstance.VtGateExtraArgs = append(clusterInstance.VtGateExtraArgs, bt.VtGateExtraArgs...)
 
@@ -253,6 +252,13 @@ func (bt *BufferingTest) createCluster() (*cluster.LocalProcessCluster, int) {
 	}
 	rand.Seed(time.Now().UnixNano())
 	return clusterInstance, 0
+}
+
+func exec(t *testing.T, conn *mysql.Conn, query string) *sqltypes.Result {
+	t.Helper()
+	qr, err := conn.ExecuteFetch(query, 1000, true)
+	require.Nil(t, err)
+	return qr
 }
 
 type QueryEngine interface {
@@ -288,14 +294,14 @@ func (bt *BufferingTest) Test(t *testing.T) {
 	// Healthcheck interval on tablet is set to 1s, so sleep for 2s
 	time.Sleep(2 * time.Second)
 	conn, err := mysql.Connect(context.Background(), &vtParams)
-	require.NoError(t, err)
+	require.Nil(t, err)
 	defer conn.Close()
 
 	// Insert two rows for the later threads (critical read, update).
-	utils.Exec(t, conn, fmt.Sprintf("INSERT INTO buffer (id, msg) VALUES (%d, %s)", criticalReadRowID, "'critical read'"))
-	utils.Exec(t, conn, fmt.Sprintf("INSERT INTO buffer (id, msg) VALUES (%d, %s)", updateRowID, "'update'"))
+	exec(t, conn, fmt.Sprintf("INSERT INTO buffer (id, msg) VALUES (%d, %s)", criticalReadRowID, "'critical read'"))
+	exec(t, conn, fmt.Sprintf("INSERT INTO buffer (id, msg) VALUES (%d, %s)", updateRowID, "'update'"))
 
-	// Start both threads.
+	//Start both threads.
 	readThreadInstance := &threadParams{
 		index:               1,
 		typ:                 "read",
@@ -350,14 +356,11 @@ func (bt *BufferingTest) Test(t *testing.T) {
 	//At least one thread should have been buffered.
 	//This may fail if a failover is too fast. Add retries then.
 	resp, err := http.Get(clusterInstance.VtgateProcess.VerifyURL)
-	require.NoError(t, err)
-	defer resp.Body.Close()
-
+	require.Nil(t, err)
 	require.Equal(t, 200, resp.StatusCode)
 
 	var metadata VTGateBufferingStats
-	respByte, err := io.ReadAll(resp.Body)
-	require.NoError(t, err)
+	respByte, _ := io.ReadAll(resp.Body)
 	err = json.Unmarshal(respByte, &metadata)
 	require.NoError(t, err)
 

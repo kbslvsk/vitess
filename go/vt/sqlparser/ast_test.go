@@ -64,7 +64,7 @@ func TestSelect(t *testing.T) {
 	sel.AddWhere(expr)
 	buf = NewTrackedBuffer(nil)
 	sel.Where.Format(buf)
-	want = " where a = 1"
+	want = " where a = 1 and a = 1"
 	if buf.String() != want {
 		t.Errorf("where: %q, want %s", buf.String(), want)
 	}
@@ -113,14 +113,14 @@ func TestUpdate(t *testing.T) {
 	require.True(t, ok)
 
 	upd.AddWhere(&ComparisonExpr{
-		Left:     &ColName{Name: NewIdentifierCI("b")},
+		Left:     &ColName{Name: NewColIdent("b")},
 		Operator: EqualOp,
 		Right:    NewIntLiteral("2"),
 	})
 	assert.Equal(t, "update t set a = 1 where b = 2", String(upd))
 
 	upd.AddWhere(&ComparisonExpr{
-		Left:     &ColName{Name: NewIdentifierCI("c")},
+		Left:     &ColName{Name: NewColIdent("c")},
 		Operator: EqualOp,
 		Right:    NewIntLiteral("3"),
 	})
@@ -192,7 +192,7 @@ func TestDDL(t *testing.T) {
 	}{{
 		query: "create table a",
 		output: &CreateTable{
-			Table: TableName{Name: NewIdentifierCS("a")},
+			Table: TableName{Name: NewTableIdent("a")},
 		},
 		affected: []string{"a"},
 	}, {
@@ -200,8 +200,8 @@ func TestDDL(t *testing.T) {
 		output: &RenameTable{
 			TablePairs: []*RenameTablePair{
 				{
-					FromTable: TableName{Name: NewIdentifierCS("a")},
-					ToTable:   TableName{Name: NewIdentifierCS("b")},
+					FromTable: TableName{Name: NewTableIdent("a")},
+					ToTable:   TableName{Name: NewTableIdent("b")},
 				},
 			},
 		},
@@ -211,11 +211,11 @@ func TestDDL(t *testing.T) {
 		output: &RenameTable{
 			TablePairs: []*RenameTablePair{
 				{
-					FromTable: TableName{Name: NewIdentifierCS("a")},
-					ToTable:   TableName{Name: NewIdentifierCS("b")},
+					FromTable: TableName{Name: NewTableIdent("a")},
+					ToTable:   TableName{Name: NewTableIdent("b")},
 				}, {
-					FromTable: TableName{Name: NewIdentifierCS("c")},
-					ToTable:   TableName{Name: NewIdentifierCS("d")},
+					FromTable: TableName{Name: NewTableIdent("c")},
+					ToTable:   TableName{Name: NewTableIdent("d")},
 				},
 			},
 		},
@@ -224,7 +224,7 @@ func TestDDL(t *testing.T) {
 		query: "drop table a",
 		output: &DropTable{
 			FromTables: TableNames{
-				TableName{Name: NewIdentifierCS("a")},
+				TableName{Name: NewTableIdent("a")},
 			},
 		},
 		affected: []string{"a"},
@@ -232,8 +232,8 @@ func TestDDL(t *testing.T) {
 		query: "drop table a, b",
 		output: &DropTable{
 			FromTables: TableNames{
-				TableName{Name: NewIdentifierCS("a")},
-				TableName{Name: NewIdentifierCS("b")},
+				TableName{Name: NewTableIdent("a")},
+				TableName{Name: NewTableIdent("b")},
 			},
 		},
 		affected: []string{"a", "b"},
@@ -248,7 +248,7 @@ func TestDDL(t *testing.T) {
 		}
 		want := make(TableNames, 0, len(tcase.affected))
 		for _, t := range tcase.affected {
-			want = append(want, TableName{Name: NewIdentifierCS(t)})
+			want = append(want, TableName{Name: NewTableIdent(t)})
 		}
 		if affected := got.(DDLStatement).AffectedTables(); !reflect.DeepEqual(affected, want) {
 			t.Errorf("Affected(%s): %v, want %v", tcase.query, affected, want)
@@ -377,17 +377,17 @@ func TestWhere(t *testing.T) {
 }
 
 func TestIsAggregate(t *testing.T) {
-	f := FuncExpr{Name: NewIdentifierCI("avg")}
+	f := FuncExpr{Name: NewColIdent("avg")}
 	if !f.IsAggregate() {
 		t.Error("IsAggregate: false, want true")
 	}
 
-	f = FuncExpr{Name: NewIdentifierCI("Avg")}
+	f = FuncExpr{Name: NewColIdent("Avg")}
 	if !f.IsAggregate() {
 		t.Error("IsAggregate: false, want true")
 	}
 
-	f = FuncExpr{Name: NewIdentifierCI("foo")}
+	f = FuncExpr{Name: NewColIdent("foo")}
 	if f.IsAggregate() {
 		t.Error("IsAggregate: true, want false")
 	}
@@ -520,6 +520,15 @@ func TestReplaceExpr(t *testing.T) {
 		in:  "select * from t where convert((select a from b) using utf8)",
 		out: "convert(:a using utf8)",
 	}, {
+		in:  "select * from t where match((select a from b), 1) against (a)",
+		out: "match(:a, 1) against (a)",
+	}, {
+		in:  "select * from t where match(1, (select a from b), 1) against (a)",
+		out: "match(1, :a, 1) against (a)",
+	}, {
+		in:  "select * from t where match(1, a, 1) against ((select a from b))",
+		out: "match(1, a, 1) against (:a)",
+	}, {
 		in:  "select * from t where case (select a from b) when a then b when b then c else d end",
 		out: "case :a when a then b when b then c else d end",
 	}, {
@@ -566,22 +575,22 @@ func TestColNameEqual(t *testing.T) {
 		t.Error("nil columns equal, want unequal")
 	}
 	c1 = &ColName{
-		Name: NewIdentifierCI("aa"),
+		Name: NewColIdent("aa"),
 	}
 	c2 = &ColName{
-		Name: NewIdentifierCI("bb"),
+		Name: NewColIdent("bb"),
 	}
 	if c1.Equal(c2) {
 		t.Error("columns equal, want unequal")
 	}
-	c2.Name = NewIdentifierCI("aa")
+	c2.Name = NewColIdent("aa")
 	if !c1.Equal(c2) {
 		t.Error("columns unequal, want equal")
 	}
 }
 
-func TestIdentifierCI(t *testing.T) {
-	str := NewIdentifierCI("Ab")
+func TestColIdent(t *testing.T) {
+	str := NewColIdent("Ab")
 	if str.String() != "Ab" {
 		t.Errorf("String=%s, want Ab", str.String())
 	}
@@ -591,20 +600,20 @@ func TestIdentifierCI(t *testing.T) {
 	if str.Lowered() != "ab" {
 		t.Errorf("Val=%s, want ab", str.Lowered())
 	}
-	if !str.Equal(NewIdentifierCI("aB")) {
-		t.Error("str.Equal(NewIdentifierCI(aB))=false, want true")
+	if !str.Equal(NewColIdent("aB")) {
+		t.Error("str.Equal(NewColIdent(aB))=false, want true")
 	}
 	if !str.EqualString("ab") {
 		t.Error("str.EqualString(ab)=false, want true")
 	}
-	str = NewIdentifierCI("")
+	str = NewColIdent("")
 	if str.Lowered() != "" {
 		t.Errorf("Val=%s, want \"\"", str.Lowered())
 	}
 }
 
-func TestIdentifierCIMarshal(t *testing.T) {
-	str := NewIdentifierCI("Ab")
+func TestColIdentMarshal(t *testing.T) {
+	str := NewColIdent("Ab")
 	b, err := json.Marshal(str)
 	if err != nil {
 		t.Fatal(err)
@@ -614,7 +623,7 @@ func TestIdentifierCIMarshal(t *testing.T) {
 	if got != want {
 		t.Errorf("json.Marshal()= %s, want %s", got, want)
 	}
-	var out IdentifierCI
+	var out ColIdent
 	if err := json.Unmarshal(b, &out); err != nil {
 		t.Errorf("Unmarshal err: %v, want nil", err)
 	}
@@ -623,14 +632,16 @@ func TestIdentifierCIMarshal(t *testing.T) {
 	}
 }
 
-func TestIdentifierCISize(t *testing.T) {
-	size := unsafe.Sizeof(NewIdentifierCI(""))
-	want := 2 * unsafe.Sizeof("")
-	assert.Equal(t, want, size, "size of IdentifierCI")
+func TestColIdentSize(t *testing.T) {
+	size := unsafe.Sizeof(NewColIdent(""))
+	want := 2*unsafe.Sizeof("") + 8
+	if size != want {
+		t.Errorf("Size of ColIdent: %d, want 32", want)
+	}
 }
 
-func TestIdentifierCSMarshal(t *testing.T) {
-	str := NewIdentifierCS("Ab")
+func TestTableIdentMarshal(t *testing.T) {
+	str := NewTableIdent("Ab")
 	b, err := json.Marshal(str)
 	if err != nil {
 		t.Fatal(err)
@@ -640,7 +651,7 @@ func TestIdentifierCSMarshal(t *testing.T) {
 	if got != want {
 		t.Errorf("json.Marshal()= %s, want %s", got, want)
 	}
-	var out IdentifierCS
+	var out TableIdent
 	if err := json.Unmarshal(b, &out); err != nil {
 		t.Errorf("Unmarshal err: %v, want nil", err)
 	}
@@ -696,19 +707,19 @@ func TestCompliantName(t *testing.T) {
 		out: "_ab",
 	}}
 	for _, tc := range testcases {
-		out := NewIdentifierCI(tc.in).CompliantName()
+		out := NewColIdent(tc.in).CompliantName()
 		if out != tc.out {
-			t.Errorf("IdentifierCI(%s).CompliantNamt: %s, want %s", tc.in, out, tc.out)
+			t.Errorf("ColIdent(%s).CompliantNamt: %s, want %s", tc.in, out, tc.out)
 		}
-		out = NewIdentifierCS(tc.in).CompliantName()
+		out = NewTableIdent(tc.in).CompliantName()
 		if out != tc.out {
-			t.Errorf("IdentifierCS(%s).CompliantNamt: %s, want %s", tc.in, out, tc.out)
+			t.Errorf("TableIdent(%s).CompliantNamt: %s, want %s", tc.in, out, tc.out)
 		}
 	}
 }
 
 func TestColumns_FindColumn(t *testing.T) {
-	cols := Columns{NewIdentifierCI("a"), NewIdentifierCI("c"), NewIdentifierCI("b"), NewIdentifierCI("0")}
+	cols := Columns{NewColIdent("a"), NewColIdent("c"), NewColIdent("b"), NewColIdent("0")}
 
 	testcases := []struct {
 		in  string
@@ -730,7 +741,7 @@ func TestColumns_FindColumn(t *testing.T) {
 		}}
 
 	for _, tc := range testcases {
-		val := cols.FindColumn(NewIdentifierCI(tc.in))
+		val := cols.FindColumn(NewColIdent(tc.in))
 		if val != tc.out {
 			t.Errorf("FindColumn(%s): %d, want %d", tc.in, val, tc.out)
 		}

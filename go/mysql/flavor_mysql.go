@@ -53,45 +53,7 @@ func (mysqlFlavor) primaryGTIDSet(c *Conn) (GTIDSet, error) {
 	if len(qr.Rows) != 1 || len(qr.Rows[0]) != 1 {
 		return nil, vterrors.Errorf(vtrpc.Code_INTERNAL, "unexpected result format for gtid_executed: %#v", qr)
 	}
-	return ParseMysql56GTIDSet(qr.Rows[0][0].ToString())
-}
-
-// purgedGTIDSet is part of the Flavor interface.
-func (mysqlFlavor) purgedGTIDSet(c *Conn) (GTIDSet, error) {
-	// keep @@global as lowercase, as some servers like the Ripple binlog server only honors a lowercase `global` value
-	qr, err := c.ExecuteFetch("SELECT @@global.gtid_purged", 1, false)
-	if err != nil {
-		return nil, err
-	}
-	if len(qr.Rows) != 1 || len(qr.Rows[0]) != 1 {
-		return nil, vterrors.Errorf(vtrpc.Code_INTERNAL, "unexpected result format for gtid_purged: %#v", qr)
-	}
-	return ParseMysql56GTIDSet(qr.Rows[0][0].ToString())
-}
-
-// serverUUID is part of the Flavor interface.
-func (mysqlFlavor) serverUUID(c *Conn) (string, error) {
-	// keep @@global as lowercase, as some servers like the Ripple binlog server only honors a lowercase `global` value
-	qr, err := c.ExecuteFetch("SELECT @@global.server_uuid", 1, false)
-	if err != nil {
-		return "", err
-	}
-	if len(qr.Rows) != 1 || len(qr.Rows[0]) != 1 {
-		return "", vterrors.Errorf(vtrpc.Code_INTERNAL, "unexpected result format for server_uuid: %#v", qr)
-	}
-	return qr.Rows[0][0].ToString(), nil
-}
-
-// gtidMode is part of the Flavor interface.
-func (mysqlFlavor) gtidMode(c *Conn) (string, error) {
-	qr, err := c.ExecuteFetch("select @@global.gtid_mode", 1, false)
-	if err != nil {
-		return "", err
-	}
-	if len(qr.Rows) != 1 || len(qr.Rows[0]) != 1 {
-		return "", vterrors.Errorf(vtrpc.Code_INTERNAL, "unexpected result format for gtid_mode: %#v", qr)
-	}
-	return qr.Rows[0][0].ToString(), nil
+	return parseMysql56GTIDSet(qr.Rows[0][0].ToString())
 }
 
 func (mysqlFlavor) startReplicationCommand() string {
@@ -155,14 +117,6 @@ func (mysqlFlavor) resetReplicationCommands(c *Conn) []string {
 	return resetCommands
 }
 
-// resetReplicationParametersCommands is part of the Flavor interface.
-func (mysqlFlavor) resetReplicationParametersCommands(c *Conn) []string {
-	resetCommands := []string{
-		"RESET SLAVE ALL", // "ALL" makes it forget source host:port.
-	}
-	return resetCommands
-}
-
 // setReplicationPositionCommands is part of the Flavor interface.
 func (mysqlFlavor) setReplicationPositionCommands(pos Position) []string {
 	return []string{
@@ -208,11 +162,11 @@ func parseMysqlReplicationStatus(resultMap map[string]string) (ReplicationStatus
 	}
 
 	var err error
-	status.Position.GTIDSet, err = ParseMysql56GTIDSet(resultMap["Executed_Gtid_Set"])
+	status.Position.GTIDSet, err = parseMysql56GTIDSet(resultMap["Executed_Gtid_Set"])
 	if err != nil {
 		return ReplicationStatus{}, vterrors.Wrapf(err, "ReplicationStatus can't parse MySQL 5.6 GTID (Executed_Gtid_Set: %#v)", resultMap["Executed_Gtid_Set"])
 	}
-	relayLogGTIDSet, err := ParseMysql56GTIDSet(resultMap["Retrieved_Gtid_Set"])
+	relayLogGTIDSet, err := parseMysql56GTIDSet(resultMap["Retrieved_Gtid_Set"])
 	if err != nil {
 		return ReplicationStatus{}, vterrors.Wrapf(err, "ReplicationStatus can't parse MySQL 5.6 GTID (Retrieved_Gtid_Set: %#v)", resultMap["Retrieved_Gtid_Set"])
 	}
@@ -247,7 +201,7 @@ func parseMysqlPrimaryStatus(resultMap map[string]string) (PrimaryStatus, error)
 	status := parsePrimaryStatus(resultMap)
 
 	var err error
-	status.Position.GTIDSet, err = ParseMysql56GTIDSet(resultMap["Executed_Gtid_Set"])
+	status.Position.GTIDSet, err = parseMysql56GTIDSet(resultMap["Executed_Gtid_Set"])
 	if err != nil {
 		return PrimaryStatus{}, vterrors.Wrapf(err, "PrimaryStatus can't parse MySQL 5.6 GTID (Executed_Gtid_Set: %#v)", resultMap["Executed_Gtid_Set"])
 	}
@@ -290,12 +244,7 @@ func (mysqlFlavor) readBinlogEvent(c *Conn) (BinlogEvent, error) {
 	case ErrPacket:
 		return nil, ParseErrorPacket(result)
 	}
-	buf, semiSyncAckRequested, err := c.AnalyzeSemiSyncAckRequest(result[1:])
-	if err != nil {
-		return nil, err
-	}
-	ev := NewMysql56BinlogEventWithSemiSyncInfo(buf, semiSyncAckRequested)
-	return ev, nil
+	return NewMysql56BinlogEvent(result[1:]), nil
 }
 
 // enableBinlogPlaybackCommand is part of the Flavor interface.
@@ -308,65 +257,32 @@ func (mysqlFlavor) disableBinlogPlaybackCommand() string {
 	return ""
 }
 
-// baseShowTables is part of the Flavor interface.
-func (mysqlFlavor) baseShowTables() string {
-	return "SELECT table_name, table_type, unix_timestamp(create_time), table_comment FROM information_schema.tables WHERE table_schema = database()"
-}
-
 // TablesWithSize56 is a query to select table along with size for mysql 5.6
-const TablesWithSize56 = `SELECT table_name,
-	table_type,
-	UNIX_TIMESTAMP(create_time) AS uts_create_time,
-	table_comment,
-	SUM(data_length + index_length),
-	SUM(data_length + index_length)
-FROM information_schema.tables
-WHERE table_schema = database()
-GROUP BY table_name,
-	table_type,
-	uts_create_time,
-	table_comment`
+const TablesWithSize56 = `SELECT table_name, table_type, unix_timestamp(create_time), table_comment, SUM( data_length + index_length), SUM( data_length + index_length) 
+		FROM information_schema.tables WHERE table_schema = database() group by table_name`
 
 // TablesWithSize57 is a query to select table along with size for mysql 5.7.
-//
 // It's a little weird, because the JOIN predicate only works if the table and databases do not contain weird characters.
-// If the join does not return any data, we fall back to the same fields as used in the mysql 5.6 query.
-//
-// We join with a subquery that materializes the data from `information_schema.innodb_sys_tablespaces`
-// early for performance reasons. This effectively causes only a single read of `information_schema.innodb_sys_tablespaces`
-// per query.
-const TablesWithSize57 = `SELECT t.table_name,
-	t.table_type,
-	UNIX_TIMESTAMP(t.create_time),
-	t.table_comment,
-	IFNULL(SUM(i.file_size), SUM(t.data_length + t.index_length)),
-	IFNULL(SUM(i.allocated_size), SUM(t.data_length + t.index_length))
-FROM information_schema.tables t
-LEFT OUTER JOIN (
-	SELECT space, file_size, allocated_size, name
-	FROM information_schema.innodb_sys_tablespaces
-	WHERE name LIKE CONCAT(database(), '/%')
-	GROUP BY space, file_size, allocated_size, name
-) i ON i.name = CONCAT(t.table_schema, '/', t.table_name) or i.name LIKE CONCAT(t.table_schema, '/', t.table_name, '#p#%')
-WHERE t.table_schema = database()
-GROUP BY t.table_name, t.table_type, t.create_time, t.table_comment`
+// As a fallback, we use the mysql 5.6 query, which is not always up to date, but works for all table/db names.
+const TablesWithSize57 = `SELECT t.table_name, t.table_type, unix_timestamp(t.create_time), t.table_comment, sum(i.file_size), sum(i.allocated_size) 
+	FROM information_schema.tables t, information_schema.innodb_sys_tablespaces i 
+	WHERE t.table_schema = database() and 
+	(i.name = concat(t.table_schema,'/',t.table_name) or i.name like concat(t.table_schema,'/',t.table_name, '#p#%')) 
+	group by t.table_name, t.table_type, unix_timestamp(t.create_time), t.table_comment, i.file_size
+UNION ALL
+	SELECT table_name, table_type, unix_timestamp(create_time), table_comment, SUM( data_length + index_length), SUM( data_length + index_length)
+	FROM information_schema.tables t
+	WHERE table_schema = database() AND 
+	NOT EXISTS(SELECT * FROM information_schema.innodb_sys_tablespaces i WHERE i.name = concat(t.table_schema,'/',t.table_name) or i.name like concat(t.table_schema,'/',t.table_name, '#p#%')) 
+	group by table_name, table_type, unix_timestamp(create_time), table_comment
+`
 
 // TablesWithSize80 is a query to select table along with size for mysql 8.0
-//
-// We join with a subquery that materializes the data from `information_schema.innodb_sys_tablespaces`
-// early for performance reasons. This effectively causes only a single read of `information_schema.innodb_tablespaces`
-// per query.
-const TablesWithSize80 = `SELECT t.table_name,
-	t.table_type,
-	UNIX_TIMESTAMP(t.create_time),
-	t.table_comment,
-	SUM(i.file_size),
-	SUM(i.allocated_size)
-FROM information_schema.tables t
-INNER JOIN information_schema.innodb_tablespaces i
-	ON i.name LIKE CONCAT(database(), '/%') AND (i.name = CONCAT(t.table_schema, '/', t.table_name) OR i.name LIKE CONCAT(t.table_schema, '/', t.table_name, '#p#%'))
-WHERE t.table_schema = database()
-GROUP BY t.table_name, t.table_type, t.create_time, t.table_comment`
+const TablesWithSize80 = `SELECT t.table_name, t.table_type, unix_timestamp(t.create_time), t.table_comment, sum(i.file_size), sum(i.allocated_size) 
+		FROM information_schema.tables t, information_schema.innodb_tablespaces i 
+		WHERE t.table_schema = database() and 
+		(i.name = concat(t.table_schema,'/',t.table_name) or i.name like concat(t.table_schema,'/',t.table_name, '#p#%')) 
+		group by t.table_name, t.table_type, t.create_time, t.table_comment, i.file_size`
 
 // baseShowTablesWithSizes is part of the Flavor interface.
 func (mysqlFlavor56) baseShowTablesWithSizes() string {
@@ -389,8 +305,6 @@ func (mysqlFlavor57) baseShowTablesWithSizes() string {
 // supportsCapability is part of the Flavor interface.
 func (mysqlFlavor57) supportsCapability(serverVersion string, capability FlavorCapability) (bool, error) {
 	switch capability {
-	case MySQLJSONFlavorCapability:
-		return true, nil
 	default:
 		return false, nil
 	}
@@ -404,26 +318,8 @@ func (mysqlFlavor80) baseShowTablesWithSizes() string {
 // supportsCapability is part of the Flavor interface.
 func (mysqlFlavor80) supportsCapability(serverVersion string, capability FlavorCapability) (bool, error) {
 	switch capability {
-	case InstantDDLFlavorCapability,
-		InstantExpandEnumCapability,
-		InstantAddLastColumnFlavorCapability,
-		InstantAddDropVirtualColumnFlavorCapability,
-		InstantChangeColumnDefaultFlavorCapability:
-		return true, nil
-	case InstantAddDropColumnFlavorCapability:
-		return ServerVersionAtLeast(serverVersion, 8, 0, 29)
-	case TransactionalGtidExecutedFlavorCapability:
-		return ServerVersionAtLeast(serverVersion, 8, 0, 17)
-	case FastDropTableFlavorCapability:
-		return ServerVersionAtLeast(serverVersion, 8, 0, 23)
-	case MySQLJSONFlavorCapability:
-		return true, nil
-	case MySQLUpgradeInServerFlavorCapability:
-		return ServerVersionAtLeast(serverVersion, 8, 0, 16)
 	case DynamicRedoLogCapacityFlavorCapability:
 		return ServerVersionAtLeast(serverVersion, 8, 0, 30)
-	case DisableRedoLogFlavorCapability:
-		return ServerVersionAtLeast(serverVersion, 8, 0, 21)
 	default:
 		return false, nil
 	}

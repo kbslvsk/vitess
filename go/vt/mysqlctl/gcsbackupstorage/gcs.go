@@ -19,15 +19,16 @@ limitations under the License.
 package gcsbackupstorage
 
 import (
-	"context"
+	"flag"
 	"fmt"
 	"io"
 	"sort"
 	"strings"
 	"sync"
 
+	"context"
+
 	"cloud.google.com/go/storage"
-	"github.com/spf13/pflag"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
@@ -35,28 +36,15 @@ import (
 	"vitess.io/vitess/go/trace"
 	"vitess.io/vitess/go/vt/concurrency"
 	"vitess.io/vitess/go/vt/mysqlctl/backupstorage"
-	"vitess.io/vitess/go/vt/servenv"
 )
 
 var (
 	// bucket is where the backups will go.
-	bucket string
+	bucket = flag.String("gcs_backup_storage_bucket", "", "Google Cloud Storage bucket to use for backups")
 
 	// root is a prefix added to all object names.
-	root string
+	root = flag.String("gcs_backup_storage_root", "", "root prefix for all backup-related object names")
 )
-
-func registerFlags(fs *pflag.FlagSet) {
-	fs.StringVar(&bucket, "gcs_backup_storage_bucket", "", "Google Cloud Storage bucket to use for backups.")
-	fs.StringVar(&root, "gcs_backup_storage_root", "", "Root prefix for all backup-related object names.")
-}
-
-func init() {
-	servenv.OnParseFor("vtbackup", registerFlags)
-	servenv.OnParseFor("vtctl", registerFlags)
-	servenv.OnParseFor("vtctld", registerFlags)
-	servenv.OnParseFor("vttablet", registerFlags)
-}
 
 // GCSBackupHandle implements BackupHandle for Google Cloud Storage.
 type GCSBackupHandle struct {
@@ -99,7 +87,7 @@ func (bh *GCSBackupHandle) AddFile(ctx context.Context, filename string, filesiz
 		return nil, fmt.Errorf("AddFile cannot be called on read-only backup")
 	}
 	object := objName(bh.dir, bh.name, filename)
-	return bh.client.Bucket(bucket).Object(object).NewWriter(ctx), nil
+	return bh.client.Bucket(*bucket).Object(object).NewWriter(ctx), nil
 }
 
 // EndBackup implements BackupHandle.
@@ -124,7 +112,7 @@ func (bh *GCSBackupHandle) ReadFile(ctx context.Context, filename string) (io.Re
 		return nil, fmt.Errorf("ReadFile cannot be called on read-write backup")
 	}
 	object := objName(bh.dir, bh.name, filename)
-	return bh.client.Bucket(bucket).Object(object).NewReader(ctx)
+	return bh.client.Bucket(*bucket).Object(object).NewReader(ctx)
 }
 
 // GCSBackupStorage implements BackupStorage for Google Cloud Storage.
@@ -158,7 +146,7 @@ func (bs *GCSBackupStorage) ListBackups(ctx context.Context, dir string) ([]back
 		Prefix:    searchPrefix,
 	}
 
-	it := c.Bucket(bucket).Objects(ctx, query)
+	it := c.Bucket(*bucket).Objects(ctx, query)
 	for {
 		obj, err := it.Next()
 		if err == iterator.Done {
@@ -220,7 +208,7 @@ func (bs *GCSBackupStorage) RemoveBackup(ctx context.Context, dir, name string) 
 		Prefix: objName(dir, name, "" /* include trailing slash */),
 	}
 	// Delete all the found objects.
-	it := c.Bucket(bucket).Objects(ctx, query)
+	it := c.Bucket(*bucket).Objects(ctx, query)
 	for {
 		obj, err := it.Next()
 		if err == iterator.Done {
@@ -229,8 +217,8 @@ func (bs *GCSBackupStorage) RemoveBackup(ctx context.Context, dir, name string) 
 		if err != nil {
 			return err
 		}
-		if err := c.Bucket(bucket).Object(obj.Name).Delete(ctx); err != nil {
-			return fmt.Errorf("unable to delete %q from bucket %q: %v", obj.Name, bucket, err)
+		if err := c.Bucket(*bucket).Object(obj.Name).Delete(ctx); err != nil {
+			return fmt.Errorf("unable to delete %q from bucket %q: %v", obj.Name, *bucket, err)
 		}
 	}
 	return nil
@@ -280,10 +268,10 @@ func (bs *GCSBackupStorage) client(ctx context.Context) (*storage.Client, error)
 
 // objName joins path parts into an object name.
 // Unlike path.Join, it doesn't collapse ".." or strip trailing slashes.
-// It also adds the value of the --gcs_backup_storage_root flag if set.
+// It also adds the value of the -gcs_backup_storage_root flag if set.
 func objName(parts ...string) string {
-	if root != "" {
-		return root + "/" + strings.Join(parts, "/")
+	if *root != "" {
+		return *root + "/" + strings.Join(parts, "/")
 	}
 	return strings.Join(parts, "/")
 }

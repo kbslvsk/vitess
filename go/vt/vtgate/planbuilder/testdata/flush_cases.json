@@ -13,11 +13,7 @@
         },
         "TargetDestination": "AllShards()",
         "Query": "flush tables unsharded, music"
-      },
-      "TablesUsed": [
-        "main.music",
-        "main.unsharded"
-      ]
+      }
     }
   },
   {

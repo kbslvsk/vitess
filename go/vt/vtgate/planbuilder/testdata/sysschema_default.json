@@ -2,7 +2,7 @@
   {
     "comment": "max_allowed_packet",
     "query": "select @@max_allowed_packet from dual",
-    "v3-plan": {
+    "plan": {
       "QueryType": "SELECT",
       "Original": "select @@max_allowed_packet from dual",
       "Instructions": {
@@ -16,24 +16,6 @@
         "Query": "select @@max_allowed_packet from dual",
         "Table": "dual"
       }
-    },
-    "gen4-plan": {
-      "QueryType": "SELECT",
-      "Original": "select @@max_allowed_packet from dual",
-      "Instructions": {
-        "OperatorType": "Route",
-        "Variant": "Reference",
-        "Keyspace": {
-          "Name": "main",
-          "Sharded": false
-        },
-        "FieldQuery": "select @@max_allowed_packet from dual where 1 != 1",
-        "Query": "select @@max_allowed_packet from dual",
-        "Table": "dual"
-      },
-      "TablesUsed": [
-        "main.dual"
-      ]
     }
   },
   {
@@ -75,7 +57,7 @@
   {
     "comment": "system schema query as a subquery",
     "query": "SELECT (SELECT 1 FROM information_schema.schemata WHERE schema_name='MyDatabase' LIMIT 1);",
-    "v3-plan": {
+    "plan": {
       "QueryType": "SELECT",
       "Original": "SELECT (SELECT 1 FROM information_schema.schemata WHERE schema_name='MyDatabase' LIMIT 1);",
       "Instructions": {
@@ -90,25 +72,6 @@
         "SysTableTableSchema": "[VARCHAR(\"MyDatabase\")]",
         "Table": "dual"
       }
-    },
-    "gen4-plan": {
-      "QueryType": "SELECT",
-      "Original": "SELECT (SELECT 1 FROM information_schema.schemata WHERE schema_name='MyDatabase' LIMIT 1);",
-      "Instructions": {
-        "OperatorType": "Route",
-        "Variant": "DBA",
-        "Keyspace": {
-          "Name": "main",
-          "Sharded": false
-        },
-        "FieldQuery": "select (select 1 from information_schema.schemata where 1 != 1) from dual where 1 != 1",
-        "Query": "select (select 1 from information_schema.schemata where schema_name = :__vtschemaname limit 1) from dual",
-        "SysTableTableSchema": "[VARCHAR(\"MyDatabase\")]",
-        "Table": "dual"
-      },
-      "TablesUsed": [
-        "main.dual"
-      ]
     }
   },
   {

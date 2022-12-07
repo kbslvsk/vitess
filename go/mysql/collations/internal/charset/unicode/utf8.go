@@ -101,7 +101,7 @@ var acceptRanges = [16]acceptRange{
 type Charset_utf8mb3 struct{}
 
 func (u Charset_utf8mb3) Name() string {
-	return "utf8mb3"
+	return "utf8"
 }
 
 func (u Charset_utf8mb3) IsSuperset(other types.Charset) bool {
@@ -177,10 +177,6 @@ func (Charset_utf8mb3) SupportsSupplementaryChars() bool {
 	return false
 }
 
-func (Charset_utf8mb3) Length(src []byte) int {
-	return utf8.RuneCount(src)
-}
-
 type Charset_utf8mb4 struct{}
 
 func (Charset_utf8mb4) Name() string {
@@ -206,12 +202,4 @@ func (Charset_utf8mb4) DecodeRune(p []byte) (rune, int) {
 
 func (Charset_utf8mb4) SupportsSupplementaryChars() bool {
 	return true
-}
-
-func (Charset_utf8mb4) Validate(p []byte) bool {
-	return utf8.Valid(p)
-}
-
-func (Charset_utf8mb4) Length(src []byte) int {
-	return utf8.RuneCount(src)
 }

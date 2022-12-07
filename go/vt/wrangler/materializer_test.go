@@ -22,7 +22,6 @@ import (
 	"sort"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
@@ -30,7 +29,6 @@ import (
 	"vitess.io/vitess/go/sqltypes"
 	"vitess.io/vitess/go/test/utils"
 	"vitess.io/vitess/go/vt/logutil"
-	binlogdatapb "vitess.io/vitess/go/vt/proto/binlogdata"
 	querypb "vitess.io/vitess/go/vt/proto/query"
 	tabletmanagerdatapb "vitess.io/vitess/go/vt/proto/tabletmanagerdata"
 	topodatapb "vitess.io/vitess/go/vt/proto/topodata"
@@ -41,10 +39,8 @@ import (
 
 const mzUpdateQuery = "update _vt.vreplication set state='Running' where db_name='vt_targetks' and workflow='workflow'"
 const mzSelectIDQuery = "select id from _vt.vreplication where db_name='vt_targetks' and workflow='workflow'"
-const mzSelectFrozenQuery = "select 1 from _vt.vreplication where db_name='vt_targetks' and message='FROZEN' and workflow_sub_type != 1"
+const mzSelectFrozenQuery = "select 1 from _vt.vreplication where db_name='vt_targetks' and message='FROZEN'"
 const mzCheckJournal = "/select val from _vt.resharding_journal where id="
-
-var defaultOnDDL = binlogdatapb.OnDDLAction_name[int32(binlogdatapb.OnDDLAction_IGNORE)]
 
 func TestMigrateTables(t *testing.T) {
 	ms := &vtctldatapb.MaterializeSettings{
@@ -66,7 +62,7 @@ func TestMigrateTables(t *testing.T) {
 	env.tmc.expectVRQuery(200, mzUpdateQuery, &sqltypes.Result{})
 
 	ctx := context.Background()
-	err := env.wr.MoveTables(ctx, "workflow", "sourceks", "targetks", "t1", "", "", false, "", true, false, "", false, "", defaultOnDDL, nil)
+	err := env.wr.MoveTables(ctx, "workflow", "sourceks", "targetks", "t1", "", "", false, "", true, false, "")
 	require.NoError(t, err)
 	vschema, err := env.wr.ts.GetSrvVSchema(ctx, env.cell)
 	require.NoError(t, err)
@@ -107,11 +103,11 @@ func TestMissingTables(t *testing.T) {
 	env.tmc.expectVRQuery(200, mzUpdateQuery, &sqltypes.Result{})
 
 	ctx := context.Background()
-	err := env.wr.MoveTables(ctx, "workflow", "sourceks", "targetks", "t1,tyt", "", "", false, "", true, false, "", false, "", defaultOnDDL, nil)
+	err := env.wr.MoveTables(ctx, "workflow", "sourceks", "targetks", "t1,tyt", "", "", false, "", true, false, "")
 	require.EqualError(t, err, "table(s) not found in source keyspace sourceks: tyt")
-	err = env.wr.MoveTables(ctx, "workflow", "sourceks", "targetks", "t1,tyt,t2,txt", "", "", false, "", true, false, "", false, "", defaultOnDDL, nil)
+	err = env.wr.MoveTables(ctx, "workflow", "sourceks", "targetks", "t1,tyt,t2,txt", "", "", false, "", true, false, "")
 	require.EqualError(t, err, "table(s) not found in source keyspace sourceks: tyt,txt")
-	err = env.wr.MoveTables(ctx, "workflow", "sourceks", "targetks", "t1", "", "", false, "", true, false, "", false, "", defaultOnDDL, nil)
+	err = env.wr.MoveTables(ctx, "workflow", "sourceks", "targetks", "t1", "", "", false, "", true, false, "")
 	require.NoError(t, err)
 }
 
@@ -167,7 +163,7 @@ func TestMoveTablesAllAndExclude(t *testing.T) {
 			env.tmc.expectVRQuery(200, insertPrefix, &sqltypes.Result{})
 			env.tmc.expectVRQuery(200, mzSelectIDQuery, &sqltypes.Result{})
 			env.tmc.expectVRQuery(200, mzUpdateQuery, &sqltypes.Result{})
-			err = env.wr.MoveTables(ctx, "workflow", "sourceks", "targetks", "", "", "", tcase.allTables, tcase.excludeTables, true, false, "", false, "", defaultOnDDL, nil)
+			err = env.wr.MoveTables(ctx, "workflow", "sourceks", "targetks", "", "", "", tcase.allTables, tcase.excludeTables, true, false, "")
 			require.NoError(t, err)
 			require.EqualValues(t, tcase.want, targetTables(env))
 		})
@@ -195,13 +191,13 @@ func TestMoveTablesStopFlags(t *testing.T) {
 		env.tmc.expectVRQuery(100, mzCheckJournal, &sqltypes.Result{})
 		env.tmc.expectVRQuery(200, mzSelectFrozenQuery, &sqltypes.Result{})
 		// insert expects flag stop_after_copy to be true
-		insert := `/insert into _vt.vreplication\(workflow, source, pos, max_tps, max_replication_lag, cell, tablet_types.*stop_after_copy:true.*`
+		insert := `/insert into _vt.vreplication\(workflow, source, pos, max_tps, max_replication_lag, cell, tablet_types, time_updated, transaction_timestamp, state, db_name\) values .*stop_after_copy:true.*`
 
 		env.tmc.expectVRQuery(200, insert, &sqltypes.Result{})
 		env.tmc.expectVRQuery(200, mzSelectIDQuery, &sqltypes.Result{})
 		// -auto_start=false is tested by NOT expecting the update query which sets state to RUNNING
 		err = env.wr.MoveTables(ctx, "workflow", "sourceks", "targetks", "t1", "",
-			"", false, "", false, true, "", false, "", defaultOnDDL, nil)
+			"", false, "", false, true, "")
 		require.NoError(t, err)
 		env.tmc.verifyQueries(t)
 	})
@@ -227,7 +223,7 @@ func TestMigrateVSchema(t *testing.T) {
 	env.tmc.expectVRQuery(200, mzUpdateQuery, &sqltypes.Result{})
 
 	ctx := context.Background()
-	err := env.wr.MoveTables(ctx, "workflow", "sourceks", "targetks", `{"t1":{}}`, "", "", false, "", true, false, "", false, "", defaultOnDDL, nil)
+	err := env.wr.MoveTables(ctx, "workflow", "sourceks", "targetks", `{"t1":{}}`, "", "", false, "", true, false, "")
 	require.NoError(t, err)
 	vschema, err := env.wr.ts.GetSrvVSchema(ctx, env.cell)
 	require.NoError(t, err)
@@ -1440,7 +1436,7 @@ func TestCreateLookupVindexFailures(t *testing.T) {
 				},
 			},
 		},
-		err: "vindex table name must be in the form <keyspace>.<table>",
+		err: "vindex 'table' must be <keyspace>.<table>",
 	}, {
 		description: "unique lookup should have only one from column",
 		input: &vschemapb.Keyspace{
@@ -1675,13 +1671,11 @@ func TestExternalizeVindex(t *testing.T) {
 		},
 	}
 	fields := sqltypes.MakeTestFields(
-		"id|state|message|source",
-		"int64|varbinary|varbinary|blob",
+		"id|state|message",
+		"int64|varbinary|varbinary",
 	)
-	sourceStopAfterCopy := `keyspace:"sourceKs",shard:"0",filter:{rules:{match:"owned" filter:"select * from t1 where in_keyrange(col1, 'sourceKs.hash', '-80')"}} stop_after_copy:true`
-	sourceKeepRunningAfterCopy := `keyspace:"sourceKs",shard:"0",filter:{rules:{match:"owned" filter:"select * from t1 where in_keyrange(col1, 'sourceKs.hash', '-80')"}}`
-	running := sqltypes.MakeTestResult(fields, "1|Running|msg|"+sourceKeepRunningAfterCopy)
-	stopped := sqltypes.MakeTestResult(fields, "1|Stopped|Stopped after copy|"+sourceStopAfterCopy)
+	running := sqltypes.MakeTestResult(fields, "1|Running|msg")
+	stopped := sqltypes.MakeTestResult(fields, "1|Stopped|Stopped after copy")
 	testcases := []struct {
 		input        string
 		vrResponse   *sqltypes.Result
@@ -1702,11 +1696,11 @@ func TestExternalizeVindex(t *testing.T) {
 		err:   "vindex sourceks.absent not found in vschema",
 	}, {
 		input: "sourceks.bad",
-		err:   "vindex table name must be in the form <keyspace>.<table>. Got: unqualified",
+		err:   "table name in vindex should be of the form keyspace.table: unqualified",
 	}, {
-		input:        "sourceks.owned",
-		vrResponse:   running,
-		expectDelete: true,
+		input:      "sourceks.owned",
+		vrResponse: running,
+		err:        "is not in Stopped after copy state",
 	}, {
 		input:      "sourceks.unowned",
 		vrResponse: stopped,
@@ -1718,7 +1712,7 @@ func TestExternalizeVindex(t *testing.T) {
 			t.Fatal(err)
 		}
 		if tcase.vrResponse != nil {
-			validationQuery := "select id, state, message, source from _vt.vreplication where workflow='lkp_vdx' and db_name='vt_targetks'"
+			validationQuery := "select id, state, message from _vt.vreplication where workflow='lkp_vdx' and db_name='vt_targetks'"
 			env.tmc.expectVRQuery(200, validationQuery, tcase.vrResponse)
 			env.tmc.expectVRQuery(210, validationQuery, tcase.vrResponse)
 		}
@@ -1785,7 +1779,7 @@ func TestMaterializerOneToOne(t *testing.T) {
 				`rules:{match:\\"t2\\" filter:\\"select.*t3\\"} `+
 				`rules:{match:\\"t4\\"}`+
 				`}', `)+
-			`'', [0-9]*, [0-9]*, 'zone1', 'primary,rdonly', [0-9]*, 0, 'Stopped', 'vt_targetks', 0, 0`+
+			`'', [0-9]*, [0-9]*, 'zone1', 'primary,rdonly', [0-9]*, 0, 'Stopped', 'vt_targetks'`+
 			`\)`+eol,
 		&sqltypes.Result{},
 	)
@@ -1818,9 +1812,9 @@ func TestMaterializerManyToOne(t *testing.T) {
 	env.tmc.expectVRQuery(
 		200,
 		insertPrefix+
-			`\('workflow', 'keyspace:\\"sourceks\\" shard:\\"-80\\" filter:{rules:{match:\\"t1\\" filter:\\"select.*t1\\"} rules:{match:\\"t2\\" filter:\\"select.*t3\\"}}', '', [0-9]*, [0-9]*, '', '', [0-9]*, 0, 'Stopped', 'vt_targetks', 0, 0\)`+
+			`\('workflow', 'keyspace:\\"sourceks\\" shard:\\"-80\\" filter:{rules:{match:\\"t1\\" filter:\\"select.*t1\\"} rules:{match:\\"t2\\" filter:\\"select.*t3\\"}}', '', [0-9]*, [0-9]*, '', '', [0-9]*, 0, 'Stopped', 'vt_targetks'\)`+
 			`, `+
-			`\('workflow', 'keyspace:\\"sourceks\\" shard:\\"80-\\" filter:{rules:{match:\\"t1\\" filter:\\"select.*t1\\"} rules:{match:\\"t2\\" filter:\\"select.*t3\\"}}', '', [0-9]*, [0-9]*, '', '', [0-9]*, 0, 'Stopped', 'vt_targetks', 0, 0\)`+
+			`\('workflow', 'keyspace:\\"sourceks\\" shard:\\"80-\\" filter:{rules:{match:\\"t1\\" filter:\\"select.*t1\\"} rules:{match:\\"t2\\" filter:\\"select.*t3\\"}}', '', [0-9]*, [0-9]*, '', '', [0-9]*, 0, 'Stopped', 'vt_targetks'\)`+
 			eol,
 		&sqltypes.Result{},
 	)
@@ -2031,7 +2025,7 @@ func TestMaterializerDeploySchema(t *testing.T) {
 	env.tmc.expectVRQuery(
 		200,
 		insertPrefix+
-			`\('workflow', 'keyspace:\\"sourceks\\" shard:\\"0\\" filter:{rules:{match:\\"t1\\" filter:\\"select.*t1\\"} rules:{match:\\"t2\\" filter:\\"select.*t3\\"}}', '', [0-9]*, [0-9]*, '', '', [0-9]*, 0, 'Stopped', 'vt_targetks', 0, 0\)`+
+			`\('workflow', 'keyspace:\\"sourceks\\" shard:\\"0\\" filter:{rules:{match:\\"t1\\" filter:\\"select.*t1\\"} rules:{match:\\"t2\\" filter:\\"select.*t3\\"}}', '', [0-9]*, [0-9]*, '', '', [0-9]*, 0, 'Stopped', 'vt_targetks'\)`+
 			eol,
 		&sqltypes.Result{},
 	)
@@ -2069,7 +2063,7 @@ func TestMaterializerCopySchema(t *testing.T) {
 	env.tmc.expectVRQuery(
 		200,
 		insertPrefix+
-			`\('workflow', 'keyspace:\\"sourceks\\" shard:\\"0\\" filter:{rules:{match:\\"t1\\" filter:\\"select.*t1\\"} rules:{match:\\"t2\\" filter:\\"select.*t3\\"}}', '', [0-9]*, [0-9]*, '', '', [0-9]*, 0, 'Stopped', 'vt_targetks', 0, 0\)`+
+			`\('workflow', 'keyspace:\\"sourceks\\" shard:\\"0\\" filter:{rules:{match:\\"t1\\" filter:\\"select.*t1\\"} rules:{match:\\"t2\\" filter:\\"select.*t3\\"}}', '', [0-9]*, [0-9]*, '', '', [0-9]*, 0, 'Stopped', 'vt_targetks'\)`+
 			eol,
 		&sqltypes.Result{},
 	)
@@ -2554,71 +2548,6 @@ func TestMaterializerNoVindexInExpression(t *testing.T) {
 	require.EqualError(t, err, "could not find vindex column c1")
 }
 
-func TestStripForeignKeys(t *testing.T) {
-	tcs := []struct {
-		desc string
-		ddl  string
-
-		hasErr bool
-		newDDL string
-	}{
-		{
-			desc: "has FK constraints",
-			ddl: "CREATE TABLE `table1` (\n" +
-				"`id` int(11) NOT NULL AUTO_INCREMENT,\n" +
-				"`foreign_id` int(11) CHECK (foreign_id>10),\n" +
-				"PRIMARY KEY (`id`),\n" +
-				"KEY `fk_table1_ref_foreign_id` (`foreign_id`),\n" +
-				"CONSTRAINT `fk_table1_ref_foreign_id` FOREIGN KEY (`foreign_id`) REFERENCES `foreign` (`id`)\n" +
-				") ENGINE=InnoDB DEFAULT CHARSET=latin1;",
-
-			newDDL: "create table table1 (\n" +
-				"\tid int(11) not null auto_increment,\n" +
-				"\tforeign_id int(11),\n" +
-				"\tPRIMARY KEY (id),\n" +
-				"\tKEY fk_table1_ref_foreign_id (foreign_id),\n" +
-				"\tcheck (foreign_id > 10)\n" +
-				") ENGINE InnoDB,\n" +
-				"  CHARSET latin1",
-
-			hasErr: false,
-		},
-		{
-			desc: "no FK constraints",
-			ddl: "CREATE TABLE `table1` (\n" +
-				"`id` int(11) NOT NULL AUTO_INCREMENT,\n" +
-				"`foreign_id` int(11) NOT NULL  CHECK (foreign_id>10),\n" +
-				"`user_id` int(11) NOT NULL,\n" +
-				"PRIMARY KEY (`id`),\n" +
-				"KEY `fk_table1_ref_foreign_id` (`foreign_id`),\n" +
-				"KEY `fk_table1_ref_user_id` (`user_id`)\n" +
-				") ENGINE=InnoDB DEFAULT CHARSET=latin1;",
-
-			newDDL: "create table table1 (\n" +
-				"\tid int(11) not null auto_increment,\n" +
-				"\tforeign_id int(11) not null,\n" +
-				"\tuser_id int(11) not null,\n" +
-				"\tPRIMARY KEY (id),\n" +
-				"\tKEY fk_table1_ref_foreign_id (foreign_id),\n" +
-				"\tKEY fk_table1_ref_user_id (user_id),\n" +
-				"\tcheck (foreign_id > 10)\n" +
-				") ENGINE InnoDB,\n" +
-				"  CHARSET latin1",
-		},
-	}
-
-	for _, tc := range tcs {
-		newDDL, err := stripTableForeignKeys(tc.ddl)
-		if tc.hasErr != (err != nil) {
-			t.Fatalf("hasErr does not match: err: %v, tc: %+v", err, tc)
-		}
-
-		if newDDL != tc.newDDL {
-			utils.MustMatch(t, tc.newDDL, newDDL, fmt.Sprintf("newDDL does not match. tc: %+v", tc))
-		}
-	}
-}
-
 func TestStripConstraints(t *testing.T) {
 	tcs := []struct {
 		desc string
@@ -2788,48 +2717,6 @@ func TestMaterializerManyToManySomeUnreachable(t *testing.T) {
 			err := env.wr.Materialize(context.Background(), ms)
 			require.NoError(t, err)
 			env.tmc.verifyQueries(t)
-		})
-	}
-}
-
-// TestMoveTablesDDLFlag tests that we save the on-ddl flag value in the workflow.
-// Note:
-//   - TestPlayerDDL tests that the vplayer correctly implements the ddl behavior
-//   - We have a manual e2e test for the full behavior: TestVReplicationDDLHandling
-func TestMoveTablesDDLFlag(t *testing.T) {
-	ms := &vtctldatapb.MaterializeSettings{
-		Workflow:       "workflow",
-		SourceKeyspace: "sourceks",
-		TargetKeyspace: "targetks",
-		TableSettings: []*vtctldatapb.TableMaterializeSettings{{
-			TargetTable:      "t1",
-			SourceExpression: "select * from t1",
-		}},
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	for onDDLAction := range binlogdatapb.OnDDLAction_value {
-		t.Run(fmt.Sprintf("OnDDL Flag:%v", onDDLAction), func(t *testing.T) {
-			env := newTestMaterializerEnv(t, ms, []string{"0"}, []string{"0"})
-			defer env.close()
-
-			env.tmc.expectVRQuery(100, mzCheckJournal, &sqltypes.Result{})
-			env.tmc.expectVRQuery(200, mzSelectFrozenQuery, &sqltypes.Result{})
-			if onDDLAction == binlogdatapb.OnDDLAction_name[int32(binlogdatapb.OnDDLAction_IGNORE)] {
-				// This is the default and go does not marshal defaults
-				// for prototext fields so we use the default insert stmt.
-				env.tmc.expectVRQuery(200, insertPrefix, &sqltypes.Result{})
-			} else {
-				env.tmc.expectVRQuery(200, fmt.Sprintf(`/insert into _vt.vreplication\(.*on_ddl:%s.*`, onDDLAction),
-					&sqltypes.Result{})
-			}
-			env.tmc.expectVRQuery(200, mzSelectIDQuery, &sqltypes.Result{})
-			env.tmc.expectVRQuery(200, mzUpdateQuery, &sqltypes.Result{})
-
-			err := env.wr.MoveTables(ctx, "workflow", "sourceks", "targetks", "t1", "",
-				"", false, "", false, true, "", false, "", onDDLAction, nil)
-			require.NoError(t, err)
 		})
 	}
 }

@@ -19,8 +19,6 @@ package mysql
 import (
 	"errors"
 	"testing"
-
-	"github.com/stretchr/testify/assert"
 )
 
 func TestIsConnErr(t *testing.T) {
@@ -48,8 +46,9 @@ func TestIsConnErr(t *testing.T) {
 	}}
 	for _, tcase := range testcases {
 		got := IsConnErr(tcase.in)
-		assert.Equal(t, tcase.want, got, "IsConnErr(%#v): %v, want %v", tcase.in, got, tcase.want)
-
+		if got != tcase.want {
+			t.Errorf("IsConnErr(%#v): %v, want %v", tcase.in, got, tcase.want)
+		}
 	}
 }
 
@@ -78,7 +77,8 @@ func TestIsConnLostDuringQuery(t *testing.T) {
 	}}
 	for _, tcase := range testcases {
 		got := IsConnLostDuringQuery(tcase.in)
-		assert.Equal(t, tcase.want, got, "IsConnLostDuringQuery(%#v): %v, want %v", tcase.in, got, tcase.want)
-
+		if got != tcase.want {
+			t.Errorf("IsConnLostDuringQuery(%#v): %v, want %v", tcase.in, got, tcase.want)
+		}
 	}
 }

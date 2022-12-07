@@ -25,13 +25,16 @@ import (
 	"path"
 	"testing"
 
+	"vitess.io/vitess/go/test/endtoend/recovery"
+	"vitess.io/vitess/go/test/endtoend/sharding/initialsharding"
+
+	"vitess.io/vitess/go/vt/log"
+	"vitess.io/vitess/go/vt/vtgate/vtgateconn"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"vitess.io/vitess/go/test/endtoend/cluster"
-	"vitess.io/vitess/go/test/endtoend/recovery"
-	"vitess.io/vitess/go/vt/log"
-	"vitess.io/vitess/go/vt/vtgate/vtgateconn"
 )
 
 var (
@@ -49,13 +52,13 @@ var (
 	dbCredentialFile string
 	shardName        = "0"
 	commonTabletArg  = []string{
-		"--vreplication_healthcheck_topology_refresh", "1s",
-		"--vreplication_healthcheck_retry_delay", "1s",
-		"--vreplication_retry_delay", "1s",
-		"--degraded_threshold", "5s",
-		"--lock_tables_timeout", "5s",
-		"--watch_replication_stream",
-		"--serving_state_grace_period", "1s"}
+		"-vreplication_healthcheck_topology_refresh", "1s",
+		"-vreplication_healthcheck_retry_delay", "1s",
+		"-vreplication_retry_delay", "1s",
+		"-degraded_threshold", "5s",
+		"-lock_tables_timeout", "5s",
+		"-watch_replication_stream",
+		"-serving_state_grace_period", "1s"}
 	recoveryKS1  = "recovery_ks1"
 	recoveryKS2  = "recovery_ks2"
 	vtInsertTest = `create table vt_insert_test (
@@ -79,6 +82,7 @@ func TestMainImpl(m *testing.M) {
 		localCluster = cluster.NewCluster(cell, hostname)
 		defer localCluster.Teardown()
 
+		localCluster.VtctldExtraArgs = append(localCluster.VtctldExtraArgs, "-durability_policy=semi_sync")
 		// Start topo server
 		err := localCluster.StartTopo()
 		if err != nil {
@@ -91,11 +95,11 @@ func TestMainImpl(m *testing.M) {
 		}
 		localCluster.Keyspaces = append(localCluster.Keyspaces, *keyspace)
 
-		dbCredentialFile = cluster.WriteDbCredentialToTmp(localCluster.TmpDirectory)
+		dbCredentialFile = initialsharding.WriteDbCredentialToTmp(localCluster.TmpDirectory)
 		initDb, _ := os.ReadFile(path.Join(os.Getenv("VTROOT"), "/config/init_db.sql"))
 		sql := string(initDb)
 		newInitDBFile = path.Join(localCluster.TmpDirectory, "init_db_with_passwords.sql")
-		sql = sql + cluster.GetPasswordUpdateSQL(localCluster)
+		sql = sql + initialsharding.GetPasswordUpdateSQL()
 		// https://github.com/vitessio/vitess/issues/8315
 		oldAlterTableMode := `
 SET GLOBAL old_alter_table = ON;
@@ -103,8 +107,8 @@ SET GLOBAL old_alter_table = ON;
 		sql = sql + oldAlterTableMode
 		os.WriteFile(newInitDBFile, []byte(sql), 0666)
 
-		extraArgs := []string{"--db-credentials-file", dbCredentialFile}
-		commonTabletArg = append(commonTabletArg, "--db-credentials-file", dbCredentialFile)
+		extraArgs := []string{"-db-credentials-file", dbCredentialFile}
+		commonTabletArg = append(commonTabletArg, "-db-credentials-file", dbCredentialFile)
 
 		shard := cluster.Shard{
 			Name: shardName,
@@ -124,6 +128,7 @@ SET GLOBAL old_alter_table = ON;
 				tablet.VttabletProcess.ExtraArgs = append(tablet.VttabletProcess.ExtraArgs, recovery.XbArgs...)
 			}
 			tablet.VttabletProcess.SupportsBackup = true
+			tablet.VttabletProcess.EnableSemiSync = true
 
 			tablet.MysqlctlProcess = *cluster.MysqlCtlProcessInstance(tablet.TabletUID, tablet.MySQLPort, localCluster.TmpDirectory)
 			tablet.MysqlctlProcess.InitDBFile = newInitDBFile
@@ -152,12 +157,7 @@ SET GLOBAL old_alter_table = ON;
 			}
 		}
 
-		vtctldClientProcess := cluster.VtctldClientProcessInstance("localhost", localCluster.VtctldProcess.GrpcPort, localCluster.TmpDirectory)
-		_, err = vtctldClientProcess.ExecuteCommandWithOutput("SetKeyspaceDurabilityPolicy", keyspaceName, "--durability-policy=semi_sync")
-		if err != nil {
-			return 1, err
-		}
-		if err := localCluster.VtctlclientProcess.InitializeShard(keyspaceName, shard.Name, cell, primary.TabletUID); err != nil {
+		if err := localCluster.VtctlclientProcess.InitShardPrimary(keyspaceName, shard.Name, cell, primary.TabletUID); err != nil {
 			return 1, err
 		}
 		return m.Run(), nil

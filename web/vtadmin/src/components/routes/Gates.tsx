@@ -26,26 +26,24 @@ import { DataTable } from '../dataTable/DataTable';
 import { ContentContainer } from '../layout/ContentContainer';
 import { WorkspaceHeader } from '../layout/WorkspaceHeader';
 import { WorkspaceTitle } from '../layout/WorkspaceTitle';
-import { QueryLoadingPlaceholder } from '../placeholders/QueryLoadingPlaceholder';
 
 export const Gates = () => {
     useDocumentTitle('Gates');
 
-    const gatesQuery = useGates();
+    const { data } = useGates();
     const { value: filter, updateValue: updateFilter } = useSyncedURLParam('filter');
 
     const rows = React.useMemo(() => {
-        const mapped = (gatesQuery.data || []).map((g) => ({
+        const mapped = (data || []).map((g) => ({
             cell: g.cell,
             cluster: g.cluster?.name,
             hostname: g.hostname,
             keyspaces: g.keyspaces,
             pool: g.pool,
-            fqdn: g.FQDN,
         }));
         const filtered = filterNouns(filter, mapped);
         return orderBy(filtered, ['cluster', 'pool', 'hostname', 'cell']);
-    }, [gatesQuery.data, filter]);
+    }, [data, filter]);
 
     const renderRows = (gates: typeof rows) =>
         gates.map((gate, idx) => (
@@ -54,17 +52,7 @@ export const Gates = () => {
                     <div>{gate.pool}</div>
                     <div className="text-sm text-secondary">{gate.cluster}</div>
                 </DataCell>
-                <DataCell className="whitespace-nowrap">
-                    {gate.fqdn ? (
-                        <div className="font-bold">
-                            <a href={`//${gate.fqdn}`} rel="noopener noreferrer" target="_blank">
-                                {gate.hostname}
-                            </a>
-                        </div>
-                    ) : (
-                        gate.hostname
-                    )}
-                </DataCell>
+                <DataCell className="whitespace-nowrap">{gate.hostname}</DataCell>
                 <DataCell className="whitespace-nowrap">{gate.cell}</DataCell>
                 <DataCell>{(gate.keyspaces || []).join(', ')}</DataCell>
             </tr>
@@ -84,7 +72,6 @@ export const Gates = () => {
                     value={filter || ''}
                 />
                 <DataTable columns={['Pool', 'Hostname', 'Cell', 'Keyspaces']} data={rows} renderRows={renderRows} />
-                <QueryLoadingPlaceholder query={gatesQuery} />
             </ContentContainer>
         </div>
     );

@@ -9,24 +9,14 @@ concurrency:
 env:
   LAUNCHABLE_ORGANIZATION: "vitess"
   LAUNCHABLE_WORKSPACE: "vitess-app"
-  EXPERIMENTAL_GITHUB_OIDC_TOKEN_AUTH: 1
+  GITHUB_PR_HEAD_SHA: "${{ github.event.pull_request.head.sha }}"
 
 jobs:
   build:
     name: Run endtoend tests on Cluster (onlineddl_vrepl) mysql57
     runs-on: ubuntu-20.04
-    permissions:
-      id-token: write
-      contents: read
 
     steps:
-    - name: Skip CI
-      run: |
-        if [[ "${{contains( github.event.pull_request.labels.*.name, 'Skip CI')}}" == "true" ]]; then
-          echo "skipping CI due to the 'Skip CI' label"
-          exit 1
-        fi
-
     - name: Check if workflow needs to be skipped
       id: skip-workflow
       run: |
@@ -35,11 +25,11 @@ jobs:
           skip='true'
         fi
         echo Skip ${skip}
-        echo "skip-workflow=${skip}" >> $GITHUB_OUTPUT
+        echo "::set-output name=skip-workflow::${skip}"
 
     - name: Check out code
       if: steps.skip-workflow.outputs.skip-workflow == 'false'
-      uses: actions/checkout@v3
+      uses: actions/checkout@v2
 
     - name: Check for changes in relevant files
       if: steps.skip-workflow.outputs.skip-workflow == 'false'
@@ -53,29 +43,27 @@ jobs:
             - 'test.go'
             - 'Makefile'
             - 'build.env'
-            - 'go.sum'
-            - 'go.mod'
+            - 'go.[sumod]'
             - 'proto/*.proto'
             - 'tools/**'
             - 'config/**'
             - 'bootstrap.sh'
             - '.github/workflows/cluster_endtoend_onlineddl_vrepl_mysql57.yml'
-            - 'go/test/endtoend/onlineddl/vrepl_suite/testdata'
 
     - name: Set up Go
       if: steps.skip-workflow.outputs.skip-workflow == 'false' && steps.changes.outputs.end_to_end == 'true'
-      uses: actions/setup-go@v3
+      uses: actions/setup-go@v2
       with:
-        go-version: 1.19.3
+        go-version: 1.18.5
 
     - name: Set up python
       if: steps.skip-workflow.outputs.skip-workflow == 'false' && steps.changes.outputs.end_to_end == 'true'
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v2
 
     - name: Tune the OS
       if: steps.skip-workflow.outputs.skip-workflow == 'false' && steps.changes.outputs.end_to_end == 'true'
       run: |
-        sudo sysctl -w net.ipv4.ip_local_port_range="22768 65535"
+        echo '1024 65535' | sudo tee -a /proc/sys/net/ipv4/ip_local_port_range
         # Increase the asynchronous non-blocking I/O. More information at https://dev.mysql.com/doc/refman/5.7/en/innodb-parameters.html#sysvar_innodb_use_native_aio
         echo "fs.aio-max-nr = 1048576" | sudo tee -a /etc/sysctl.conf
         sudo sysctl -p /etc/sysctl.conf

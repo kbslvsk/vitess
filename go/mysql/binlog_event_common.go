@@ -30,32 +30,24 @@ import (
 // into flavor-specific event types to pull in common parsing code.
 //
 // The default v4 header format is:
-//
-//	               offset : size
-//	+============================+
-//	| timestamp         0 : 4    |
-//	+----------------------------+
-//	| type_code         4 : 1    |
-//	+----------------------------+
-//	| server_id         5 : 4    |
-//	+----------------------------+
-//	| event_length      9 : 4    |
-//	+----------------------------+
-//	| next_position    13 : 4    |
-//	+----------------------------+
-//	| flags            17 : 2    |
-//	+----------------------------+
-//	| extra_headers    19 : x-19 |
-//	+============================+
-//	http://dev.mysql.com/doc/internals/en/event-header-fields.html
+//                  offset : size
+//   +============================+
+//   | timestamp         0 : 4    |
+//   +----------------------------+
+//   | type_code         4 : 1    |
+//   +----------------------------+
+//   | server_id         5 : 4    |
+//   +----------------------------+
+//   | event_length      9 : 4    |
+//   +----------------------------+
+//   | next_position    13 : 4    |
+//   +----------------------------+
+//   | flags            17 : 2    |
+//   +----------------------------+
+//   | extra_headers    19 : x-19 |
+//   +============================+
+//   http://dev.mysql.com/doc/internals/en/event-header-fields.html
 type binlogEvent []byte
-
-// dataBytes returns the event bytes without header prefix and without checksum suffix
-func (ev binlogEvent) dataBytes(f BinlogFormat) []byte {
-	data := ev.Bytes()[f.HeaderLength:]
-	data = data[0 : len(data)-4]
-	return data
-}
 
 // IsValid implements BinlogEvent.IsValid().
 func (ev binlogEvent) IsValid() bool {
@@ -109,11 +101,6 @@ func (ev binlogEvent) Length() uint32 {
 	return binary.LittleEndian.Uint32(ev.Bytes()[9 : 9+4])
 }
 
-// NextPosition returns the nextPosition field from the header
-func (ev binlogEvent) NextPosition() uint32 {
-	return binary.LittleEndian.Uint32(ev.Bytes()[13 : 13+4])
-}
-
 // IsFormatDescription implements BinlogEvent.IsFormatDescription().
 func (ev binlogEvent) IsFormatDescription() bool {
 	return ev.Type() == eFormatDescriptionEvent
@@ -132,11 +119,6 @@ func (ev binlogEvent) IsRotate() bool {
 // IsXID implements BinlogEvent.IsXID().
 func (ev binlogEvent) IsXID() bool {
 	return ev.Type() == eXIDEvent
-}
-
-// IsStop implements BinlogEvent.IsStop().
-func (ev binlogEvent) IsStop() bool {
-	return ev.Type() == eStopEvent
 }
 
 // IsIntVar implements BinlogEvent.IsIntVar().
@@ -193,16 +175,15 @@ func (ev binlogEvent) IsCompressed() bool {
 // Format implements BinlogEvent.Format().
 //
 // Expected format (L = total length of event data):
-//
-//	# bytes   field
-//	2         format version
-//	50        server version string, 0-padded but not necessarily 0-terminated
-//	4         timestamp (same as timestamp header field)
-//	1         header length
-//	p         (one byte per packet type) event type header lengths
-//	          Rest was inferred from reading source code:
-//	1         checksum algorithm
-//	4         checksum
+//   # bytes   field
+//   2         format version
+//   50        server version string, 0-padded but not necessarily 0-terminated
+//   4         timestamp (same as timestamp header field)
+//   1         header length
+//   p         (one byte per packet type) event type header lengths
+//             Rest was inferred from reading source code:
+//   1         checksum algorithm
+//   4         checksum
 func (ev binlogEvent) Format() (f BinlogFormat, err error) {
 	// FORMAT_DESCRIPTION_EVENT has a fixed header size of 19
 	// because we have to read it before we know the header_length.
@@ -231,16 +212,15 @@ func (ev binlogEvent) Format() (f BinlogFormat, err error) {
 // Query implements BinlogEvent.Query().
 //
 // Expected format (L = total length of event data):
-//
-//	# bytes   field
-//	4         thread_id
-//	4         execution time
-//	1         length of db_name, not including NULL terminator (X)
-//	2         error code
-//	2         length of status vars block (Y)
-//	Y         status vars block
-//	X+1       db_name + NULL terminator
-//	L-X-1-Y   SQL statement (no NULL terminator)
+//   # bytes   field
+//   4         thread_id
+//   4         execution time
+//   1         length of db_name, not including NULL terminator (X)
+//   2         error code
+//   2         length of status vars block (Y)
+//   Y         status vars block
+//   X+1       db_name + NULL terminator
+//   L-X-1-Y   SQL statement (no NULL terminator)
 func (ev binlogEvent) Query(f BinlogFormat) (query Query, err error) {
 	const varsPos = 4 + 4 + 1 + 2 + 2
 
@@ -313,10 +293,9 @@ varsLoop:
 // IntVar implements BinlogEvent.IntVar().
 //
 // Expected format (L = total length of event data):
-//
-//	# bytes   field
-//	1         variable ID
-//	8         variable value
+//   # bytes   field
+//   1         variable ID
+//   8         variable value
 func (ev binlogEvent) IntVar(f BinlogFormat) (byte, uint64, error) {
 	data := ev.Bytes()[f.HeaderLength:]
 
@@ -332,10 +311,9 @@ func (ev binlogEvent) IntVar(f BinlogFormat) (byte, uint64, error) {
 // Rand implements BinlogEvent.Rand().
 //
 // Expected format (L = total length of event data):
-//
-//	# bytes   field
-//	8         seed 1
-//	8         seed 2
+//   # bytes   field
+//   8         seed 1
+//   8         seed 2
 func (ev binlogEvent) Rand(f BinlogFormat) (seed1 uint64, seed2 uint64, err error) {
 	data := ev.Bytes()[f.HeaderLength:]
 	seed1 = binary.LittleEndian.Uint64(data[0:8])
@@ -358,12 +336,4 @@ func (ev binlogEvent) TableID(f BinlogFormat) uint64 {
 		uint64(ev[pos+3])<<24 |
 		uint64(ev[pos+4])<<32 |
 		uint64(ev[pos+5])<<40
-}
-
-func (ev binlogEvent) NextLogFile(f BinlogFormat) (string, uint64, error) {
-	data := ev.dataBytes(f)
-	pos := 0
-	logPos, pos, _ := readUint64(data, pos)
-	logFile := string(data[pos:])
-	return logFile, logPos, nil
 }

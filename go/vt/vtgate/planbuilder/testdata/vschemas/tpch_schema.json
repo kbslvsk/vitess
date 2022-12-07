@@ -314,7 +314,8 @@
               "column": "l_orderkey",
               "name": "md5"
             }
-          ]
+          ],
+          "column_list_authoritative": true
         },
         "revenue0": {
           "column_vindexes": [

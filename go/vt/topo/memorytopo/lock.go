@@ -17,8 +17,9 @@ limitations under the License.
 package memorytopo
 
 import (
-	"context"
 	"fmt"
+
+	"context"
 
 	"vitess.io/vitess/go/vt/topo"
 )
@@ -40,18 +41,8 @@ type memoryTopoLockDescriptor struct {
 	dirPath string
 }
 
-// TryLock is part of the topo.Conn interface. Its implementation is same as Lock
-func (c *Conn) TryLock(ctx context.Context, dirPath, contents string) (topo.LockDescriptor, error) {
-	return c.Lock(ctx, dirPath, contents)
-}
-
 // Lock is part of the topo.Conn interface.
 func (c *Conn) Lock(ctx context.Context, dirPath, contents string) (topo.LockDescriptor, error) {
-	return c.lock(ctx, dirPath, contents)
-}
-
-// Lock is part of the topo.Conn interface.
-func (c *Conn) lock(ctx context.Context, dirPath, contents string) (topo.LockDescriptor, error) {
 	for {
 		if err := c.dial(ctx); err != nil {
 			return nil, err
@@ -86,12 +77,6 @@ func (c *Conn) lock(ctx context.Context, dirPath, contents string) (topo.LockDes
 		// No one has the lock, grab it.
 		n.lock = make(chan struct{})
 		n.lockContents = contents
-		for _, w := range n.watches {
-			if w.lock == nil {
-				continue
-			}
-			w.lock <- contents
-		}
 		c.factory.mu.Unlock()
 		return &memoryTopoLockDescriptor{
 			c:       c,
@@ -112,10 +97,6 @@ func (ld *memoryTopoLockDescriptor) Unlock(ctx context.Context) error {
 }
 
 func (c *Conn) unlock(ctx context.Context, dirPath string) error {
-	if c.closed {
-		return ErrConnectionClosed
-	}
-
 	c.factory.mu.Lock()
 	defer c.factory.mu.Unlock()
 

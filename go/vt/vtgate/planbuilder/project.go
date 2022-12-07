@@ -18,7 +18,6 @@ package planbuilder
 
 import (
 	"errors"
-	"strings"
 
 	querypb "vitess.io/vitess/go/vt/proto/query"
 	vtrpcpb "vitess.io/vitess/go/vt/proto/vtrpc"
@@ -73,8 +72,8 @@ func planProjection(pb *primitiveBuilder, in logicalPlan, expr *sqlparser.Aliase
 		// others. This functionality depends on the PushOrderBy to request that
 		// the rows be correctly ordered.
 	case *orderedAggregate:
-		if aggrFunc, isAggregate := expr.Expr.(sqlparser.AggrFunc); isAggregate {
-			if _, ok := engine.SupportedAggregates[strings.ToLower(aggrFunc.AggrName())]; ok {
+		if inner, ok := expr.Expr.(*sqlparser.FuncExpr); ok {
+			if _, ok := engine.SupportedAggregates[inner.Name.Lowered()]; ok {
 				rc, colNumber, err := node.pushAggr(pb, expr, origin)
 				if err != nil {
 					return nil, nil, 0, err

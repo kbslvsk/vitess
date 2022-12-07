@@ -17,7 +17,6 @@ limitations under the License.
 package collations
 
 import (
-	"bytes"
 	"math/bits"
 	"sync"
 	"unsafe"
@@ -80,42 +79,21 @@ func (c *Collation_utf8mb4_uca_0900) Collate(left, right []byte, rightIsPrefix b
 		levelsToCompare = c.levelsForCompare
 		itleft          = c.uca.Iterator(left)
 		itright         = c.uca.Iterator(right)
-
-		fastleft, _  = itleft.(*uca.FastIterator900)
-		fastright, _ = itright.(*uca.FastIterator900)
 	)
 
 	defer itleft.Done()
 	defer itright.Done()
 
 nextLevel:
-	if fastleft != nil {
-		for {
-			if cmp := fastleft.FastForward32(fastright); cmp != 0 {
-				return cmp
-			}
+	for {
+		l, lok = itleft.Next()
+		r, rok = itright.Next()
 
-			l, lok = fastleft.Next()
-			r, rok = fastright.Next()
-
-			if l != r || !lok || !rok {
-				break
-			}
-			if fastleft.Level() != level || fastright.Level() != level {
-				break
-			}
+		if l != r || !lok || !rok {
+			break
 		}
-	} else {
-		for {
-			l, lok = itleft.Next()
-			r, rok = itright.Next()
-
-			if l != r || !lok || !rok {
-				break
-			}
-			if itleft.Level() != level || itright.Level() != level {
-				break
-			}
+		if itleft.Level() != level || itright.Level() != level {
+			break
 		}
 	}
 
@@ -151,13 +129,13 @@ func (c *Collation_utf8mb4_uca_0900) WeightString(dst, src []byte, numCodepoints
 		var chunk [16]byte
 		for {
 			for cap(dst)-len(dst) >= 16 {
-				n := fast.NextWeightBlock64(dst[len(dst) : len(dst)+16])
+				n := fast.NextChunk(dst[len(dst) : len(dst)+16])
 				if n <= 0 {
 					goto performPadding
 				}
 				dst = dst[:len(dst)+n]
 			}
-			n := fast.NextWeightBlock64(chunk[:16])
+			n := fast.NextChunk(chunk[:16])
 			if n <= 0 {
 				goto performPadding
 			}
@@ -193,7 +171,7 @@ func (c *Collation_utf8mb4_uca_0900) Hash(src []byte, _ int) HashCode {
 		var chunk [16]byte
 		var n int
 		for {
-			n = fast.NextWeightBlock64(chunk[:16])
+			n = fast.NextChunk(chunk[:16])
 			if n < 16 {
 				break
 			}
@@ -224,16 +202,6 @@ func (c *Collation_utf8mb4_uca_0900) WeightStringLen(numBytes int) int {
 
 func (c *Collation_utf8mb4_uca_0900) Wildcard(pat []byte, matchOne rune, matchMany rune, escape rune) WildcardPattern {
 	return newUnicodeWildcardMatcher(charset.Charset_utf8mb4{}, c.uca.WeightsEqual, c.Collate, pat, matchOne, matchMany, escape)
-}
-
-func (c *Collation_utf8mb4_uca_0900) ToLower(dst, src []byte) []byte {
-	dst = append(dst, bytes.ToLower(src)...)
-	return dst
-}
-
-func (c *Collation_utf8mb4_uca_0900) ToUpper(dst, src []byte) []byte {
-	dst = append(dst, bytes.ToUpper(src)...)
-	return dst
 }
 
 type Collation_utf8mb4_0900_bin struct{}
@@ -283,16 +251,6 @@ func (c *Collation_utf8mb4_0900_bin) Wildcard(pat []byte, matchOne rune, matchMa
 		return a == b
 	}
 	return newUnicodeWildcardMatcher(charset.Charset_utf8mb4{}, equals, c.Collate, pat, matchOne, matchMany, escape)
-}
-
-func (c *Collation_utf8mb4_0900_bin) ToLower(dst, src []byte) []byte {
-	dst = append(dst, bytes.ToLower(src)...)
-	return dst
-}
-
-func (c *Collation_utf8mb4_0900_bin) ToUpper(dst, src []byte) []byte {
-	dst = append(dst, bytes.ToUpper(src)...)
-	return dst
 }
 
 type Collation_uca_legacy struct {

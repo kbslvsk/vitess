@@ -23,10 +23,8 @@ package dbconfigs
 import (
 	"context"
 	"encoding/json"
+	"flag"
 
-	"github.com/spf13/pflag"
-
-	"vitess.io/vitess/go/vt/servenv"
 	"vitess.io/vitess/go/vt/vttls"
 
 	"vitess.io/vitess/go/mysql"
@@ -51,7 +49,7 @@ const (
 )
 
 var (
-	// GlobalDBConfigs contains the initial values of dbconfigs from flags.
+	// GlobalDBConfigs contains the initial values of dbconfgis from flags.
 	GlobalDBConfigs DBConfigs
 
 	// All can be used to register all flags: RegisterFlags(All...)
@@ -88,7 +86,6 @@ type DBConfigs struct {
 	ServerName                 string        `json:"serverName,omitempty"`
 	ConnectTimeoutMilliseconds int           `json:"connectTimeoutMilliseconds,omitempty"`
 	DBName                     string        `json:"dbName,omitempty"`
-	EnableQueryInfo            bool          `json:"enableQueryInfo,omitempty"`
 
 	App          UserConfig `json:"app,omitempty"`
 	Dba          UserConfig `json:"dba,omitempty"`
@@ -115,47 +112,63 @@ type UserConfig struct {
 	UseTCP   bool   `json:"useTcp,omitempty"`
 }
 
-// RegisterFlags registers the base DBFlags, credentials flags, and the user
-// specific ones for the specified system users for the requesting command.
-// For instance, the vttablet command will register flags for all users
-// as defined in the dbconfigs.All variable.
+// RegisterFlags registers the flags for the given DBConfigFlag.
+// For instance, vttablet will register client, dba and repl.
+// Returns all registered flags.
 func RegisterFlags(userKeys ...string) {
-	servenv.OnParse(func(fs *pflag.FlagSet) {
-		registerBaseFlags(fs)
-		for _, userKey := range userKeys {
-			uc, cp := GlobalDBConfigs.getParams(userKey, &GlobalDBConfigs)
-			registerPerUserFlags(fs, userKey, uc, cp)
-		}
-	})
+	registerBaseFlags()
+	for _, userKey := range userKeys {
+		uc, cp := GlobalDBConfigs.getParams(userKey, &GlobalDBConfigs)
+		registerPerUserFlags(userKey, uc, cp)
+	}
 }
 
-func registerBaseFlags(fs *pflag.FlagSet) {
-	fs.StringVar(&GlobalDBConfigs.Socket, "db_socket", "", "The unix socket to connect on. If this is specified, host and port will not be used.")
-	fs.StringVar(&GlobalDBConfigs.Host, "db_host", "", "The host name for the tcp connection.")
-	fs.IntVar(&GlobalDBConfigs.Port, "db_port", 0, "tcp port")
-	fs.StringVar(&GlobalDBConfigs.Charset, "db_charset", "utf8mb4", "Character set used for this tablet.")
-	fs.Uint64Var(&GlobalDBConfigs.Flags, "db_flags", 0, "Flag values as defined by MySQL.")
-	fs.StringVar(&GlobalDBConfigs.Flavor, "db_flavor", "", "Flavor overrid. Valid value is FilePos.")
-	fs.Var(&GlobalDBConfigs.SslMode, "db_ssl_mode", "SSL mode to connect with. One of disabled, preferred, required, verify_ca & verify_identity.")
-	fs.StringVar(&GlobalDBConfigs.SslCa, "db_ssl_ca", "", "connection ssl ca")
-	fs.StringVar(&GlobalDBConfigs.SslCaPath, "db_ssl_ca_path", "", "connection ssl ca path")
-	fs.StringVar(&GlobalDBConfigs.SslCert, "db_ssl_cert", "", "connection ssl certificate")
-	fs.StringVar(&GlobalDBConfigs.SslKey, "db_ssl_key", "", "connection ssl key")
-	fs.StringVar(&GlobalDBConfigs.TLSMinVersion, "db_tls_min_version", "", "Configures the minimal TLS version negotiated when SSL is enabled. Defaults to TLSv1.2. Options: TLSv1.0, TLSv1.1, TLSv1.2, TLSv1.3.")
-	fs.StringVar(&GlobalDBConfigs.ServerName, "db_server_name", "", "server name of the DB we are connecting to.")
-	fs.IntVar(&GlobalDBConfigs.ConnectTimeoutMilliseconds, "db_connect_timeout_ms", 0, "connection timeout to mysqld in milliseconds (0 for no timeout)")
-	fs.BoolVar(&GlobalDBConfigs.EnableQueryInfo, "db_conn_query_info", false, "enable parsing and processing of QUERY_OK info fields")
+func registerBaseFlags() {
+	flag.StringVar(&GlobalDBConfigs.Socket, "db_socket", "", "The unix socket to connect on. If this is specified, host and port will not be used.")
+	flag.StringVar(&GlobalDBConfigs.Host, "db_host", "", "The host name for the tcp connection.")
+	flag.IntVar(&GlobalDBConfigs.Port, "db_port", 0, "tcp port")
+	flag.StringVar(&GlobalDBConfigs.Charset, "db_charset", "utf8mb4", "Character set used for this tablet.")
+	flag.Uint64Var(&GlobalDBConfigs.Flags, "db_flags", 0, "Flag values as defined by MySQL.")
+	flag.StringVar(&GlobalDBConfigs.Flavor, "db_flavor", "", "Flavor overrid. Valid value is FilePos.")
+	flag.Var(&GlobalDBConfigs.SslMode, "db_ssl_mode", "SSL mode to connect with. One of disabled, preferred, required, verify_ca & verify_identity.")
+	flag.StringVar(&GlobalDBConfigs.SslCa, "db_ssl_ca", "", "connection ssl ca")
+	flag.StringVar(&GlobalDBConfigs.SslCaPath, "db_ssl_ca_path", "", "connection ssl ca path")
+	flag.StringVar(&GlobalDBConfigs.SslCert, "db_ssl_cert", "", "connection ssl certificate")
+	flag.StringVar(&GlobalDBConfigs.SslKey, "db_ssl_key", "", "connection ssl key")
+	flag.StringVar(&GlobalDBConfigs.TLSMinVersion, "db_tls_min_version", "", "Configures the minimal TLS version negotiated when SSL is enabled. Defaults to TLSv1.2. Options: TLSv1.0, TLSv1.1, TLSv1.2, TLSv1.3.")
+	flag.StringVar(&GlobalDBConfigs.ServerName, "db_server_name", "", "server name of the DB we are connecting to.")
+	flag.IntVar(&GlobalDBConfigs.ConnectTimeoutMilliseconds, "db_connect_timeout_ms", 0, "connection timeout to mysqld in milliseconds (0 for no timeout)")
 }
 
 // The flags will change the global singleton
-func registerPerUserFlags(fs *pflag.FlagSet, userKey string, uc *UserConfig, cp *mysql.ConnParams) {
+// TODO(sougou): deprecate the legacy flags.
+func registerPerUserFlags(userKey string, uc *UserConfig, cp *mysql.ConnParams) {
 	newUserFlag := "db_" + userKey + "_user"
-	fs.StringVar(&uc.User, newUserFlag, "vt_"+userKey, "db "+userKey+" user userKey")
+	flag.StringVar(&uc.User, "db-config-"+userKey+"-uname", "vt_"+userKey, "deprecated: use "+newUserFlag)
+	flag.StringVar(&uc.User, newUserFlag, "vt_"+userKey, "db "+userKey+" user userKey")
 
 	newPasswordFlag := "db_" + userKey + "_password"
-	fs.StringVar(&uc.Password, newPasswordFlag, "", "db "+userKey+" password")
+	flag.StringVar(&uc.Password, "db-config-"+userKey+"-pass", "", "db "+userKey+" deprecated: use "+newPasswordFlag)
+	flag.StringVar(&uc.Password, newPasswordFlag, "", "db "+userKey+" password")
 
-	fs.BoolVar(&uc.UseSSL, "db_"+userKey+"_use_ssl", true, "Set this flag to false to make the "+userKey+" connection to not use ssl")
+	flag.BoolVar(&uc.UseSSL, "db_"+userKey+"_use_ssl", true, "Set this flag to false to make the "+userKey+" connection to not use ssl")
+
+	flag.StringVar(&cp.Host, "db-config-"+userKey+"-host", "", "deprecated: use db_host")
+	flag.IntVar(&cp.Port, "db-config-"+userKey+"-port", 0, "deprecated: use db_port")
+	flag.StringVar(&cp.UnixSocket, "db-config-"+userKey+"-unixsocket", "", "deprecated: use db_socket")
+	flag.StringVar(&cp.Charset, "db-config-"+userKey+"-charset", "utf8mb4", "deprecated: use db_charset")
+	flag.Uint64Var(&cp.Flags, "db-config-"+userKey+"-flags", 0, "deprecated: use db_flags")
+	flag.StringVar(&cp.SslCa, "db-config-"+userKey+"-ssl-ca", "", "deprecated: use db_ssl_ca")
+	flag.StringVar(&cp.SslCaPath, "db-config-"+userKey+"-ssl-ca-path", "", "deprecated: use db_ssl_ca_path")
+	flag.StringVar(&cp.SslCert, "db-config-"+userKey+"-ssl-cert", "", "deprecated: use db_ssl_cert")
+	flag.StringVar(&cp.SslKey, "db-config-"+userKey+"-ssl-key", "", "deprecated: use db_ssl_key")
+	flag.StringVar(&cp.ServerName, "db-config-"+userKey+"-server_name", "", "deprecated: use db_server_name")
+	flag.StringVar(&cp.Flavor, "db-config-"+userKey+"-flavor", "", "deprecated: use db_flavor")
+
+	if userKey == ExternalRepl {
+		flag.StringVar(&cp.DeprecatedDBName, "db-config-"+userKey+"-dbname", "", "deprecated: dbname does not need to be explicitly configured")
+	}
+
 }
 
 // Connector contains Connection Parameters for mysql connection
@@ -355,7 +368,6 @@ func (dbcfgs *DBConfigs) InitWithSocket(defaultSocketFile string) {
 			cp.Flavor = dbcfgs.Flavor
 		}
 		cp.ConnectTimeoutMs = uint64(dbcfgs.ConnectTimeoutMilliseconds)
-		cp.EnableQueryInfo = dbcfgs.EnableQueryInfo
 
 		cp.Uname = uc.User
 		cp.Pass = uc.Password
@@ -405,10 +417,9 @@ func (dbcfgs *DBConfigs) getParams(userKey string, dbc *DBConfigs) (*UserConfig,
 }
 
 // SetDbParams sets the dba and app params
-func (dbcfgs *DBConfigs) SetDbParams(dbaParams, appParams, filteredParams mysql.ConnParams) {
+func (dbcfgs *DBConfigs) SetDbParams(dbaParams, appParams mysql.ConnParams) {
 	dbcfgs.dbaParams = dbaParams
 	dbcfgs.appParams = appParams
-	dbcfgs.filteredParams = filteredParams
 }
 
 // NewTestDBConfigs returns a DBConfigs meant for testing.

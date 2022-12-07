@@ -27,7 +27,7 @@ import (
 	"vitess.io/vitess/go/vt/vtgate/planbuilder/plancontext"
 )
 
-func buildAlterMigrationPlan(query string, vschema plancontext.VSchema, enableOnlineDDL bool) (*planResult, error) {
+func buildAlterMigrationPlan(query string, vschema plancontext.VSchema, enableOnlineDDL bool) (engine.Primitive, error) {
 	if !enableOnlineDDL {
 		return nil, schema.ErrOnlineDDLDisabled
 	}
@@ -47,15 +47,14 @@ func buildAlterMigrationPlan(query string, vschema plancontext.VSchema, enableOn
 		dest = key.DestinationAllShards{}
 	}
 
-	send := &engine.Send{
+	return &engine.Send{
 		Keyspace:          ks,
 		TargetDestination: dest,
 		Query:             query,
-	}
-	return newPlanResult(send), nil
+	}, nil
 }
 
-func buildRevertMigrationPlan(query string, stmt *sqlparser.RevertMigration, vschema plancontext.VSchema, enableOnlineDDL bool) (*planResult, error) {
+func buildRevertMigrationPlan(query string, stmt *sqlparser.RevertMigration, vschema plancontext.VSchema, enableOnlineDDL bool) (engine.Primitive, error) {
 	if !enableOnlineDDL {
 		return nil, schema.ErrOnlineDDLDisabled
 	}
@@ -75,16 +74,15 @@ func buildRevertMigrationPlan(query string, stmt *sqlparser.RevertMigration, vsc
 		dest = key.DestinationAllShards{}
 	}
 
-	emig := &engine.RevertMigration{
+	return &engine.RevertMigration{
 		Keyspace:          ks,
 		TargetDestination: dest,
 		Stmt:              stmt,
 		Query:             query,
-	}
-	return newPlanResult(emig), nil
+	}, nil
 }
 
-func buildShowMigrationLogsPlan(query string, vschema plancontext.VSchema, enableOnlineDDL bool) (*planResult, error) {
+func buildShowMigrationLogsPlan(query string, vschema plancontext.VSchema, enableOnlineDDL bool) (engine.Primitive, error) {
 	if !enableOnlineDDL {
 		return nil, schema.ErrOnlineDDLDisabled
 	}
@@ -104,10 +102,9 @@ func buildShowMigrationLogsPlan(query string, vschema plancontext.VSchema, enabl
 		dest = key.DestinationAllShards{}
 	}
 
-	send := &engine.Send{
+	return &engine.Send{
 		Keyspace:          ks,
 		TargetDestination: dest,
 		Query:             query,
-	}
-	return newPlanResult(send), nil
+	}, nil
 }

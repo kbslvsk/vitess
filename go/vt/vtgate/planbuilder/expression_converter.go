@@ -50,11 +50,13 @@ func booleanValues(astExpr sqlparser.Expr) evalengine.Expr {
 		}
 	case *sqlparser.ColName:
 		//set autocommit = on
-		switch node.Name.Lowered() {
-		case "on":
-			return ON
-		case "off":
-			return OFF
+		if node.Name.AtCount() == sqlparser.NoAt {
+			switch node.Name.Lowered() {
+			case "on":
+				return ON
+			case "off":
+				return OFF
+			}
 		}
 	}
 	return nil
@@ -82,9 +84,9 @@ func (ec *expressionConverter) convert(astExpr sqlparser.Expr, boolean, identifi
 			return evalExpr, nil
 		}
 	}
-	evalExpr, err := evalengine.Translate(astExpr, nil)
+	evalExpr, err := evalengine.Convert(astExpr, nil)
 	if err != nil {
-		if !strings.Contains(err.Error(), evalengine.ErrTranslateExprNotSupported) {
+		if !strings.Contains(err.Error(), evalengine.ErrConvertExprNotSupported) {
 			return nil, err
 		}
 		evalExpr = &evalengine.Column{Offset: len(ec.tabletExpressions)}

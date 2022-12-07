@@ -17,7 +17,6 @@ limitations under the License.
 package mysql
 
 import (
-	"context"
 	"crypto/tls"
 	"fmt"
 	"net"
@@ -34,6 +33,8 @@ import (
 
 	"vitess.io/vitess/go/vt/tlstest"
 	"vitess.io/vitess/go/vt/vttls"
+
+	"context"
 )
 
 // assertSQLError makes sure we get the right error.
@@ -149,7 +150,7 @@ func TestTLSClientDisabled(t *testing.T) {
 	// Below, we are enabling --ssl-verify-server-cert, which adds
 	// a check that the common name of the certificate matches the
 	// server host name we connect to.
-	l, err := NewListener("tcp", "127.0.0.1:", authServer, th, 0, 0, false, false)
+	l, err := NewListener("tcp", "127.0.0.1:", authServer, th, 0, 0, false)
 	require.NoError(t, err)
 	defer l.Close()
 
@@ -157,7 +158,9 @@ func TestTLSClientDisabled(t *testing.T) {
 	port := l.Addr().(*net.TCPAddr).Port
 
 	// Create the certs.
-	root := t.TempDir()
+	root, err := os.MkdirTemp("", "TestTLSServer")
+	require.NoError(t, err)
+	defer os.RemoveAll(root)
 	tlstest.CreateCA(root)
 	tlstest.CreateSignedCert(root, tlstest.CA, "01", "server", host)
 	tlstest.CreateSignedCert(root, tlstest.CA, "02", "client", "Client Cert")
@@ -221,7 +224,7 @@ func TestTLSClientPreferredDefault(t *testing.T) {
 	// Below, we are enabling --ssl-verify-server-cert, which adds
 	// a check that the common name of the certificate matches the
 	// server host name we connect to.
-	l, err := NewListener("tcp", "127.0.0.1:", authServer, th, 0, 0, false, false)
+	l, err := NewListener("tcp", "127.0.0.1:", authServer, th, 0, 0, false)
 	require.NoError(t, err)
 	defer l.Close()
 
@@ -229,7 +232,9 @@ func TestTLSClientPreferredDefault(t *testing.T) {
 	port := l.Addr().(*net.TCPAddr).Port
 
 	// Create the certs.
-	root := t.TempDir()
+	root, err := os.MkdirTemp("", "TestTLSServer")
+	require.NoError(t, err)
+	defer os.RemoveAll(root)
 	tlstest.CreateCA(root)
 	tlstest.CreateSignedCert(root, tlstest.CA, "01", "server", "server.example.com")
 	tlstest.CreateSignedCert(root, tlstest.CA, "02", "client", "Client Cert")
@@ -294,7 +299,7 @@ func TestTLSClientRequired(t *testing.T) {
 	// Below, we are enabling --ssl-verify-server-cert, which adds
 	// a check that the common name of the certificate matches the
 	// server host name we connect to.
-	l, err := NewListener("tcp", "127.0.0.1:", authServer, th, 0, 0, false, false)
+	l, err := NewListener("tcp", "127.0.0.1:", authServer, th, 0, 0, false)
 	require.NoError(t, err)
 	defer l.Close()
 
@@ -341,7 +346,7 @@ func TestTLSClientVerifyCA(t *testing.T) {
 	// Below, we are enabling --ssl-verify-server-cert, which adds
 	// a check that the common name of the certificate matches the
 	// server host name we connect to.
-	l, err := NewListener("tcp", "127.0.0.1:", authServer, th, 0, 0, false, false)
+	l, err := NewListener("tcp", "127.0.0.1:", authServer, th, 0, 0, false)
 	require.NoError(t, err)
 	defer l.Close()
 
@@ -349,7 +354,9 @@ func TestTLSClientVerifyCA(t *testing.T) {
 	port := l.Addr().(*net.TCPAddr).Port
 
 	// Create the certs.
-	root := t.TempDir()
+	root, err := os.MkdirTemp("", "TestTLSServer")
+	require.NoError(t, err)
+	defer os.RemoveAll(root)
 	tlstest.CreateCA(root)
 	tlstest.CreateSignedCert(root, tlstest.CA, "01", "server", "server.example.com")
 	tlstest.CreateSignedCert(root, tlstest.CA, "02", "client", "Client Cert")
@@ -424,7 +431,7 @@ func TestTLSClientVerifyIdentity(t *testing.T) {
 	// Below, we are enabling --ssl-verify-server-cert, which adds
 	// a check that the common name of the certificate matches the
 	// server host name we connect to.
-	l, err := NewListener("tcp", "127.0.0.1:", authServer, th, 0, 0, false, false)
+	l, err := NewListener("tcp", "127.0.0.1:", authServer, th, 0, 0, false)
 	require.NoError(t, err)
 	defer l.Close()
 
@@ -432,7 +439,9 @@ func TestTLSClientVerifyIdentity(t *testing.T) {
 	port := l.Addr().(*net.TCPAddr).Port
 
 	// Create the certs.
-	root := t.TempDir()
+	root, err := os.MkdirTemp("", "TestTLSServer")
+	require.NoError(t, err)
+	defer os.RemoveAll(root)
 	tlstest.CreateCA(root)
 	tlstest.CreateSignedCert(root, tlstest.CA, "01", "server", "server.example.com")
 	tlstest.CreateSignedCert(root, tlstest.CA, "02", "client", "Client Cert")

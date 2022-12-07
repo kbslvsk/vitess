@@ -18,15 +18,16 @@ package k8stopo
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
 	"os/exec"
 	"path"
 	"runtime"
-	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
+	"testing"
+
 	extensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -44,7 +45,11 @@ func TestKubernetesTopo(t *testing.T) {
 	}
 
 	// Create a data dir for test data
-	testDataDir := t.TempDir()
+	testDataDir, err := os.MkdirTemp("", "vt-test-k3s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(testDataDir) // clean up
 
 	// Gen a temp file name for the config
 	testConfig, err := os.CreateTemp("", "vt-test-k3s-config")
@@ -97,8 +102,10 @@ func TestKubernetesTopo(t *testing.T) {
 		}
 
 		crdFile, err := os.Open("./VitessTopoNodes-crd.yaml")
-		require.NoError(t, err)
-		defer crdFile.Close()
+		if err != nil {
+			t.Fatal(err)
+			defer crdFile.Close()
+		}
 
 		crd := &extensionsv1.CustomResourceDefinition{}
 
@@ -113,12 +120,7 @@ func TestKubernetesTopo(t *testing.T) {
 	}
 
 	serverAddr := "default"
-
-	oldKubeConfigPath := kubeconfigPath
-	kubeconfigPath = testConfigPath
-	defer func() {
-		kubeconfigPath = oldKubeConfigPath
-	}()
+	flag.Set("topo_k8s_kubeconfig", testConfigPath)
 
 	// Run the test suite.
 	testIndex := 0
@@ -143,5 +145,5 @@ func TestKubernetesTopo(t *testing.T) {
 		}
 
 		return ts
-	}, []string{"checkTryLock", "checkShardWithLock"})
+	})
 }

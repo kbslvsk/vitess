@@ -36,9 +36,12 @@ import (
 )
 
 // startEtcd starts an etcd subprocess, and waits for it to be ready.
-func startEtcd(t *testing.T) string {
+func startEtcd(t *testing.T) (*exec.Cmd, string, string) {
 	// Create a temporary directory.
-	dataDir := t.TempDir()
+	dataDir, err := os.MkdirTemp("", "etcd")
+	if err != nil {
+		t.Fatalf("cannot create tempdir: %v", err)
+	}
 
 	// Get our two ports to listen to.
 	port := testfiles.GoVtTopoEtcd2topoPort
@@ -55,7 +58,7 @@ func startEtcd(t *testing.T) string {
 		"-listen-peer-urls", peerAddr,
 		"-initial-cluster", initialCluster,
 		"-data-dir", dataDir)
-	err := cmd.Start()
+	err = cmd.Start()
 	if err != nil {
 		t.Fatalf("failed to start etcd: %v", err)
 	}
@@ -68,7 +71,6 @@ func startEtcd(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("newCellClient(%v) failed: %v", clientAddr, err)
 	}
-	defer cli.Close()
 
 	// Wait until we can list "/", or timeout.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -83,24 +85,17 @@ func startEtcd(t *testing.T) string {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Cleanup(func() {
-		// log error
-		if err := cmd.Process.Kill(); err != nil {
-			log.Errorf("cmd.Process.Kill() failed : %v", err)
-		}
-		// log error
-		if err := cmd.Wait(); err != nil {
-			log.Errorf("cmd.wait() failed : %v", err)
-		}
-	})
 
-	return clientAddr
+	return cmd, dataDir, clientAddr
 }
 
 // startEtcdWithTLS starts an etcd subprocess with TLS setup, and waits for it to be ready.
-func startEtcdWithTLS(t *testing.T) (string, *tlstest.ClientServerKeyPairs) {
+func startEtcdWithTLS(t *testing.T) (string, *tlstest.ClientServerKeyPairs, func()) {
 	// Create a temporary directory.
-	dataDir := t.TempDir()
+	dataDir, err := os.MkdirTemp("", "etcd")
+	if err != nil {
+		t.Fatalf("cannot create tempdir: %v", err)
+	}
 
 	// Get our two ports to listen to.
 	port := testfiles.GoVtTopoEtcd2topoPort
@@ -129,7 +124,7 @@ func startEtcdWithTLS(t *testing.T) (string, *tlstest.ClientServerKeyPairs) {
 
 	cmd.Stderr = os.Stderr
 	cmd.Stdout = os.Stdout
-	err := cmd.Start()
+	err = cmd.Start()
 	if err != nil {
 		t.Fatalf("failed to start etcd: %v", err)
 	}
@@ -173,7 +168,8 @@ func startEtcdWithTLS(t *testing.T) (string, *tlstest.ClientServerKeyPairs) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	t.Cleanup(func() {
+
+	stopEtcd := func() {
 		// log error
 		if err := cmd.Process.Kill(); err != nil {
 			log.Errorf("cmd.Process.Kill() failed : %v", err)
@@ -182,14 +178,16 @@ func startEtcdWithTLS(t *testing.T) (string, *tlstest.ClientServerKeyPairs) {
 		if err := cmd.Wait(); err != nil {
 			log.Errorf("cmd.wait() failed : %v", err)
 		}
-	})
+		os.RemoveAll(dataDir)
+	}
 
-	return clientAddr, &certs
+	return clientAddr, &certs, stopEtcd
 }
 
 func TestEtcd2TLS(t *testing.T) {
 	// Start a single etcd in the background.
-	clientAddr, certs := startEtcdWithTLS(t)
+	clientAddr, certs, stopEtcd := startEtcdWithTLS(t)
+	defer stopEtcd()
 
 	testIndex := 0
 	testRoot := fmt.Sprintf("/test-%v", testIndex)
@@ -219,7 +217,12 @@ func TestEtcd2TLS(t *testing.T) {
 
 func TestEtcd2Topo(t *testing.T) {
 	// Start a single etcd in the background.
-	clientAddr := startEtcd(t)
+	cmd, dataDir, clientAddr := startEtcd(t)
+	defer func() {
+		cmd.Process.Kill()
+		cmd.Wait()
+		os.RemoveAll(dataDir)
+	}()
 
 	testIndex := 0
 	newServer := func() *topo.Server {
@@ -247,7 +250,7 @@ func TestEtcd2Topo(t *testing.T) {
 	// Run the TopoServerTestSuite tests.
 	test.TopoServerTestSuite(t, func() *topo.Server {
 		return newServer()
-	}, []string{})
+	})
 
 	// Run etcd-specific tests.
 	ts := newServer()
@@ -271,7 +274,7 @@ func testKeyspaceLock(t *testing.T, ts *topo.Server) {
 	}
 
 	// Long TTL, unlock before lease runs out.
-	leaseTTL = 1000
+	*leaseTTL = 1000
 	lockDescriptor, err := conn.Lock(ctx, keyspacePath, "ttl")
 	if err != nil {
 		t.Fatalf("Lock failed: %v", err)
@@ -281,7 +284,7 @@ func testKeyspaceLock(t *testing.T, ts *topo.Server) {
 	}
 
 	// Short TTL, make sure it doesn't expire.
-	leaseTTL = 1
+	*leaseTTL = 1
 	lockDescriptor, err = conn.Lock(ctx, keyspacePath, "short ttl")
 	if err != nil {
 		t.Fatalf("Lock failed: %v", err)

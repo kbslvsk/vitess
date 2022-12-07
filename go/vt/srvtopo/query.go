@@ -39,12 +39,13 @@ type queryEntry struct {
 
 	insertionTime time.Time
 	lastQueryTime time.Time
-	value         any
+	value         interface{}
 	lastError     error
+	lastErrorCtx  context.Context
 }
 
 type resilientQuery struct {
-	query func(ctx context.Context, entry *queryEntry) (any, error)
+	query func(ctx context.Context, entry *queryEntry) (interface{}, error)
 
 	counts               *stats.CountersWithSingleLabel
 	cacheRefreshInterval time.Duration
@@ -54,7 +55,7 @@ type resilientQuery struct {
 	entries map[string]*queryEntry
 }
 
-func (q *resilientQuery) getCurrentValue(ctx context.Context, wkey fmt.Stringer, staleOK bool) (any, error) {
+func (q *resilientQuery) getCurrentValue(ctx context.Context, wkey fmt.Stringer, staleOK bool) (interface{}, error) {
 	q.counts.Add(queryCategory, 1)
 
 	// find the entry in the cache, add it if not there
@@ -108,7 +109,7 @@ func (q *resilientQuery) getCurrentValue(ctx context.Context, wkey fmt.Stringer,
 				}
 			}()
 
-			newCtx, cancel := context.WithTimeout(ctx, srvTopoTimeout)
+			newCtx, cancel := context.WithTimeout(ctx, *srvTopoTimeout)
 			defer cancel()
 
 			result, err := q.query(newCtx, entry)
@@ -143,6 +144,7 @@ func (q *resilientQuery) getCurrentValue(ctx context.Context, wkey fmt.Stringer,
 			}
 
 			entry.lastError = err
+			entry.lastErrorCtx = newCtx
 		}()
 	}
 

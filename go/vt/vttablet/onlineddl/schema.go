@@ -71,18 +71,6 @@ const (
 	alterSchemaMigrationsTableAllowConcurrent          = "ALTER TABLE _vt.schema_migrations add column allow_concurrent tinyint unsigned NOT NULL DEFAULT 0"
 	alterSchemaMigrationsTableRevertedUUID             = "ALTER TABLE _vt.schema_migrations add column reverted_uuid varchar(64) NOT NULL DEFAULT ''"
 	alterSchemaMigrationsTableRevertedUUIDIndex        = "ALTER TABLE _vt.schema_migrations add KEY reverted_uuid_idx (reverted_uuid(64))"
-	alterSchemaMigrationsTableIsView                   = "ALTER TABLE _vt.schema_migrations add column is_view tinyint unsigned NOT NULL DEFAULT 0"
-	alterSchemaMigrationsTableReadyToComplete          = "ALTER TABLE _vt.schema_migrations add column ready_to_complete tinyint unsigned NOT NULL DEFAULT 0"
-	alterSchemaMigrationsTableStowawayTable            = "ALTER TABLE _vt.schema_migrations add column stowaway_table tinytext NOT NULL"
-	alterSchemaMigrationsTableVreplLivenessIndicator   = "ALTER TABLE _vt.schema_migrations add column vitess_liveness_indicator bigint NOT NULL DEFAULT 0"
-	alterSchemaMigrationsTableUserThrottleRatio        = "ALTER TABLE _vt.schema_migrations add column user_throttle_ratio float NOT NULL DEFAULT 0"
-	alterSchemaMigrationsTableSpecialPlan              = "ALTER TABLE _vt.schema_migrations add column special_plan text NOT NULL"
-	alterSchemaMigrationsLastThrottled                 = "ALTER TABLE _vt.schema_migrations add column last_throttled_timestamp timestamp NULL DEFAULT NULL"
-	alterSchemaMigrationsComponentThrottled            = "ALTER TABLE _vt.schema_migrations add column component_throttled tinytext NOT NULL"
-	alterSchemaMigrationsCancelledTimestamp            = "ALTER TABLE _vt.schema_migrations add column cancelled_timestamp timestamp NULL DEFAULT NULL"
-	alterSchemaMigrationsTablePostponeLaunch           = "ALTER TABLE _vt.schema_migrations add column postpone_launch tinyint unsigned NOT NULL DEFAULT 0"
-	alterSchemaMigrationsStage                         = "ALTER TABLE _vt.schema_migrations add column stage text not null"
-	alterSchemaMigrationsCutoverAttempts               = "ALTER TABLE _vt.schema_migrations add column cutover_attempts int unsigned NOT NULL DEFAULT 0"
 
 	sqlInsertMigration = `INSERT IGNORE INTO _vt.schema_migrations (
 		migration_uuid,
@@ -99,25 +87,26 @@ const (
 		migration_status,
 		tablet,
 		retain_artifacts_seconds,
-		postpone_launch,
 		postpone_completion,
 		allow_concurrent,
-		reverted_uuid,
-		is_view
+		reverted_uuid
 	) VALUES (
-		%a, %a, %a, %a, %a, %a, %a, %a, %a, NOW(), %a, %a, %a, %a, %a, %a, %a, %a, %a
+		%a, %a, %a, %a, %a, %a, %a, %a, %a, FROM_UNIXTIME(NOW()), %a, %a, %a, %a, %a, %a, %a
 	)`
 
-	sqlSelectQueuedMigrations = `SELECT
-			migration_uuid,
-			ddl_action,
-			postpone_launch,
-			postpone_completion,
-			ready_to_complete
-		FROM _vt.schema_migrations
+	sqlScheduleSingleMigration = `UPDATE _vt.schema_migrations
+		SET
+			migration_status='ready',
+			ready_timestamp=NOW()
 		WHERE
 			migration_status='queued'
-	`
+			AND (
+				postpone_completion=0 OR ddl_action='alter'
+			)
+		ORDER BY
+			requested_timestamp ASC
+		LIMIT 1
+	`  // if the migration is CREATE or DROP, and postpone_completion=1, we just don't schedule it
 	sqlUpdateMySQLTable = `UPDATE _vt.schema_migrations
 			SET mysql_table=%a
 		WHERE
@@ -125,11 +114,6 @@ const (
 	`
 	sqlUpdateMigrationStatus = `UPDATE _vt.schema_migrations
 			SET migration_status=%a
-		WHERE
-			migration_uuid=%a
-	`
-	sqlUpdateMigrationStatusFailedOrCancelled = `UPDATE _vt.schema_migrations
-			SET migration_status=IF(cancelled_timestamp IS NULL, 'failed', 'cancelled')
 		WHERE
 			migration_uuid=%a
 	`
@@ -148,26 +132,6 @@ const (
 		WHERE
 			migration_uuid=%a
 	`
-	sqlUpdateMigrationIsView = `UPDATE _vt.schema_migrations
-			SET is_view=%a
-		WHERE
-			migration_uuid=%a
-	`
-	sqlUpdateMigrationReadyToComplete = `UPDATE _vt.schema_migrations
-			SET ready_to_complete=%a
-		WHERE
-			migration_uuid=%a
-	`
-	sqlUpdateMigrationStowawayTable = `UPDATE _vt.schema_migrations
-			SET stowaway_table=%a
-		WHERE
-			migration_uuid=%a
-	`
-	sqlUpdateMigrationUserThrottleRatio = `UPDATE _vt.schema_migrations
-			SET user_throttle_ratio=%a
-		WHERE
-			migration_uuid=%a
-	`
 	sqlUpdateMigrationStartedTimestamp = `UPDATE _vt.schema_migrations SET
 			started_timestamp =IFNULL(started_timestamp,  NOW()),
 			liveness_timestamp=IFNULL(liveness_timestamp, NOW())
@@ -176,11 +140,6 @@ const (
 	`
 	sqlUpdateMigrationTimestamp = `UPDATE _vt.schema_migrations
 			SET %s=NOW()
-		WHERE
-			migration_uuid=%a
-	`
-	sqlUpdateMigrationVitessLivenessIndicator = `UPDATE _vt.schema_migrations
-			SET vitess_liveness_indicator=%a
 		WHERE
 			migration_uuid=%a
 	`
@@ -199,31 +158,10 @@ const (
 		WHERE
 			migration_uuid=%a
 	`
-	sqlUpdateSpecialPlan = `UPDATE _vt.schema_migrations
-			SET special_plan=%a
-		WHERE
-			migration_uuid=%a
-	`
-	sqlUpdateStage = `UPDATE _vt.schema_migrations
-			SET stage=%a
-		WHERE
-			migration_uuid=%a
-	`
-	sqlIncrementCutoverAttempts = `UPDATE _vt.schema_migrations
-			SET cutover_attempts=cutover_attempts+1
-		WHERE
-			migration_uuid=%a
-	`
 	sqlUpdateReadyForCleanup = `UPDATE _vt.schema_migrations
 			SET retain_artifacts_seconds=-1
 		WHERE
 			migration_uuid=%a
-	`
-	sqlUpdateLaunchMigration = `UPDATE _vt.schema_migrations
-			SET postpone_launch=0
-		WHERE
-			migration_uuid=%a
-			AND postpone_launch != 0
 	`
 	sqlUpdateCompleteMigration = `UPDATE _vt.schema_migrations
 			SET postpone_completion=0
@@ -284,24 +222,15 @@ const (
 		WHERE
 			migration_uuid=%a
 	`
-	sqlUpdateLastThrottled = `UPDATE _vt.schema_migrations
-			SET last_throttled_timestamp=FROM_UNIXTIME(%a), component_throttled=%a
-		WHERE
-			migration_uuid=%a
-	`
 	sqlRetryMigrationWhere = `UPDATE _vt.schema_migrations
 		SET
 			migration_status='queued',
 			tablet=%a,
 			retries=retries + 1,
 			tablet_failure=0,
-			message='',
-			stage='',
-			cutover_attempts=0,
 			ready_timestamp=NULL,
 			started_timestamp=NULL,
 			liveness_timestamp=NULL,
-			cancelled_timestamp=NULL,
 			completed_timestamp=NULL,
 			cleanup_timestamp=NULL
 		WHERE
@@ -315,13 +244,9 @@ const (
 			tablet=%a,
 			retries=retries + 1,
 			tablet_failure=0,
-			message='',
-			stage='',
-			cutover_attempts=0,
 			ready_timestamp=NULL,
 			started_timestamp=NULL,
 			liveness_timestamp=NULL,
-			cancelled_timestamp=NULL,
 			completed_timestamp=NULL,
 			cleanup_timestamp=NULL
 		WHERE
@@ -336,7 +261,6 @@ const (
 	sqlSelectRunningMigrations = `SELECT
 			migration_uuid,
 			postpone_completion,
-			stowaway_table,
 			timestampdiff(second, started_timestamp, now()) as elapsed_seconds
 		FROM _vt.schema_migrations
 		WHERE
@@ -435,17 +359,6 @@ const (
 			removed_unique_keys,
 			migration_context,
 			retain_artifacts_seconds,
-			is_view,
-			ready_to_complete,
-			reverted_uuid,
-			stowaway_table,
-			rows_copied,
-			vitess_liveness_indicator,
-			user_throttle_ratio,
-			last_throttled_timestamp,
-			cancelled_timestamp,
-			component_throttled,
-			postpone_launch,
 			postpone_completion
 		FROM _vt.schema_migrations
 		WHERE
@@ -552,13 +465,14 @@ const (
 		END,
 		COUNT_COLUMN_IN_INDEX
 	`
-	sqlDropTrigger      = "DROP TRIGGER IF EXISTS `%a`.`%a`"
-	sqlShowTablesLike   = "SHOW TABLES LIKE '%a'"
-	sqlDropTable        = "DROP TABLE `%a`"
-	sqlShowColumnsFrom  = "SHOW COLUMNS FROM `%a`"
-	sqlShowTableStatus  = "SHOW TABLE STATUS LIKE '%a'"
-	sqlShowCreateTable  = "SHOW CREATE TABLE `%a`"
-	sqlGetAutoIncrement = `
+	sqlDropTrigger       = "DROP TRIGGER IF EXISTS `%a`.`%a`"
+	sqlShowTablesLike    = "SHOW TABLES LIKE '%a'"
+	sqlCreateTableLike   = "CREATE TABLE `%a` LIKE `%a`"
+	sqlDropTable         = "DROP TABLE `%a`"
+	sqlAlterTableOptions = "ALTER TABLE `%a` %s"
+	sqlShowColumnsFrom   = "SHOW COLUMNS FROM `%a`"
+	sqlShowTableStatus   = "SHOW TABLE STATUS LIKE '%a'"
+	sqlGetAutoIncrement  = `
 		SELECT
 			AUTO_INCREMENT
 		FROM INFORMATION_SCHEMA.TABLES
@@ -567,23 +481,17 @@ const (
 			AND TABLES.TABLE_NAME=%a
 			AND AUTO_INCREMENT IS NOT NULL
 		`
-	sqlAlterTableAutoIncrement      = "ALTER TABLE `%s` AUTO_INCREMENT=%a"
-	sqlAlterTableExchangePartition  = "ALTER TABLE `%a` EXCHANGE PARTITION `%a` WITH TABLE `%a`"
-	sqlAlterTableRemovePartitioning = "ALTER TABLE `%a` REMOVE PARTITIONING"
-	sqlAlterTableDropPartition      = "ALTER TABLE `%a` DROP PARTITION `%a`"
-	sqlStartVReplStream             = "UPDATE _vt.vreplication set state='Running' where db_name=%a and workflow=%a"
-	sqlStopVReplStream              = "UPDATE _vt.vreplication set state='Stopped' where db_name=%a and workflow=%a"
-	sqlDeleteVReplStream            = "DELETE FROM _vt.vreplication where db_name=%a and workflow=%a"
-	sqlReadVReplStream              = `SELECT
+	sqlAlterTableAutoIncrement = "ALTER TABLE `%s` AUTO_INCREMENT=%a"
+	sqlStartVReplStream        = "UPDATE _vt.vreplication set state='Running' where db_name=%a and workflow=%a"
+	sqlStopVReplStream         = "UPDATE _vt.vreplication set state='Stopped' where db_name=%a and workflow=%a"
+	sqlDeleteVReplStream       = "DELETE FROM _vt.vreplication where db_name=%a and workflow=%a"
+	sqlReadVReplStream         = `SELECT
 			id,
 			workflow,
 			source,
 			pos,
 			time_updated,
 			transaction_timestamp,
-			time_heartbeat,
-			time_throttled,
-			component_throttled,
 			state,
 			message,
 			rows_copied
@@ -597,12 +505,8 @@ const (
 			_vt.copy_state
 		WHERE vrepl_id=%a
 		`
-	sqlSwapTables         = "RENAME TABLE `%a` TO `%a`, `%a` TO `%a`, `%a` TO `%a`"
-	sqlRenameTable        = "RENAME TABLE `%a` TO `%a`"
-	sqlLockTwoTablesWrite = "LOCK TABLES `%a` WRITE, `%a` WRITE"
-	sqlUnlockTables       = "UNLOCK TABLES"
-	sqlCreateSentryTable  = "CREATE TABLE IF NOT EXISTS `%a` (id INT PRIMARY KEY)"
-	sqlFindProcess        = "SELECT id, Info as info FROM information_schema.processlist WHERE id=%a AND Info LIKE %a"
+	sqlSwapTables  = "RENAME TABLE `%a` TO `%a`, `%a` TO `%a`, `%a` TO `%a`"
+	sqlRenameTable = "RENAME TABLE `%a` TO `%a`"
 )
 
 const (
@@ -622,7 +526,7 @@ var (
 	}
 	sqlGrantOnlineDDLUser = []string{
 		`GRANT PROCESS, REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO %s`,
-		`GRANT ALTER, CREATE, CREATE VIEW, SHOW VIEW, DELETE, DROP, INDEX, INSERT, LOCK TABLES, SELECT, TRIGGER, UPDATE ON *.* TO %s`,
+		`GRANT ALTER, CREATE, DELETE, DROP, INDEX, INSERT, LOCK TABLES, SELECT, TRIGGER, UPDATE ON *.* TO %s`,
 	}
 	sqlDropOnlineDDLUser = `DROP USER IF EXISTS %s`
 )
@@ -657,16 +561,4 @@ var ApplyDDL = []string{
 	alterSchemaMigrationsTableAllowConcurrent,
 	alterSchemaMigrationsTableRevertedUUID,
 	alterSchemaMigrationsTableRevertedUUIDIndex,
-	alterSchemaMigrationsTableIsView,
-	alterSchemaMigrationsTableReadyToComplete,
-	alterSchemaMigrationsTableStowawayTable,
-	alterSchemaMigrationsTableVreplLivenessIndicator,
-	alterSchemaMigrationsTableUserThrottleRatio,
-	alterSchemaMigrationsTableSpecialPlan,
-	alterSchemaMigrationsLastThrottled,
-	alterSchemaMigrationsComponentThrottled,
-	alterSchemaMigrationsCancelledTimestamp,
-	alterSchemaMigrationsTablePostponeLaunch,
-	alterSchemaMigrationsStage,
-	alterSchemaMigrationsCutoverAttempts,
 }

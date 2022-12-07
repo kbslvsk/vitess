@@ -16,13 +16,6 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - name: Skip CI
-        run: |
-          if [[ "${{contains( github.event.pull_request.labels.*.name, 'Skip CI')}}" == "true" ]]; then
-            echo "skipping CI due to the 'Skip CI' label"
-            exit 1
-          fi
-
       - name: Check if workflow needs to be skipped
         id: skip-workflow
         run: |
@@ -31,12 +24,12 @@ jobs:
           skip='true'
           fi
           echo Skip ${skip}
-          echo "skip-workflow=${skip}" >> $GITHUB_OUTPUT
+          echo "::set-output name=skip-workflow::${skip}"
 
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v2
         if: steps.skip-workflow.outputs.skip-workflow == 'false'
 
-      - uses: actions/setup-node@v3
+      - uses: actions/setup-node@v2
         if: steps.skip-workflow.outputs.skip-workflow == 'false'
         with:
           # node-version should match package.json
@@ -44,7 +37,7 @@ jobs:
 
       - name: Install dependencies
         if: steps.skip-workflow.outputs.skip-workflow == 'false'
-        run: cd ./web/vtadmin && npm ci
+        run: cd ./web/vtadmin && npm install
 
       # Using "if: always()" means each step will run, even if a previous
       # step fails. This is nice because, for example, we want stylelint and 
@@ -65,8 +58,3 @@ jobs:
       - name: Run prettier
         if: steps.skip-workflow.outputs.skip-workflow == 'false' && always()
         run: cd ./web/vtadmin && npm run lint:prettier
-
-    # Cancel pending and in-progress runs of this workflow if a newer ref is pushed to CI.
-    concurrency: 
-      group: ${{ github.workflow }}-${{ github.ref }}
-      cancel-in-progress: true
